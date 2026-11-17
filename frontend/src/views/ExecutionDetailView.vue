@@ -22,6 +22,9 @@ const io = ref<NodeIo | null>(null)
 const ioLoading = ref(false)
 const liveNote = ref('')
 let sse: SseSession | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
+let reconnectDelay = 1000
 
 const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT'])
 
@@ -112,17 +115,9 @@ function handleLiveEvent(e: EngineEvent): void {
   }
 }
 
-onMounted(async () => {
-  try {
-    await load()
-  } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
-    return
-  }
-  if (TERMINAL.has(detail.value?.execution.status ?? '')) {
-    liveNote.value = '执行已结束'
-    return
-  }
+/** 建立 SSE；断线时先拉 REST 追平，再按退避自动重连（终态/卸载后停止）。 */
+function connectSse(): void {
+  if (disposed || TERMINAL.has(detail.value?.execution.status ?? '')) return
   const headers: Record<string, string> = {}
   if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`
   if (auth.currentSpaceId) headers['X-Space-Id'] = auth.currentSpaceId
@@ -137,14 +132,42 @@ onMounted(async () => {
       }
     },
     onError: () => {
-      liveNote.value = '实时通道断开，5s 后重连'
-      setTimeout(() => void load(), 5000)
+      sse?.close()
+      sse = null
+      if (disposed || TERMINAL.has(detail.value?.execution.status ?? '')) return
+      liveNote.value = `实时通道断开，${reconnectDelay / 1000}s 后重连`
+      // 断线先追平 REST，避免重连间隔内的事件缺口；随后退避重连
+      void load().catch(() => {})
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        reconnectDelay = Math.min(reconnectDelay * 2, 15000)
+        connectSse()
+      }, reconnectDelay)
     },
   })
   liveNote.value = '实时推送中'
+}
+
+onMounted(async () => {
+  try {
+    await load()
+  } catch (e) {
+    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    return
+  }
+  if (TERMINAL.has(detail.value?.execution.status ?? '')) {
+    liveNote.value = '执行已结束'
+    return
+  }
+  connectSse()
 })
 
-onUnmounted(() => sse?.close())
+onUnmounted(() => {
+  disposed = true
+  if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+  sse?.close()
+  sse = null
+})
 </script>
 
 <template>

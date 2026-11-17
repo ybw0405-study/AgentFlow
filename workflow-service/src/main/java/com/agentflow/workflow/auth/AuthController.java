@@ -40,7 +40,7 @@ public class AuthController {
                           UserMapper userMapper, TenantMapper tenantMapper,
                           JwtService jwtService,
                           @org.springframework.beans.factory.annotation.Value(
-                                  "${agentflow.jwt.cookie-secure:false}") boolean cookieSecure,
+                                  "${agentflow.jwt.cookie-secure:true}") boolean cookieSecure,
                           @org.springframework.beans.factory.annotation.Value(
                                   "${agentflow.jwt.refresh-ttl-days:14}") long refreshTtlDays) {
         this.authService = authService;
@@ -80,6 +80,12 @@ public class AuthController {
     @PostMapping("/refresh")
     public ResponseEntity<ApiResponse<LoginData>> refresh(HttpServletRequest request) {
         String raw = readRefreshCookie(request);
+        if (raw == null || raw.isBlank()) {
+            // 无 refresh Cookie 属认证失败，返回 401；不能透传给 rotate() 触发 NPE 500
+            throw new com.agentflow.common.error.BusinessException(
+                    com.agentflow.common.error.ErrorCode.USR_TOKEN_001,
+                    "refresh token missing");
+        }
         var rotated = refreshTokenService.rotate(raw);  // 非法/重用在此抛出
         var user = userMapper.findById(rotated.userId());
         if (user == null || !"ACTIVE".equals(user.status())) {

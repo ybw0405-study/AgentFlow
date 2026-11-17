@@ -88,6 +88,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if dispatcher._gate_task is not None:
                 dispatcher._gate_task.cancel()
             await subworkflow_resolver.aclose()
+            # 释放 tool 节点持有的 httpx.AsyncClient（否则每次执行泄漏连接句柄）
+            for executor in executors.values():
+                closer = getattr(executor, "aclose", None)
+                if closer is not None:
+                    await closer()
             await store.close()
             await redis.aclose()
 

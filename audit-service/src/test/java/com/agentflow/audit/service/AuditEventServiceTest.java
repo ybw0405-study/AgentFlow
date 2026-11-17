@@ -48,9 +48,26 @@ class AuditEventServiceTest {
 
     @Test
     void duplicateDeliverySkipped() {
-        when(ops.setIfAbsent(anyString(), eq("1"), any(Duration.class))).thenReturn(false);
+        // 写库已确认的 DONE 标记才算重复；此时不应再打库
+        when(ops.get("af:audit:seen:e1")).thenReturn("DONE");
         assertFalse(service.ingest(msg("e1")));
         verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void pendingRemainderFromCrashStillInserts() {
+        // 崩溃残留的 PENDING 不能当重复丢弃（旧实现在此永久丢事件）；
+        // 必须尝试写库，由 DB 主键兜底去重。
+        when(ops.get("af:audit:seen:e1")).thenReturn("PENDING");
+        assertTrue(service.ingest(msg("e1")));
+        verify(mapper).insert(any());
+    }
+
+    @Test
+    void successfulInsertMarksDone() {
+        when(ops.get("af:audit:seen:e1")).thenReturn(null);
+        assertTrue(service.ingest(msg("e1")));
+        verify(ops).set(eq("af:audit:seen:e1"), eq("DONE"), any(Duration.class));
     }
 
     @Test

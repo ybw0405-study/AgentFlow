@@ -111,6 +111,27 @@ class WorkflowServiceTest {
     }
 
     @Test
+    void rollbackDoesNotOverwritePublishMetadata() {
+        when(definitions.findByIdAndTenant("d1", "space-1")).thenReturn(defRow("d1", "{}"));
+        when(versions.findById("v1")).thenReturn(new WorkflowVersionMapper.VersionRow(
+                "v1", "d1", 1, "{}", "c", null, "original-publisher", "u", null));
+        var admin = new TenantInfo("space-1", "admin-1", "ADMIN");
+
+        service.rollback(admin, "d1", "v1");
+
+        verify(definitions).updateCurrentVersion("d1", "space-1", "v1");
+        // 回滚不得重新 markPublished 覆盖原发布人/时间
+        verify(versions, never()).markPublished(any(), any());
+    }
+
+    @Test
+    void rollbackByViewerRejected() {
+        var ex = assertThrows(BusinessException.class,
+                () -> service.rollback(viewer, "d1", "v1"));
+        assertEquals(ErrorCode.WF_FORBIDDEN_001, ex.errorCode());
+    }
+
+    @Test
     void crossTenantDefinitionIs404() {
         when(definitions.findByIdAndTenant("d1", "space-1")).thenReturn(null);
         var ex = assertThrows(BusinessException.class,

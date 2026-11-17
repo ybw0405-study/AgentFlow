@@ -21,6 +21,8 @@ echo '==> [3/5] 构建 Java 服务'
 
 export AF_INTERNAL_TOKEN="${AF_INTERNAL_TOKEN:-dev-internal-token}"
 export AF_JWT_SECRET="${AF_JWT_SECRET:-dev-only-secret-key-0123456789abcdef}"
+# 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
+export AF_COOKIE_SECURE="${AF_COOKIE_SECURE:-false}"
 # 本地全量 E2E 一轮会触发数十次执行；产品默认仍是 20 次/60s/用户
 export AF_RATE_LIMIT_TRIGGER_MAX="${AF_RATE_LIMIT_TRIGGER_MAX:-300}"
 

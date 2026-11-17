@@ -166,9 +166,26 @@ public class WorkflowService {
                         "versionNo", version.versionNo())));
     }
 
-    /** 回滚 = 把 current 指针移回历史版本；版本本身不动（US-01）。 */
+    /**
+     * 回滚 = 只把 current 指针移回历史版本（US-01）；历史版本本身不动。
+     *
+     * <p>不能委派 {@link #publish}：publish 会 markPublished 覆盖原发布人/时间，
+     * 且审计类型恒为 WORKFLOW_PUBLISHED，导致发布历史被回滚者篡改、审计失真。
+     */
+    @Transactional
     public void rollback(TenantInfo tenant, String id, String versionId) {
-        publish(tenant, id, versionId);  // 同一机制；审计事件类型区分由调用方决定
+        requireRole(tenant, "ADMIN", null);
+        load(tenant, id);  // 租户隔离校验：跨租户 404
+        var version = versions.findById(versionId);
+        if (version == null || !version.definitionId().equals(id)) {
+            throw new BusinessException(ErrorCode.WF_NOT_FOUND_001, "resource not found");
+        }
+        // 仅移动 current 指针；不触碰目标版本的 published_at/published_by
+        definitions.updateCurrentVersion(id, tenant.tenantId(), versionId);
+        audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+                "WORKFLOW_ROLLED_BACK",
+                Map.of("definitionId", id, "versionId", versionId,
+                        "versionNo", version.versionNo())));
     }
 
     public List<WorkflowVersionMapper.VersionRow> listVersions(TenantInfo tenant, String id) {

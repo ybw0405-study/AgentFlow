@@ -42,6 +42,9 @@ class ConnectorRegistry:
     ) -> None:
         self._mock_factory = mock_factory
         self._remote_factory = remote_factory
+        # 缓存已创建的连接器实例：避免每次 resolve 新建 AsyncClient 造成句柄泄漏，
+        # 并在关停时统一释放底层资源。
+        self._cache: dict[str, ToolConnector] = {}
 
     def resolve(self, connector_id: str, authorized: frozenset[str]) -> ToolConnector:
         if connector_id not in authorized:
@@ -49,11 +52,25 @@ class ConnectorRegistry:
                 "CONN-FORBIDDEN-001",
                 f"connector '{connector_id}' is not authorized for this execution",
             )
+        cached = self._cache.get(connector_id)
+        if cached is not None:
+            return cached
         if connector_id.startswith("mock."):
-            return self._mock_factory(connector_id)
-        if self._remote_factory is None:
+            connector = self._mock_factory(connector_id)
+        elif self._remote_factory is not None:
+            connector = self._remote_factory(connector_id)
+        else:
             raise PermanentNodeError("CONN-NOT_FOUND-001", f"connector '{connector_id}' not found")
-        return self._remote_factory(connector_id)
+        self._cache[connector_id] = connector
+        return connector
+
+    async def aclose(self) -> None:
+        """释放所有持有底层连接资源的连接器（如 httpx.AsyncClient）。"""
+        for connector in self._cache.values():
+            closer = getattr(connector, "aclose", None)
+            if closer is not None:
+                await closer()
+        self._cache.clear()
 
 
 class ToolExecutor:
@@ -61,6 +78,9 @@ class ToolExecutor:
 
     def __init__(self, connectors: ConnectorRegistry) -> None:
         self._connectors = connectors
+
+    async def aclose(self) -> None:
+        await self._connectors.aclose()
 
     async def execute(self, node: ToolNode, ctx: NodeContext) -> NodeResult:
         cfg = node.config

@@ -62,7 +62,19 @@ class GateApproversTest {
     }
 
     @Test
-    void emptyResolutionFallsBackToPlatformAdmins() {
+    void emptyResolutionFailsClosed() {
+        when(tenants.findMemberRole("space-a", "u-stranger")).thenReturn(null);
+        when(tenants.findMemberRole("org-1", "u-stranger")).thenReturn(null);
+
+        // USERS 规则里的人都不在可见范围 → 空集不再 fail-open 到全体平台管理员
+        List<String> result = approvers.resolve("space-a", Map.of(
+                "type", "USERS", "userIds", List.of("u-stranger")));
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void roleAdminStillIncludesPlatformAdminsExplicitly() {
+        // ROLE+ADMIN 是设计上显式的运维兜底通道，不属于 fail-open，须保留
         when(tenants.listMembers("space-a")).thenReturn(List.of(
                 new TenantMapper.MemberRow("u-viewer", "VIEWER")));
         when(tenants.listMembers("org-1")).thenReturn(List.of());

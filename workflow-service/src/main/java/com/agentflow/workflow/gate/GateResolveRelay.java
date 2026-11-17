@@ -1,6 +1,7 @@
 package com.agentflow.workflow.gate;
 
 import com.agentflow.common.error.BusinessException;
+import com.agentflow.common.error.ErrorCode;
 import com.agentflow.workflow.engine.EngineGatewayClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,14 @@ public class GateResolveRelay {
                 log.info("gate resolve replayed execution={} node={}", row.executionId(),
                         row.nodeKey());
             } catch (BusinessException e) {
+                if (e.errorCode() == ErrorCode.WF_STATE_001) {
+                    // 引擎回报 gate 已不再 pending（404 未挂起/已裁决、409 正在裁决）。
+                    // 这是终态：裁决目标已达成，重投永无成功可能，直接收敛，避免无限重投。
+                    outbox.markDone(row.id());
+                    log.info("gate resolve already settled, closing outbox execution={} node={}",
+                            row.executionId(), row.nodeKey());
+                    continue;
+                }
                 int attempts = row.attempts() + 1;
                 boolean giveUp = attempts >= MAX_ATTEMPTS;
                 String status = giveUp ? "FAILED" : "PENDING";

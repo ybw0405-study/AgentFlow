@@ -32,9 +32,16 @@ public class AuditEventService {
     /** 返回 true = 新写入；false = 重复。 */
     public boolean ingest(AuditMessageDto msg) {
         String dedupKey = "af:audit:seen:" + msg.id();
-        Boolean first = redis.opsForValue().setIfAbsent(dedupKey, "1", dedupTtl);
-        if (!Boolean.TRUE.equals(first)) {
+        // 标记值区分"已确认写库"(DONE) 与"占用中/可能崩溃残留"(PENDING)。
+        // 后者不能当成重复丢弃：旧实现 SETNX 后崩溃会让事件永久丢失。
+        String seen = redis.opsForValue().get(dedupKey);
+        if ("DONE".equals(seen)) {
             return false;
+        }
+        // 首次到达或残留 PENDING：一律尝试写库，由 DB 主键做权威去重。
+        // 用 SETNX 抢占用，仅当 key 不存在时写入 PENDING；抢不到也继续写库（DB 兜底）。
+        if (seen == null) {
+            redis.opsForValue().setIfAbsent(dedupKey, "PENDING", dedupTtl);
         }
         try {
             mapper.insert(new AuditEventMapper.AuditRow(
@@ -43,11 +50,16 @@ public class AuditEventService {
                     msg.payloadRedacted() == null ? null
                             : objectMapper.writeValueAsString(msg.payloadRedacted()),
                     msg.tokenUsed(), msg.latencyMs(), null));
+            // 写库确认成功，原子覆盖为 DONE（保留原 TTL）
+            redis.opsForValue().set(dedupKey, "DONE", dedupTtl);
             return true;
         } catch (DuplicateKeyException e) {
-            return false;  // 主键兜底去重
+            // 主键兜底去重：事件已存在，标记为 DONE 收敛残留的 PENDING
+            redis.opsForValue().set(dedupKey, "DONE", dedupTtl);
+            return false;
         } catch (Exception e) {
-            redis.delete(dedupKey);  // 写入失败放行重试
+            // 写库失败：删除标记放行重试（若原本是 DONE 被并发覆盖，这里删除后重试仍由主键兜底）
+            redis.delete(dedupKey);
             log.error("audit insert failed id={} type={}", msg.id(), msg.eventType(), e);
             throw new IllegalStateException("audit insert failed", e);
         }

@@ -38,6 +38,9 @@ public class ConnectorInvoker {
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
     private static final Duration CACHE_TTL = Duration.ofHours(24);
+    /** 幂等执行锁 TTL：足够覆盖一次出网，防同 callId 并发双出网（TOCTOU）。 */
+    private static final Duration LOCK_TTL = Duration.ofSeconds(30);
+    private static final String LOCK_VALUE = "1";
 
     private final ConnectorRepository repo;
     private final CredentialCipher cipher;
@@ -83,6 +86,30 @@ public class ConnectorInvoker {
             }
         }
 
+        // 原子占位：同一 callId 只有一个执行者出网，消除 get→set 之间的 TOCTOU。
+        // 抢不到锁说明并发调用正在进行，返回瞬时错误让上游退避重试（届时走缓存重放）。
+        if (!acquireLock(cacheKey)) {
+            String raced = safeGet(cacheKey);
+            if (raced != null) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> data = JSON.readValue(raced, Map.class);
+                    data.put("_replayed", true);
+                    return new InvokeResult(true, data, null, false, 0, 200);
+                } catch (Exception ignored) {
+                    // 落到下面的 in-flight 返回
+                }
+            }
+            return InvokeResult.failure("CONN-INFLIGHT", true, elapsed(started));
+        }
+        try {
+            return doInvoke(cmd, started, cacheKey);
+        } finally {
+            releaseLock(cacheKey);
+        }
+    }
+
+    private InvokeResult doInvoke(InvokeCommand cmd, long started, String cacheKey) {
         Optional<ConnectorRow> found = repo.findById(cmd.connectorId());
         if (found.isEmpty()) {
             return InvokeResult.failure("CONN-NOT_FOUND-001", false, elapsed(started));
@@ -269,6 +296,28 @@ public class ConnectorInvoker {
             String text = new String(body, StandardCharsets.UTF_8);
             wrapper.put("raw", text.length() > 4096 ? text.substring(0, 4096) : text);
             return wrapper;
+        }
+    }
+
+    /**
+     * 抢幂等执行锁。Redis 异常时 fail-open（返回 true 继续出网）——保持可用性，
+     * 因为幂等结果的权威去重仍在下游工具侧按 callId 完成；此处只消除本地并发双出网。
+     */
+    private boolean acquireLock(String cacheKey) {
+        try {
+            return Boolean.TRUE.equals(redis.opsForValue()
+                    .setIfAbsent(cacheKey + ":lock", LOCK_VALUE, LOCK_TTL));
+        } catch (Exception e) {
+            log.warn("redis lock unavailable, proceed without in-flight guard: {}", e.toString());
+            return true;
+        }
+    }
+
+    private void releaseLock(String cacheKey) {
+        try {
+            redis.delete(cacheKey + ":lock");
+        } catch (Exception e) {
+            log.warn("redis lock release failed: {}", e.toString());
         }
     }
 

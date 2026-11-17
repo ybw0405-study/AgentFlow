@@ -118,3 +118,32 @@ def test_registry_rejects_unauthorized_connector():
     with pytest.raises(PermanentNodeError) as exc:
         registry.resolve("c-real", frozenset())
     assert exc.value.code == "CONN-FORBIDDEN-001"
+
+
+async def test_registry_caches_connector_and_aclose_closes_resources():
+    closed: list[str] = []
+
+    class ClosableConnector:
+        def __init__(self, cid: str) -> None:
+            self.connector_id = cid
+
+        async def invoke(self, **kwargs):  # pragma: no cover - 不调用
+            raise AssertionError
+
+        async def aclose(self) -> None:
+            closed.append(self.connector_id)
+
+    created: list[str] = []
+    registry = ConnectorRegistry(
+        lambda cid: object(),
+        lambda cid: created.append(cid) or ClosableConnector(cid),
+    )
+    authorized = frozenset({"c-remote"})
+    first = registry.resolve("c-remote", authorized)
+    second = registry.resolve("c-remote", authorized)
+
+    assert first is second          # 复用实例，不重复创建 client
+    assert created == ["c-remote"]
+    await registry.aclose()
+    assert closed == ["c-remote"]   # 关停时底层资源被释放
+    assert registry._cache == {}

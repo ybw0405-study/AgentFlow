@@ -33,6 +33,8 @@ Pop-Location
 
 $env:AF_INTERNAL_TOKEN = $env:AF_INTERNAL_TOKEN ?? 'dev-internal-token'
 $env:AF_JWT_SECRET = $env:AF_JWT_SECRET ?? 'dev-only-secret-key-0123456789abcdef'
+# 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
+$env:AF_COOKIE_SECURE = $env:AF_COOKIE_SECURE ?? 'false'
 # 本地全量 E2E 一轮会触发数十次执行；产品默认仍是 20 次/60s/用户
 $env:AF_RATE_LIMIT_TRIGGER_MAX = $env:AF_RATE_LIMIT_TRIGGER_MAX ?? '300'
 

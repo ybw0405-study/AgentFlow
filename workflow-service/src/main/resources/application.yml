@@ -27,7 +27,9 @@ agentflow:
     ttl-seconds: ${AF_JWT_TTL_SECONDS:900}
     refresh-ttl-days: ${AF_REFRESH_TTL_DAYS:14}
     bcrypt-strength: ${AF_BCRYPT_STRENGTH:12}
-    cookie-secure: ${AF_COOKIE_SECURE:false}
+    # 默认 secure=true：生产/HTTPS 下 refresh Cookie 必须带 Secure。
+    # 本地 HTTP 演示由 scripts/start-dev.* 显式设为 false，避免 login 后 Cookie 不回传。
+    cookie-secure: ${AF_COOKIE_SECURE:true}
   gateway:
     base-url: ${AF_GATEWAY_BASE:http://127.0.0.1:8080}
     internal-token: ${AF_INTERNAL_TOKEN:dev-internal-token}

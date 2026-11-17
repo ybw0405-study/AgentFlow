@@ -24,8 +24,9 @@ import org.springframework.stereotype.Component;
  *   <li>EXPRESSION：P3 不做用户属性表达式求值（引擎侧编译期已拒绝）。</li>
  * </ul>
  *
- * <p>兜底：结果为空（例如空间里只有 VIEWER）时退化为平台管理员 —— 宁可让运维解围，
- * 也不能让执行永久卡在挂起态。
+ * <p>结果为空时的处置：fail-closed —— 不再静默把审批权扩大到全体平台管理员
+ * （这是权限放大风险）。返回空集，仅平台 ADMIN 可经 {@code GateService} 中显式、
+ * 可审计的兜底通道裁决；同时以 error 日志暴露规则配置错误，供运维介入。
  */
 @Component
 public class GateApprovers {
@@ -79,9 +80,9 @@ public class GateApprovers {
         }
 
         if (approvers.isEmpty()) {
-            log.warn("gate approvers resolved empty for space {} rule {}; fallback to platform admins",
+            log.error("gate approvers resolved empty for space {} rule {}; fail-closed: "
+                    + "no automatic platform-admin fallback, only explicit ADMIN decision path",
                     spaceId, rule);
-            approvers.addAll(tenants.listPlatformAdmins());
         }
         return List.copyOf(approvers);
     }

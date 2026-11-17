@@ -37,6 +37,8 @@ class ConnectorInvokerTest {
     private final Map<String, String> cache = new ConcurrentHashMap<>();
     private ConnectorInvoker invoker;
     private ConnectorRepository repo;
+    @SuppressWarnings("unchecked")
+    private final ValueOperations<String, String> ops = mock(ValueOperations.class);
 
     @BeforeEach
     void setUp() throws Exception {
@@ -65,10 +67,10 @@ class ConnectorInvokerTest {
 
         repo = mock(ConnectorRepository.class);
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        @SuppressWarnings("unchecked")
-        ValueOperations<String, String> ops = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(ops);
         when(ops.get(anyString())).thenAnswer(i -> cache.get(i.getArgument(0, String.class)));
+        // 幂等锁：单测串行执行，始终抢到锁
+        when(ops.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
         doAnswer(i -> {
             cache.put(i.getArgument(0), i.getArgument(1));
             return null;
@@ -167,6 +169,21 @@ class ConnectorInvokerTest {
         assertThat(first.ok()).isTrue();
         assertThat(second.data()).containsEntry("_replayed", true);
         assertThat(seenApiKey.get()).isNull();   // 没有第二次出网
+    }
+
+    @Test
+    void inFlightCallIdIsRejectedWithoutSecondHit() throws Exception {
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE", "/ok")));
+        // 精确覆盖该 callId 的锁为"已被并发持有"
+        when(ops.setIfAbsent(org.mockito.ArgumentMatchers.eq("af:conncall:call-lock:lock"),
+                anyString(), any(Duration.class))).thenReturn(false);
+
+        var result = invoker.invoke(new ConnectorInvoker.InvokeCommand("space-a", "conn-1",
+                "call-lock", "run", Map.of(), 5_000, "t"));
+
+        assertThat(result.ok()).isFalse();
+        assertThat(result.errorCode()).isEqualTo("CONN-INFLIGHT");
+        assertThat(result.transientError()).isTrue();
     }
 
     @Test
