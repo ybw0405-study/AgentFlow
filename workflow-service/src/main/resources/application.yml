@@ -1,0 +1,57 @@
+server:
+  port: ${AF_WORKFLOW_PORT:8084}
+
+spring:
+  application:
+    name: workflow-service
+  servlet:
+    multipart:
+      enabled: false
+  datasource:
+    url: jdbc:mysql://${AF_MYSQL_HOST:127.0.0.1}:${AF_MYSQL_PORT:3307}/agentflow?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=UTF-8
+    username: ${AF_MYSQL_USER:root}
+    password: ${AF_MYSQL_PASSWORD:root}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      url: redis://${AF_REDIS_HOST:127.0.0.1}:${AF_REDIS_PORT:6379}/0
+  jackson:
+    default-property-inclusion: non_null
+
+agentflow:
+  jwt:
+    secret: ${AF_JWT_SECRET:dev-only-secret-key-0123456789abcdef}
+    ttl-seconds: ${AF_JWT_TTL_SECONDS:900}
+    refresh-ttl-days: ${AF_REFRESH_TTL_DAYS:14}
+    bcrypt-strength: ${AF_BCRYPT_STRENGTH:12}
+    cookie-secure: ${AF_COOKIE_SECURE:false}
+  gateway:
+    base-url: ${AF_GATEWAY_BASE:http://127.0.0.1:8080}
+    internal-token: ${AF_INTERNAL_TOKEN:dev-internal-token}
+  engine:
+    authorized-connectors: ${AF_AUTHORIZED_CONNECTORS:mock.search,mock.echo,mock.flaky}
+    poll-interval-ms: ${AF_ENGINE_POLL_INTERVAL_MS:500}
+  tenant:
+    default-token-budget: ${AF_DEFAULT_TOKEN_BUDGET:50000}
+    default-max-steps: ${AF_DEFAULT_MAX_STEPS:50}
+    default-deadline-ms: ${AF_DEFAULT_DEADLINE_MS:120000}
+    # 成本中心月度账本初始限额（子租户有效限额沿祖先链取最小）
+    monthly-call-limit: ${AF_MONTHLY_CALL_LIMIT:10000}
+    monthly-token-limit: ${AF_MONTHLY_TOKEN_LIMIT:50000}
+  gate:
+    # 裁决 outbox 重投间隔（引擎不可达时的补偿节奏）
+    relay-interval-ms: ${AF_GATE_RELAY_INTERVAL_MS:5000}
+  eval:
+    # 评测/AB 结果收口轮询间隔（用例执行落终态后才断言）
+    poll-interval-ms: ${AF_EVAL_POLL_INTERVAL_MS:3000}
+  rocketmq:
+    enabled: ${AF_MQ_ENABLED:false}
+    namesrv: ${AF_ROCKETMQ_NAMESRV:127.0.0.1:9876}
+    topic: af-audit-event
+    producer-group: af-workflow-audit-producer
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p %logger{24} traceId=%mdc{traceId} %msg%n"

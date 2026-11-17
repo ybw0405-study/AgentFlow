@@ -1,0 +1,122 @@
+package com.agentflow.workflow.execution;
+
+import java.sql.Timestamp;
+import java.util.List;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+
+@Mapper
+public interface WorkflowExecutionMapper {
+
+    @Insert("INSERT INTO workflow_execution"
+            + " (id, definition_id, version_id, tenant_id, triggered_by, status,"
+            + "  idempotency_key, trace_id, token_budget, max_steps, deadline_at)"
+            + " VALUES (#{id}, #{definitionId}, #{versionId}, #{tenantId}, #{triggeredBy},"
+            + " 'PENDING', #{idempotencyKey}, #{traceId}, #{tokenBudget}, #{maxSteps},"
+            + " #{deadlineAt})")
+    int insert(ExecutionRow row);
+
+    @Select("SELECT seq, id, definition_id AS definitionId, version_id AS versionId,"
+            + " tenant_id AS tenantId, triggered_by AS triggeredBy, status, idempotency_key"
+            + " AS idempotencyKey, trace_id AS traceId, token_budget AS tokenBudget,"
+            + " max_steps AS maxSteps, deadline_at AS deadlineAt, token_used AS tokenUsed,"
+            + " steps_used AS stepsUsed, error_code AS errorCode, started_at AS startedAt,"
+            + " finished_at AS finishedAt, created_at AS createdAt"
+            + " FROM workflow_execution"
+            + " WHERE id = #{id} AND tenant_id = #{tenantId}")
+    ExecutionRow findByIdAndTenant(@Param("id") String id, @Param("tenantId") String tenantId);
+
+    @Select("SELECT seq, id, definition_id AS definitionId, version_id AS versionId,"
+            + " tenant_id AS tenantId, triggered_by AS triggeredBy, status, idempotency_key"
+            + " AS idempotencyKey, trace_id AS traceId, token_budget AS tokenBudget,"
+            + " max_steps AS maxSteps, deadline_at AS deadlineAt, token_used AS tokenUsed,"
+            + " steps_used AS stepsUsed, error_code AS errorCode, started_at AS startedAt,"
+            + " finished_at AS finishedAt, created_at AS createdAt"
+            + " FROM workflow_execution"
+            + " WHERE tenant_id = #{tenantId} AND idempotency_key = #{ikey}")
+    ExecutionRow findByIdempotency(@Param("tenantId") String tenantId,
+                                   @Param("ikey") String ikey);
+
+    @Select("<script>"
+            + "SELECT seq, id, definition_id AS definitionId, version_id AS versionId,"
+            + " tenant_id AS tenantId, triggered_by AS triggeredBy, status, idempotency_key"
+            + " AS idempotencyKey, trace_id AS traceId, token_budget AS tokenBudget,"
+            + " max_steps AS maxSteps, deadline_at AS deadlineAt, token_used AS tokenUsed,"
+            + " steps_used AS stepsUsed, error_code AS errorCode, started_at AS startedAt,"
+            + " finished_at AS finishedAt, created_at AS createdAt"
+            + " FROM workflow_execution"
+            + " WHERE tenant_id = #{tenantId} AND seq &gt; #{afterSeq}"
+            + "<if test='status != null'> AND status = #{status}</if>"
+            + "<if test='definitionId != null'> AND definition_id = #{definitionId}</if>"
+            + " ORDER BY seq DESC LIMIT #{limit}"
+            + "</script>")
+    List<ExecutionRow> listByTenant(@Param("tenantId") String tenantId,
+                                    @Param("status") String status,
+                                    @Param("definitionId") String definitionId,
+                                    @Param("afterSeq") long afterSeq,
+                                    @Param("limit") int limit);
+
+    /** 投影器写入（事件是唯一真相，此处只是查询索引）。按事件类型定向更新。 */
+    @Update("UPDATE workflow_execution SET status = #{status}, started_at = NOW(3)"
+            + " WHERE id = #{id} AND status = 'PENDING'")
+    int markRunning(@Param("id") String id, @Param("status") String status);
+
+    @Update("UPDATE workflow_execution SET status = #{status}, token_used = #{tokenUsed},"
+            + " steps_used = #{stepsUsed}, error_code = #{errorCode}, finished_at = NOW(3)"
+            + " WHERE id = #{id}")
+    int markTerminal(@Param("id") String id, @Param("status") String status,
+                     @Param("tokenUsed") int tokenUsed, @Param("stepsUsed") int stepsUsed,
+                     @Param("errorCode") String errorCode);
+
+    /** 投影器：GateSuspended → 挂起（不落终态，finished_at 保持为空）。 */
+    @Update("UPDATE workflow_execution SET status = 'SUSPENDED'"
+            + " WHERE id = #{id} AND status = 'RUNNING'")
+    int markSuspended(@Param("id") String id);
+
+    /** 投影器：GateResolved → 回到 RUNNING（由裁决回调续跑）。 */
+    @Update("UPDATE workflow_execution SET status = 'RUNNING'"
+            + " WHERE id = #{id} AND status = 'SUSPENDED'")
+    int markResumed(@Param("id") String id);
+
+    /** 评测轮询：执行状态与耗时/token（都来自投影表，不额外打引擎）。 */
+    @Select("SELECT status, token_used AS tokenUsed, error_code AS errorCode,"
+            + " started_at AS startedAt, finished_at AS finishedAt"
+            + " FROM workflow_execution WHERE id = #{id}")
+    EvalExecutionRow findForEval(@Param("id") String id);
+
+    /** 投影器无租户上下文，按主键取投影所需的最小信息。 */
+    @Select("SELECT id AS id, tenant_id AS tenantId, definition_id AS definitionId,"
+            + " version_id AS versionId FROM workflow_execution WHERE id = #{id}")
+    ExecutionBrief findBrief(@Param("id") String id);
+
+    @Update("UPDATE workflow_execution SET status = #{status}, error_code = #{errorCode}"
+            + " WHERE id = #{id}")
+    int markFailedDispatch(@Param("id") String id, @Param("status") String status,
+                           @Param("errorCode") String errorCode);
+
+    @Select("SELECT tenant_id AS tenantId, status, COUNT(*) AS cnt,"
+            + " COALESCE(SUM(token_used),0) AS tokens"
+            + " FROM workflow_execution GROUP BY tenant_id, status")
+    List<UsageRow> usageByTenant();
+
+    record ExecutionRow(long seq, String id, String definitionId, String versionId,
+                        String tenantId, String triggeredBy, String status,
+                        String idempotencyKey, String traceId, Integer tokenBudget,
+                        Integer maxSteps, Timestamp deadlineAt, int tokenUsed, int stepsUsed,
+                        String errorCode, Timestamp startedAt, Timestamp finishedAt,
+                        Timestamp createdAt) {
+    }
+
+    record UsageRow(String tenantId, String status, long cnt, long tokens) {
+    }
+
+    record ExecutionBrief(String id, String tenantId, String definitionId, String versionId) {
+    }
+
+    record EvalExecutionRow(String status, int tokenUsed, String errorCode,
+                            Timestamp startedAt, Timestamp finishedAt) {
+    }
+}
