@@ -1,0 +1,24 @@
+name: contract-drift
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine-openapi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: install engine
+        working-directory: engine-api
+        run: pip install -e "."
+      - name: dump openapi
+        run: python scripts/dump-openapi.py
+      - name: diff against committed baseline
+        run: git diff --exit-code -- docs/openapi/engine-api.json
