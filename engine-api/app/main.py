@@ -48,7 +48,9 @@ _ERROR_STATUS = {
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+
     from .config import _guard_production
+
     _guard_production(settings)
     setup_logging(settings.log_level)
 

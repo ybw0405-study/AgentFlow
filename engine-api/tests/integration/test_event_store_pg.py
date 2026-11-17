@@ -42,7 +42,7 @@ if not _docker_available():
 
 @pytest.fixture(scope="module")
 def pg_dsn():
-    from testcontainers.postgres import PostgresContainer
+    from testcontainers.community.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine") as pg:
         url = pg.get_connection_url()

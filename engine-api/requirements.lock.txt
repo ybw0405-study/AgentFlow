@@ -33,7 +33,7 @@ Pygments==2.21.0
 pytest==9.2.0
 pytest-asyncio==1.5.0
 python-dotenv==1.2.4
-pywin32==312
+pywin32==312; sys_platform == "win32"  # pip freeze 导出时丢失了 docker 的平台 marker，补回以跨平台可复现
 PyYAML==6.0.3
 redis==8.1.0
 requests==2.34.2

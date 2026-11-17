@@ -61,6 +61,20 @@ class MaskResult:
     count: int
 
 
+def _mask_luhn(text: str, category: str, pattern: re.Pattern[str]) -> tuple[str, int]:
+    """Luhn 校验规则专用替换：category/计数封装在工厂作用域，避免闭包引用循环变量。"""
+    hits = 0
+
+    def repl(m: re.Match[str]) -> str:
+        nonlocal hits
+        if _luhn_valid(m.group()):
+            hits += 1
+            return f"[{category}]"
+        return m.group()
+
+    return pattern.sub(repl, text), hits
+
+
 def normalize(text: str) -> str:
     return _ZERO_WIDTH.sub("", unicodedata.normalize("NFKC", text))
 
@@ -71,17 +85,7 @@ def mask_text(text: str) -> MaskResult:
     count = 0
     for category, pattern, luhn_check in _RULES:
         if luhn_check:
-            hits = 0
-
-            def repl(m: re.Match[str]) -> str:
-                nonlocal hits
-                if _luhn_valid(m.group()):
-                    hits += 1
-                    return f"[{category}]"
-                return m.group()
-
-            masked = pattern.sub(repl, masked)
-            n = hits
+            masked, n = _mask_luhn(masked, category, pattern)
         else:
             masked, n = pattern.subn(f"[{category}]", masked)
         if n:

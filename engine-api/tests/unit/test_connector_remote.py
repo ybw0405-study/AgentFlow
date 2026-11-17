@@ -142,8 +142,8 @@ async def test_registry_caches_connector_and_aclose_closes_resources():
     first = registry.resolve("c-remote", authorized)
     second = registry.resolve("c-remote", authorized)
 
-    assert first is second          # 复用实例，不重复创建 client
+    assert first is second  # 复用实例，不重复创建 client
     assert created == ["c-remote"]
     await registry.aclose()
-    assert closed == ["c-remote"]   # 关停时底层资源被释放
+    assert closed == ["c-remote"]  # 关停时底层资源被释放
     assert registry._cache == {}
