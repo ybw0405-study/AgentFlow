@@ -1,0 +1,123 @@
+# AgentFlow 本地基础设施（P0）：MySQL 8 / PostgreSQL 16 / Redis 7 / RocketMQ 5
+# 用法：docker compose -f ops/docker-compose.infra.yml up -d
+# MySQL 迁移由 flyway 服务执行（一次性），授权在迁移后由 grants 服务落地。
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: agentflow-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"  # 本机 3306 已被 Windows MySQL 占用
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --log-bin-trust-function-creators=1
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ../db/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  flyway:
+    image: flyway/flyway:10
+    container_name: agentflow-flyway
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ../db/mysql/migration:/flyway/sql:ro
+    environment:
+      FLYWAY_URL: jdbc:mysql://mysql:3306/agentflow?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      FLYWAY_USER: root
+      FLYWAY_PASSWORD: root
+      FLYWAY_TABLE: flyway_schema_history
+    command: migrate
+
+  grants:
+    image: mysql:8.4
+    container_name: agentflow-grants
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+    volumes:
+      - ../db/mysql/grants:/grants:ro
+    command:
+      - sh
+      - -c
+      - mysql -h mysql -uroot -proot agentflow < /grants/least-privilege.sql
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentflow-postgres
+    environment:
+      POSTGRES_USER: agentflow
+      POSTGRES_PASSWORD: agentflow
+      POSTGRES_DB: agentflow_events
+    ports:
+      - "5433:5432"  # 本机 127.0.0.1:5432 已被 Windows PostgreSQL 占用
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentflow -d agentflow_events"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentflow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: agentflow-rmq-namesrv
+    ports:
+      - "9876:9876"
+    command: sh mqnamesrv
+    volumes:
+      - rmq-namesrv:/home/rocketmq/logs
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "bash -c '(echo > /dev/tcp/127.0.0.1/9876) 2>/dev/null || exit 1'"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.1
+    container_name: agentflow-rmq-broker
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    ports:
+      - "10911:10911"
+      - "10909:10909"
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+    command:
+      - sh
+      - -c
+      - "echo 'brokerIP1: 127.0.0.1' > /tmp/broker.conf && echo 'autoCreateTopicEnable: true' >> /tmp/broker.conf && sh mqbroker -n rocketmq-namesrv:9876 -c /tmp/broker.conf"
+    volumes:
+      - rmq-broker:/home/rocketmq/logs
+
+volumes:
+  mysql-data:
+  pg-data:
+  redis-data:
+  rmq-namesrv:
+  rmq-broker:
