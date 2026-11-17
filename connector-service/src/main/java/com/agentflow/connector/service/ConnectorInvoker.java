@@ -94,7 +94,10 @@ public class ConnectorInvoker {
 
         JsonNode config = connector.config();
         try {
-            URI uri = buildUri(connector, config, cmd);
+            SandboxPolicy.ValidatedTarget target = buildUri(connector, config, cmd);
+            URI uri = target.uri();
+            // 连接前复核 DNS：若解析漂移或被改指内网则拒绝，缩小 rebinding 的 TOCTOU 窗口
+            sandbox.assertNoRebinding(uri.getHost(), target.resolved());
             HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofMillis(Math.max(cmd.timeoutMs(), 1_000)));
             Map<String, Object> params = cmd.params() == null ? Map.of() : cmd.params();
@@ -156,7 +159,8 @@ public class ConnectorInvoker {
         }
     }
 
-    private URI buildUri(ConnectorRow connector, JsonNode config, InvokeCommand cmd) {
+    private SandboxPolicy.ValidatedTarget buildUri(ConnectorRow connector, JsonNode config,
+                                                   InvokeCommand cmd) {
         String baseUrl = config.path("baseUrl").asText("");
         if (baseUrl.isBlank()) {
             throw new CredentialException("CONN-CONFIG-001", "baseUrl missing");
@@ -171,7 +175,7 @@ public class ConnectorInvoker {
                 && cmd.params() != null && !cmd.params().isEmpty()) {
             url += (url.contains("?") ? "&" : "?") + query(cmd.params());
         }
-        return sandbox.validate(url, hosts);
+        return sandbox.validateWithDns(url, hosts);
     }
 
     private static String methodOf(JsonNode config, String operation) {
@@ -217,7 +221,8 @@ public class ConnectorInvoker {
             }
             JsonNode token;
             try {
-                token = JSON.readTree(cipher.open(credential.oauthToken(), aad));
+                token = JSON.readTree(cipher.open(credential.oauthToken(), aad,
+                        credential.keyId() == null ? cipher.keyId() : credential.keyId()));
             } catch (Exception e) {
                 throw new CredentialException("CONN-CREDENTIAL-002", "oauth token unreadable");
             }
@@ -232,7 +237,9 @@ public class ConnectorInvoker {
         if (credential.secret() == null) {
             throw new CredentialException("CONN-CREDENTIAL-001", "secret not configured");
         }
-        String secret = new String(cipher.open(credential.secret(), aad), StandardCharsets.UTF_8);
+        String secret = new String(cipher.open(credential.secret(), aad,
+                credential.keyId() == null ? cipher.keyId() : credential.keyId()),
+                StandardCharsets.UTF_8);
         if ("BASIC".equals(authType)) {
             builder.header("Authorization",
                     "Basic " + Base64.getEncoder().encodeToString(

@@ -44,8 +44,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({HttpMessageNotReadableException.class,
             MissingServletRequestParameterException.class})
     public ResponseEntity<ProblemDetail> badRequest(Exception ex) {
+        // 不回显 ex.getMessage()：其内容可能包含请求体片段（PII/凭据）。仅记入服务端日志。
+        log.debug("unreadable/invalid request: {}", ex.toString());
         ProblemDetail pd = ProblemDetailFactory.create(
-                ErrorCode.COM_VALIDATION_001, "请求格式错误: " + ex.getMessage());
+                ErrorCode.COM_VALIDATION_001, "请求格式错误");
         return ResponseEntity.badRequest().body(pd);
     }
 

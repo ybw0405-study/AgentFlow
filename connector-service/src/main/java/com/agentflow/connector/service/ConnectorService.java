@@ -140,6 +140,10 @@ public class ConnectorService {
             throw new BusinessException(ErrorCode.COM_VALIDATION_001,
                     "oauth.authorizationUrl/clientId required");
         }
+        // 与 tokenUrl 同样过出网沙箱：禁止 javascript:/非白名单域名/私网地址，防开放重定向与钓鱼。
+        List<String> authHosts = stringList(oauth.path("allowedHosts").isMissingNode()
+                ? row.config().path("allowedHosts") : oauth.path("allowedHosts"));
+        sandbox.validate(authorizationUrl, authHosts);
         String state = issueState(row.id(), tenant.tenantId());
         String url = authorizationUrl + (authorizationUrl.contains("?") ? "&" : "?")
                 + "response_type=code"
@@ -164,11 +168,12 @@ public class ConnectorService {
         List<String> hosts = stringList(oauth.path("allowedHosts").isMissingNode()
                 ? row.config().path("allowedHosts") : oauth.path("allowedHosts"));
         URI uri = sandbox.validate(tokenUrl, hosts);
-        String clientSecret = new String(cipher.open(repo.findCredential(row.id())
-                        .map(c -> c.secret())
-                        .orElseThrow(() -> new BusinessException(ErrorCode.COM_VALIDATION_001,
-                                "oauth client secret not configured")),
-                CredentialCipher.aad(row.id(), row.tenantId())), StandardCharsets.UTF_8);
+        var cred = repo.findCredential(row.id())
+                .orElseThrow(() -> new BusinessException(ErrorCode.COM_VALIDATION_001,
+                        "oauth client secret not configured"));
+        String clientSecret = new String(cipher.open(cred.secret(),
+                CredentialCipher.aad(row.id(), row.tenantId()),
+                cred.keyId() == null ? cipher.keyId() : cred.keyId()), StandardCharsets.UTF_8);
         String form = "grant_type=authorization_code"
                 + "&code=" + enc(code)
                 + "&client_id=" + enc(oauth.path("clientId").asText(""))

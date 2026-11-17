@@ -5,7 +5,8 @@ spring:
   application:
     name: connector-service
   datasource:
-    url: jdbc:mysql://${AF_MYSQL_HOST:127.0.0.1}:${AF_MYSQL_PORT:3307}/agentflow?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=UTF-8
+    # 生产设置 AF_PRODUCTION=true 时必须同时置 AF_MYSQL_USE_TLS=true 并移除 allowPublicKeyRetrieval
+    url: jdbc:mysql://${AF_MYSQL_HOST:127.0.0.1}:${AF_MYSQL_PORT:3307}/agentflow?useSSL=${AF_MYSQL_USE_TLS:false}&requireSSL=${AF_MYSQL_USE_TLS:false}&serverTimezone=UTC&allowPublicKeyRetrieval=${AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:true}&characterEncoding=UTF-8
     username: ${AF_MYSQL_USER:root}
     password: ${AF_MYSQL_PASSWORD:root}
   data:
@@ -21,6 +22,8 @@ agentflow:
   credential:
     # 开发默认值（32 字节 base64）；生产必须由 KMS/环境注入，轮换时旧 key_id 仍可解密
     master-key: ${AF_CRED_MASTER_KEY:ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM=}
+    # 轮换窗口内的旧主密钥（base64，逗号分隔），用于解密旧密文；轮换完成并全量重加密后清空
+    previous-keys: ${AF_CRED_MASTER_KEY_PREVIOUS:}
   sandbox:
     allow-insecure-http: ${AF_SANDBOX_ALLOW_HTTP:false}
     allow-loopback: ${AF_SANDBOX_ALLOW_LOOPBACK:false}

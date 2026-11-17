@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
@@ -18,7 +20,8 @@ import javax.crypto.spec.SecretKeySpec;
  * （防「换个 connector_id 就读到别人的密钥」）。
  *
  * <p>主密钥来自 {@code AF_CRED_MASTER_KEY}（base64 32 字节）；keyId 为主密钥 SHA-256
- * 前 12 位十六进制，随密文入库，为将来轮换留下版本位。
+ * 前 12 位十六进制，随凭据入库。轮换时通过 {@code AF_CRED_MASTER_KEY_PREVIOUS} 传入旧密钥，
+ * 解密按凭据携带的 keyId 从 keyring 选密钥——历史密文可用旧密钥解开，新密文用当前密钥封装。
  */
 public final class CredentialCipher {
 
@@ -26,22 +29,42 @@ public final class CredentialCipher {
     private static final int TAG_BITS = 128;
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private final SecretKey key;
-    private final String keyId;
+    private final SecretKey key;               // 当前密钥（用于 seal）
+    private final String keyId;                // 当前密钥 keyId
+    private final Map<String, SecretKey> keyring;  // keyId → 密钥（含旧密钥，用于 open）
 
     public CredentialCipher(String base64Key) {
+        this(base64Key, java.util.List.of());
+    }
+
+    /** @param previousKeys 轮换前的旧主密钥（base64），用于解密历史密文。 */
+    public CredentialCipher(String base64Key, java.util.List<String> previousKeys) {
+        byte[] raw = decodeKey(base64Key, "AF_CRED_MASTER_KEY");
+        this.key = new SecretKeySpec(raw, "AES");
+        this.keyId = keyIdOf(raw);
+        Map<String, SecretKey> ring = new HashMap<>();
+        ring.put(this.keyId, this.key);
+        for (String previous : previousKeys) {
+            if (previous == null || previous.isBlank()) {
+                continue;
+            }
+            byte[] prevRaw = decodeKey(previous, "AF_CRED_MASTER_KEY_PREVIOUS");
+            ring.put(keyIdOf(prevRaw), new SecretKeySpec(prevRaw, "AES"));
+        }
+        this.keyring = Map.copyOf(ring);
+    }
+
+    private static byte[] decodeKey(String base64Key, String name) {
         byte[] raw;
         try {
             raw = Base64.getDecoder().decode(base64Key);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("AF_CRED_MASTER_KEY must be base64", e);
+            throw new IllegalStateException(name + " must be base64", e);
         }
         if (raw.length != 32) {
-            throw new IllegalStateException(
-                    "AF_CRED_MASTER_KEY must decode to 32 bytes, got " + raw.length);
+            throw new IllegalStateException(name + " must decode to 32 bytes, got " + raw.length);
         }
-        this.key = new SecretKeySpec(raw, "AES");
-        this.keyId = keyIdOf(raw);
+        return raw;
     }
 
     public String keyId() {
@@ -66,7 +89,22 @@ public final class CredentialCipher {
         }
     }
 
+    /** 使用当前密钥解密（兼容旧调用方；新代码应传 keyId 以支持轮换）。 */
     public byte[] open(byte[] stored, byte[] aad) {
+        return open(stored, aad, keyId);
+    }
+
+    /**
+     * 按凭据入库时记录的 keyId 选密钥解密。未知 keyId（密钥已从 keyring 移除）直接拒绝，
+     * 避免静默用错密钥或密钥轮换后历史密文无法解开。
+     */
+    public byte[] open(byte[] stored, byte[] aad, String storedKeyId) {
+        SecretKey chosen = keyring.get(storedKeyId);
+        if (chosen == null) {
+            throw new IllegalStateException(
+                    "unknown credential keyId: " + storedKeyId
+                            + " (is AF_CRED_MASTER_KEY_PREVIOUS configured?)");
+        }
         try {
             if (stored == null || stored.length <= IV_BYTES) {
                 throw new IllegalArgumentException("credential ciphertext malformed");
@@ -74,7 +112,7 @@ public final class CredentialCipher {
             byte[] iv = new byte[IV_BYTES];
             System.arraycopy(stored, 0, iv, 0, IV_BYTES);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
+            cipher.init(Cipher.DECRYPT_MODE, chosen, new GCMParameterSpec(TAG_BITS, iv));
             cipher.updateAAD(aad);
             return cipher.doFinal(stored, IV_BYTES, stored.length - IV_BYTES);
         } catch (Exception e) {

@@ -8,15 +8,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * PII 第一层脱敏（pii-v1）。与 Python 侧 governance/pii.py 规则逐条对齐——
+ * PII 第一层脱敏（pii-v2）。与 Python 侧 governance/pii.py 规则逐条对齐——
  * 任何一侧修改规则必须同步另一侧并更新 parity 测试。
  *
- * <p>顺序：NFKC 归一化 → 去零宽字符 → EMAIL → ID_CARD_18 → ID_CARD_15 → PHONE。
- * 占位符只暴露类别：[EMAIL] / [ID_CARD] / [PHONE]。
+ * <p>顺序：NFKC 归一化 → 去零宽字符 → EMAIL → ID_CARD_18 → ID_CARD_15 → PHONE
+ * → BANK_CARD（Luhn 校验）→ PASSPORT。
+ * 占位符只暴露类别：[EMAIL] / [ID_CARD] / [PHONE] / [BANK_CARD] / [PASSPORT]。
  */
 public final class PiiMasker {
 
-    public static final String VERSION = "pii-v1";
+    public static final String VERSION = "pii-v2";
 
     private static final Pattern ZERO_WIDTH = Pattern.compile("[\u200B-\u200D\u2060\uFEFF]");
     private static final Pattern EMAIL =
@@ -28,6 +29,9 @@ public final class PiiMasker {
             "(?<!\\d)[1-9]\\d{5}\\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01])\\d{3}(?!\\d)");
     private static final Pattern PHONE =
             Pattern.compile("(?<!\\d)(?:\\+?86[\\s-]?)?1[3-9]\\d{9}(?!\\d)");
+    private static final Pattern BANK_CARD = Pattern.compile("(?<!\\d)\\d{16,19}(?!\\d)");
+    private static final Pattern PASSPORT =
+            Pattern.compile("(?<![A-Z0-9])[EGSDP][0-9]{8}(?![A-Z0-9])");
 
     private PiiMasker() {
     }
@@ -36,10 +40,12 @@ public final class PiiMasker {
     }
 
     private static final List<Object[]> RULES = List.of(
-            new Object[] {"EMAIL", EMAIL},
-            new Object[] {"ID_CARD", ID_CARD_18},
-            new Object[] {"ID_CARD", ID_CARD_15},
-            new Object[] {"PHONE", PHONE});
+            new Object[] {"EMAIL", EMAIL, false},
+            new Object[] {"ID_CARD", ID_CARD_18, false},
+            new Object[] {"ID_CARD", ID_CARD_15, false},
+            new Object[] {"PHONE", PHONE, false},
+            new Object[] {"BANK_CARD", BANK_CARD, true},   // true = 需通过 Luhn 校验才命中
+            new Object[] {"PASSPORT", PASSPORT, false});
 
     public static PiiMaskingResult mask(String text) {
         if (text == null || text.isEmpty()) {
@@ -52,10 +58,16 @@ public final class PiiMasker {
         for (Object[] rule : RULES) {
             String category = (String) rule[0];
             Pattern pattern = (Pattern) rule[1];
+            boolean luhnCheck = (boolean) rule[2];
             Matcher m = pattern.matcher(masked);
             StringBuffer sb = new StringBuffer();
             int hits = 0;
             while (m.find()) {
+                String candidate = m.group();
+                if (luhnCheck && !luhnValid(candidate)) {
+                    m.appendReplacement(sb, Matcher.quoteReplacement(candidate));
+                    continue;
+                }
                 m.appendReplacement(sb, Matcher.quoteReplacement("[" + category + "]"));
                 hits++;
             }
@@ -67,6 +79,28 @@ public final class PiiMasker {
             }
         }
         return new PiiMaskingResult(masked, List.copyOf(categories), count);
+    }
+
+    /** Luhn（模 10）校验：过滤掉恰好 16-19 位但不是银行卡的随机数字。 */
+    private static boolean luhnValid(String digits) {
+        int sum = 0;
+        boolean doubleDigit = false;
+        for (int i = digits.length() - 1; i >= 0; i--) {
+            char c = digits.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+            int d = c - '0';
+            if (doubleDigit) {
+                d *= 2;
+                if (d > 9) {
+                    d -= 9;
+                }
+            }
+            sum += d;
+            doubleDigit = !doubleDigit;
+        }
+        return sum % 10 == 0;
     }
 
     public static boolean containsPii(String text) {

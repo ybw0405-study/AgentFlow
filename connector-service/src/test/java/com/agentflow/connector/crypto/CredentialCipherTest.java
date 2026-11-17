@@ -65,4 +65,29 @@ class CredentialCipherTest {
         assertThat(cipher.verify("conn-1|space-b|1700000000".getBytes(StandardCharsets.UTF_8),
                 signature)).isFalse();
     }
+
+    @Test
+    void keyringDecryptsCiphertextSealedByPreviousKey() {
+        // 用「旧密钥」封装密文，记录其 keyId；再用「新密钥 + 旧密钥入 ring」解密
+        String oldKey = "ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM=";   // dev-only-cred-master-key-32bytes
+        String newKey = java.util.Base64.getEncoder().encodeToString(
+                "ABCD1234EFGH5678IJKL9012MNOP3456".getBytes(StandardCharsets.UTF_8));
+        CredentialCipher oldCipher = new CredentialCipher(oldKey);
+        byte[] aad = CredentialCipher.aad("conn-1", "space-a");
+        byte[] historical = oldCipher.seal("legacy-secret".getBytes(StandardCharsets.UTF_8), aad);
+
+        CredentialCipher rotated = new CredentialCipher(newKey, java.util.List.of(oldKey));
+        assertThat(rotated.keyId()).isNotEqualTo(oldCipher.keyId());
+        assertThat(new String(rotated.open(historical, aad, oldCipher.keyId()),
+                StandardCharsets.UTF_8)).isEqualTo("legacy-secret");
+    }
+
+    @Test
+    void unknownKeyIdIsRejected() {
+        byte[] aad = CredentialCipher.aad("conn-1", "space-a");
+        byte[] sealed = cipher.seal("x".getBytes(StandardCharsets.UTF_8), aad);
+        assertThatThrownBy(() -> cipher.open(sealed, aad, "deadbeef"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unknown credential keyId");
+    }
 }

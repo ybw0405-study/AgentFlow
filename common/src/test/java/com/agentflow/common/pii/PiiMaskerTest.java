@@ -63,4 +63,25 @@ class PiiMaskerTest {
         assertEquals("没有问题的问题", r.masked());
         assertFalse(PiiMasker.containsPii("没有问题的问题"));
     }
+
+    @Test
+    void bankCardMaskedWhenLuhnValid() {
+        var r = PiiMasker.mask("卡号 4111111111111111 已绑定");
+        assertTrue(r.masked().contains("[BANK_CARD]"));
+        assertTrue(r.categories().contains("BANK_CARD"));
+        assertFalse(r.masked().contains("4111111111111111"));
+    }
+
+    @Test
+    void bankCardNotMaskedWhenLuhnInvalid() {
+        var r = PiiMasker.mask("流水号 1234567890123456");
+        assertFalse(r.masked().contains("[BANK_CARD]"));
+    }
+
+    @Test
+    void passportMasked() {
+        var r = PiiMasker.mask("护照 E12345678 已核验");
+        assertTrue(r.masked().contains("[PASSPORT]"));
+        assertTrue(r.categories().contains("PASSPORT"));
+    }
 }

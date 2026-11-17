@@ -51,3 +51,20 @@ def test_plain_text_untouched():
 
 def test_detect_categories():
     assert detect_categories("call 13900001111") == ("PHONE",)
+
+
+def test_bank_card_masked_luhn_valid():
+    r = mask_text("卡号 4111111111111111 已绑定")
+    assert "[BANK_CARD]" in r.masked and "BANK_CARD" in r.categories
+    assert "4111111111111111" not in r.masked
+
+
+def test_bank_card_luhn_invalid_not_masked():
+    # 16 位但不满足 Luhn 的随机数字不应被误判为银行卡
+    r = mask_text("流水号 1234567890123456")
+    assert "[BANK_CARD]" not in r.masked
+
+
+def test_passport_masked():
+    r = mask_text("护照 E12345678 已核验")
+    assert "[PASSPORT]" in r.masked and "PASSPORT" in r.categories

@@ -127,7 +127,7 @@ public class ExecutionController {
                 for (var e : page.events()) {
                     emitter.send(SseEmitter.event()
                             .id(String.valueOf(e.seq()))
-                            .name(e.eventType())
+                            .name("engine-event")
                             .data(objectMapper.writeValueAsString(e)));
                 }
                 sseHub.register(id, emitter);

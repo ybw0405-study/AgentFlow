@@ -1,5 +1,6 @@
 """运行时配置。全部经环境变量注入（前缀 AF_），仓库内无任何真实密钥。"""
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,6 +45,27 @@ class Settings(BaseSettings):
     event_tail_max_limit: int = 500
 
 
+_WEAK_INTERNAL_TOKENS = {"dev-internal-token", ""}
+
+
+def _is_true(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _guard_production(settings: "Settings") -> None:
+    """生产模式（AF_PRODUCTION=true）拒绝仓库内的 dev 默认令牌，避免默认凭证上线。"""
+    if not _is_true(os.getenv("AF_PRODUCTION", "false")):
+        return
+    token = settings.internal_token
+    if token in _WEAK_INTERNAL_TOKENS or token.startswith("dev-"):
+        raise RuntimeError(
+            "FAIL-FAST: AF_INTERNAL_TOKEN still uses a development default. "
+            "Provide a strong value in production."
+        )
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    _guard_production(settings)
+    return settings

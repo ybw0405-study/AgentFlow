@@ -20,8 +20,11 @@ public class ConnectorConfiguration {
 
     @Bean
     public CredentialCipher credentialCipher(
-            @Value("${agentflow.credential.master-key}") String masterKey) {
-        return new CredentialCipher(masterKey);
+            @Value("${agentflow.credential.master-key}") String masterKey,
+            @Value("${agentflow.credential.previous-keys:}") String previousKeys) {
+        java.util.List<String> keys = java.util.Arrays.stream(previousKeys.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).toList();
+        return new CredentialCipher(masterKey, keys);
     }
 
     @Bean

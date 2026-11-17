@@ -8,7 +8,8 @@ spring:
     multipart:
       enabled: false
   datasource:
-    url: jdbc:mysql://${AF_MYSQL_HOST:127.0.0.1}:${AF_MYSQL_PORT:3307}/agentflow?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=UTF-8
+    # 生产设置 AF_PRODUCTION=true 时必须同时置 AF_MYSQL_USE_TLS=true 并移除 allowPublicKeyRetrieval
+    url: jdbc:mysql://${AF_MYSQL_HOST:127.0.0.1}:${AF_MYSQL_PORT:3307}/agentflow?useSSL=${AF_MYSQL_USE_TLS:false}&requireSSL=${AF_MYSQL_USE_TLS:false}&serverTimezone=UTC&allowPublicKeyRetrieval=${AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:true}&characterEncoding=UTF-8
     username: ${AF_MYSQL_USER:root}
     password: ${AF_MYSQL_PASSWORD:root}
   flyway:

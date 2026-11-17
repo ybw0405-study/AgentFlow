@@ -6,6 +6,8 @@ import java.net.URI;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 出网沙箱：域名白名单 + 私网地址拒绝。
@@ -19,10 +21,16 @@ import java.util.Locale;
  *   <li>默认禁止环回（allowLoopback 仅供单测指向本地 stub server）。</li>
  * </ul>
  *
- * <p>残余风险：DNS rebinding（解析时合法、连接时被改指内网）。缓解是白名单强约束 +
- * 生产环境出网代理固定 egress IP；此处不做 IP 钉扎，避免破坏 CDN。
+ * <p>DNS rebinding 防护：{@link #validate} 返回时携带已解析并校验过的 IP 快照，
+ * 调用方在真正出网前用 {@link #assertNoRebinding} 再次解析并比对——若解析结果漂移、
+ * 或出现被封禁地址则拒绝连接，缩小「校验—连接」之间的 TOCTOU 窗口。仍建议生产环境
+ * 配合固定 egress IP 的出网代理做最终兜底（防连接阶段的二次 rebinding）。
  */
 public final class SandboxPolicy {
+
+    /** 校验结果：通过校验的 URI + 当时的 DNS 解析快照（用于连接前防 rebinding 复核）。 */
+    public record ValidatedTarget(URI uri, List<InetAddress> resolved) {
+    }
 
     public static final class Violation extends RuntimeException {
         public Violation(String message) {
@@ -51,7 +59,13 @@ public final class SandboxPolicy {
         this.resolver = resolver;
     }
 
+    /** 返回 URI 的兼容入口（不含 DNS 快照）。 */
     public URI validate(String rawUrl, List<String> allowedHosts) {
+        return validateWithDns(rawUrl, allowedHosts).uri();
+    }
+
+    /** 校验 URL 并携带通过校验时的 DNS 解析快照。 */
+    public ValidatedTarget validateWithDns(String rawUrl, List<String> allowedHosts) {
         URI uri;
         try {
             uri = URI.create(rawUrl);
@@ -73,12 +87,35 @@ public final class SandboxPolicy {
         if (!hostAllowed(host, allowedHosts)) {
             throw new Violation("host not in allowlist: " + host);
         }
-        for (InetAddress address : resolveHost(host)) {
+        InetAddress[] addresses = resolveHost(host);
+        for (InetAddress address : addresses) {
             if (isBlocked(address) && !(allowLoopback && address.isLoopbackAddress())) {
                 throw new Violation("destination address blocked: " + address.getHostAddress());
             }
         }
-        return uri;
+        return new ValidatedTarget(uri, List.of(addresses));
+    }
+
+    /**
+     * 连接前复核：再次解析同一 host，若出现被封禁地址、或解析集合与校验时漂移
+     * （DNS rebinding 特征）则拒绝。缩小校验与出网之间的 TOCTOU 窗口。
+     *
+     * @param host     目标主机名（来自已校验 URI）
+     * @param approved {@link #validateWithDns}  captured 的地址快照
+     */
+    public void assertNoRebinding(String host, List<InetAddress> approved) {
+        InetAddress[] current = resolveHost(host);
+        Set<String> approvedIps = approved.stream()
+                .map(InetAddress::getHostAddress).collect(Collectors.toSet());
+        for (InetAddress address : current) {
+            if (isBlocked(address) && !(allowLoopback && address.isLoopbackAddress())) {
+                throw new Violation("dns rebound to blocked address: " + address.getHostAddress());
+            }
+            if (!approvedIps.contains(address.getHostAddress())) {
+                throw new Violation("dns answer drifted for " + host
+                        + ": " + address.getHostAddress());
+            }
+        }
     }
 
     public static boolean hostAllowed(String host, List<String> allowedHosts) {

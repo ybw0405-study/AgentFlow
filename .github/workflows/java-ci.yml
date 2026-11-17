@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 最小权限：CI 只需读取源码，杜绝 GITHUB_TOKEN 被滥用
+permissions:
+  contents: read
+
 concurrency:
   group: java-${{ github.ref }}
   cancel-in-progress: true
