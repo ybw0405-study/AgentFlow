@@ -1,0 +1,233 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { executionApi } from '@/api'
+import { openSse } from '@/api/sse'
+import type { SseSession } from '@/api/sse'
+import { useAuthStore } from '@/stores/auth'
+import { ApiError } from '@/api/http'
+import type { EngineEvent, ExecutionDetail, NodeExecutionDto, NodeIo } from '@/types/api'
+import NodeTree from '@/components/execution/NodeTree.vue'
+import IoPanel from '@/components/execution/IoPanel.vue'
+import TracePanel from '@/components/execution/TracePanel.vue'
+
+const route = useRoute()
+const auth = useAuthStore()
+const executionId = route.params.id as string
+
+const detail = ref<ExecutionDetail | null>(null)
+const error = ref<string | null>(null)
+const selectedKey = ref<string | null>(null)
+const io = ref<NodeIo | null>(null)
+const ioLoading = ref(false)
+const liveNote = ref('')
+let sse: SseSession | null = null
+
+const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT'])
+
+const nodes = computed<NodeExecutionDto[]>(() => detail.value?.nodes ?? [])
+
+function statusClass(s: string): string {
+  return {
+    RUNNING: 'af-status--running',
+    FAILED: 'af-status--failed',
+    TIMED_OUT: 'af-status--timed_out',
+  }[s] ?? ''
+}
+
+async function load(): Promise<void> {
+  detail.value = await executionApi.detail(executionId)
+}
+
+async function selectNode(nodeKey: string): Promise<void> {
+  selectedKey.value = nodeKey
+  ioLoading.value = true
+  io.value = null
+  try {
+    io.value = await executionApi.nodeIo(executionId, nodeKey)
+  } catch {
+    io.value = null
+  } finally {
+    ioLoading.value = false
+  }
+}
+
+async function cancel(): Promise<void> {
+  await executionApi.cancel(executionId)
+  await load()
+}
+
+function handleLiveEvent(e: EngineEvent): void {
+  if (!detail.value) return
+  const exec = detail.value.execution
+  switch (e.eventType) {
+    case 'ExecutionStarted':
+      exec.status = 'RUNNING'
+      break
+    case 'ExecutionCompleted':
+    case 'ExecutionFailed':
+    case 'ExecutionCancelled':
+    case 'ExecutionTimedOut':
+      void load()  // 终态：拉全量对齐投影
+      return
+    default:
+      break
+  }
+  // 节点事件：轻量更新树（attempt 行以 displayOrder 对齐）
+  if (e.nodeKey) {
+    const rows = detail.value.nodes
+    const existing = rows.find(
+      (n) => n.nodeKey === e.nodeKey && n.attempt === (Number(e.payload.attempt ?? 0)),
+    )
+    const statusByEvent: Record<string, string> = {
+      NodeScheduled: 'SCHEDULED',
+      NodeStarted: 'RUNNING',
+      NodeCompleted: 'SUCCEEDED',
+      NodeFailed: 'FAILED',
+      NodeSkipped: 'SKIPPED',
+      GateSuspended: 'SUSPENDED',
+    }
+    const status = statusByEvent[e.eventType]
+    if (status && existing) {
+      existing.status = status
+      if (typeof e.payload.tokenUsed === 'number') existing.tokenUsed = e.payload.tokenUsed
+      if (typeof e.payload.latencyMs === 'number') existing.latencyMs = e.payload.latencyMs
+      if (typeof e.payload.errorCode === 'string') existing.errorCode = e.payload.errorCode
+    } else if (status) {
+      rows.push({
+        seq: e.seq,
+        nodeKey: e.nodeKey,
+        displayOrder: e.aggregateVersion,
+        status,
+        attempt: Number(e.payload.attempt ?? 0),
+        outputDigest: null,
+        tokenUsed: Number(e.payload.tokenUsed ?? 0),
+        latencyMs: null,
+        retryCount: 0,
+        errorCode: null,
+        startedAt: null,
+        finishedAt: null,
+      } as NodeExecutionDto)
+    }
+  }
+}
+
+onMounted(async () => {
+  try {
+    await load()
+  } catch (e) {
+    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    return
+  }
+  if (TERMINAL.has(detail.value?.execution.status ?? '')) {
+    liveNote.value = '执行已结束'
+    return
+  }
+  const headers: Record<string, string> = {}
+  if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`
+  if (auth.currentSpaceId) headers['X-Space-Id'] = auth.currentSpaceId
+  sse = openSse(`/api/v1/executions/${executionId}/events/stream`, { headers }, {
+    onFrame: (frame) => {
+      if (frame.event === 'engine-event') {
+        try {
+          handleLiveEvent(JSON.parse(frame.data) as EngineEvent)
+        } catch {
+          // 忽略坏帧
+        }
+      }
+    },
+    onError: () => {
+      liveNote.value = '实时通道断开，5s 后重连'
+      setTimeout(() => void load(), 5000)
+    },
+  })
+  liveNote.value = '实时推送中'
+})
+
+onUnmounted(() => sse?.close())
+</script>
+
+<template>
+  <div style="display: flex; flex-direction: column; height: 100%">
+    <div class="af-topbar">
+      <router-link
+        to="/executions"
+        class="af-dim"
+      >← 执行列表</router-link>
+      <span
+        v-if="detail"
+        class="af-status"
+        :class="statusClass(detail.execution.status)"
+      >
+        {{ detail.execution.status }}
+      </span>
+      <span class="mono af-dim">{{ executionId.slice(0, 8) }}</span>
+      <span
+        class="af-faint"
+        style="font-size: 11px"
+      >{{ liveNote }}</span>
+      <div class="af-spacer" />
+      <button
+        v-if="detail && !TERMINAL.has(detail.execution.status)"
+        class="af-btn af-btn--sm af-btn--danger"
+        @click="cancel"
+      >
+        取消执行
+      </button>
+    </div>
+
+    <div
+      v-if="error"
+      class="af-error-box"
+      style="margin: 8px 12px 0"
+    >
+      {{ error }}
+    </div>
+
+    <div
+      v-if="detail"
+      style="flex: 1; display: grid; min-height: 0;
+         grid-template-columns: 260px 1fr 280px"
+    >
+      <div
+        class="af-panel"
+        style="border-radius: 0; border-width: 0 1px 0 0"
+      >
+        <NodeTree
+          :nodes="nodes"
+          :selected-key="selectedKey"
+          @select="selectNode"
+        />
+      </div>
+      <div
+        class="af-panel"
+        style="border-radius: 0; border-width: 0 1px 0 0"
+      >
+        <IoPanel
+          :io="io"
+          :loading="ioLoading"
+          :node-key="selectedKey"
+        />
+      </div>
+      <div style="overflow: auto">
+        <TracePanel :execution="detail.execution" />
+        <div style="padding: 12px">
+          <div
+            class="af-label"
+            style="margin-top: 0"
+          >
+            结果
+          </div>
+          <pre
+            class="mono af-dim"
+            style="white-space: pre-wrap; font-size: 11.5px"
+          >{{
+            detail.execution.errorCode
+              ? `执行失败：${detail.execution.errorCode}`
+              : '见节点输出（选择左侧节点）'
+          }}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

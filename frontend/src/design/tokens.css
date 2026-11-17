@@ -1,0 +1,50 @@
+/* ============================================================
+   AgentFlow · 暗物质（Dark Matter）设计令牌
+   唯一可写原始色值的文件；其余文件一律引用变量。
+   状态色仅三种：强调 #00E5FF（进行中/焦点）、#FF4D6D（失败/危险）、#8B8B9E（中性/完成）。
+   禁止绿色（任何色值、任何语义）。
+   ============================================================ */
+
+:root {
+  /* 底色阶 */
+  --af-bg: #08080C;
+  --af-panel: #0E0E14;
+  --af-surface: #12121A;
+  --af-raised: #1A1A24;
+
+  /* 描边 */
+  --af-border: rgba(255, 255, 255, 0.08);
+  --af-border-strong: rgba(255, 255, 255, 0.14);
+
+  /* 文字 */
+  --af-text: #E8E8F0;
+  --af-text-dim: rgba(232, 232, 240, 0.55);
+  --af-text-faint: rgba(232, 232, 240, 0.32);
+
+  /* 唯一强调色 */
+  --af-accent: #00E5FF;
+  --af-accent-dim: rgba(0, 229, 255, 0.10);
+  --af-accent-border: rgba(0, 229, 255, 0.35);
+
+  /* 失败/危险 */
+  --af-danger: #FF4D6D;
+  --af-danger-dim: rgba(255, 77, 109, 0.10);
+
+  /* 中性/完成 */
+  --af-neutral: #8B8B9E;
+
+  /* 字体 */
+  --af-font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --af-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
+
+  /* 几何 */
+  --af-radius: 6px;
+  --af-radius-sm: 4px;
+
+  /* 网格与遮罩 */
+  --af-grid-line: rgba(255, 255, 255, 0.04);
+  --af-backdrop: rgba(0, 0, 0, 0.60);
+
+  /* 动效：短促、ease-out、只反馈状态 */
+  --af-motion: 180ms ease-out;
+}

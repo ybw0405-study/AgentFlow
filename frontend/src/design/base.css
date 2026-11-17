@@ -1,0 +1,293 @@
+@import './tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--af-bg);
+  color: var(--af-text);
+  font-family: var(--af-font);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--af-accent);
+  text-decoration: none;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--af-mono);
+  font-size: 12px;
+}
+
+/* ---------- 布局骨架 ---------- */
+
+.af-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.af-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 44px;
+  padding: 0 16px;
+  background: var(--af-panel);
+  border-bottom: 1px solid var(--af-border);
+  flex: none;
+}
+
+.af-brand {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--af-text);
+}
+
+.af-brand span {
+  color: var(--af-accent);
+}
+
+.af-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.af-nav a {
+  color: var(--af-text-dim);
+  padding: 4px 10px;
+  border-radius: var(--af-radius-sm);
+  transition: color var(--af-motion), background var(--af-motion);
+}
+
+.af-nav a.router-link-active {
+  color: var(--af-accent);
+  background: var(--af-accent-dim);
+}
+
+.af-main {
+  flex: 1;
+  overflow: auto;
+}
+
+.af-spacer {
+  flex: 1;
+}
+
+/* ---------- 面板与表格 ---------- */
+
+.af-panel {
+  background: var(--af-panel);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius);
+}
+
+.af-page {
+  padding: 20px 24px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.af-page-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.af-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.af-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--af-text-faint);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--af-border-strong);
+  white-space: nowrap;
+}
+
+.af-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--af-border);
+  color: var(--af-text);
+}
+
+.af-table tr:hover td {
+  background: var(--af-surface);
+}
+
+/* ---------- 控件 ---------- */
+
+.af-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--af-radius-sm);
+  border: 1px solid var(--af-border-strong);
+  background: var(--af-surface);
+  color: var(--af-text);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color var(--af-motion), color var(--af-motion);
+}
+
+.af-btn:hover {
+  border-color: var(--af-accent-border);
+  color: var(--af-accent);
+}
+
+.af-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.af-btn--primary {
+  background: var(--af-accent-dim);
+  border-color: var(--af-accent-border);
+  color: var(--af-accent);
+}
+
+.af-btn--danger {
+  color: var(--af-danger);
+  border-color: rgba(255, 77, 109, 0.35);
+}
+
+.af-btn--sm {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.af-input,
+.af-select,
+.af-textarea {
+  width: 100%;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+  color: var(--af-text);
+  padding: 6px 9px;
+  font-size: 12.5px;
+  font-family: var(--af-font);
+  outline: none;
+  transition: border-color var(--af-motion);
+}
+
+.af-input:focus,
+.af-select:focus,
+.af-textarea:focus {
+  border-color: var(--af-accent-border);
+}
+
+.af-textarea {
+  font-family: var(--af-mono);
+  resize: vertical;
+}
+
+.af-label {
+  display: block;
+  font-size: 11px;
+  color: var(--af-text-faint);
+  margin: 10px 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ---------- 状态 ---------- */
+
+.af-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--af-mono);
+  font-size: 11px;
+  color: var(--af-neutral);
+}
+
+.af-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--af-neutral);
+}
+
+.af-status--running {
+  color: var(--af-accent);
+}
+
+.af-status--running::before {
+  background: var(--af-accent);
+  animation: af-pulse 1.2s ease-out infinite;
+}
+
+.af-status--failed,
+.af-status--timed_out {
+  color: var(--af-danger);
+}
+
+.af-status--failed::before,
+.af-status--timed_out::before {
+  background: var(--af-danger);
+}
+
+.af-status--skipped::before,
+.af-status--pending::before,
+.af-status--scheduled::before {
+  background: var(--af-text-faint);
+}
+
+.af-status--skipped,
+.af-status--pending,
+.af-status--scheduled {
+  color: var(--af-text-faint);
+}
+
+@keyframes af-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--af-accent-border);
+  }
+  100% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.af-dim {
+  color: var(--af-text-dim);
+}
+
+.af-faint {
+  color: var(--af-text-faint);
+}
+
+.af-danger {
+  color: var(--af-danger);
+}
+
+.af-accent {
+  color: var(--af-accent);
+}
+
+.af-error-box {
+  border: 1px solid rgba(255, 77, 109, 0.35);
+  background: var(--af-danger-dim);
+  border-radius: var(--af-radius);
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
