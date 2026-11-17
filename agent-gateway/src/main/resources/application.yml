@@ -1,0 +1,53 @@
+server:
+  port: ${AF_GATEWAY_PORT:8080}
+
+spring:
+  application:
+    name: agent-gateway
+  servlet:
+    multipart:
+      enabled: false
+  cloud:
+    gateway:
+      mvc:
+        routes:
+          - id: internal-dsl
+            uri: ${AF_WORKFLOW_SERVICE:http://127.0.0.1:8084}
+            predicates:
+              - Path=/internal/workflows/**
+          - id: connector-service
+            uri: ${AF_CONNECTOR_SERVICE:http://127.0.0.1:8085}
+            predicates:
+              - Path=/api/v1/connectors/**,/internal/connectors/**
+          - id: audit-service
+            uri: ${AF_AUDIT_SERVICE:http://127.0.0.1:8086}
+            predicates:
+              - Path=/api/v1/admin/audit/**
+          - id: workflow-service
+            uri: ${AF_WORKFLOW_SERVICE:http://127.0.0.1:8084}
+            predicates:
+              - Path=/api/v1/workflows/**,/api/v1/executions/**,/api/v1/auth/**,/api/v1/gates/**,/api/v1/notifications/**,/api/v1/evals/**,/api/v1/admin/usage/**,/api/v1/admin/canary/**
+  data:
+    redis:
+      url: redis://${AF_REDIS_HOST:127.0.0.1}:${AF_REDIS_PORT:6379}/0
+
+agentflow:
+  engine:
+    base-url: ${AF_ENGINE_SERVICE:http://127.0.0.1:8000}
+  jwt:
+    secret: ${AF_JWT_SECRET:dev-only-secret-key-0123456789abcdef}
+  internal-token: ${AF_INTERNAL_TOKEN:dev-internal-token}
+  kill-switch:
+    redis-key: af:kill-switch
+    cache-ttl-ms: 30000
+  rate-limit:
+    trigger-window-seconds: 60
+    # 20 次/60s/用户是线上口径；本地全量 E2E 一轮会触发数十次执行，
+    # start-dev 通过 AF_RATE_LIMIT_TRIGGER_MAX 放宽，产品默认值不变。
+    trigger-max: ${AF_RATE_LIMIT_TRIGGER_MAX:20}
+    login-window-seconds: 60
+    login-max: ${AF_RATE_LIMIT_LOGIN_MAX:10}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p %logger{24} traceId=%mdc{traceId} %msg%n"
