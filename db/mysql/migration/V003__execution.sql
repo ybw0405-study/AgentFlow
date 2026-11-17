@@ -1,0 +1,53 @@
+-- V003 执行索引（投影自事件库，非权威；权威是 PG execution_event）
+CREATE TABLE workflow_execution (
+  seq             BIGINT AUTO_INCREMENT UNIQUE,
+  id              CHAR(36)     NOT NULL,
+  definition_id   CHAR(36)     NOT NULL,
+  version_id      CHAR(36)     NOT NULL,
+  tenant_id       CHAR(36)     NOT NULL,
+  triggered_by    CHAR(36)     NOT NULL,
+  status          ENUM('PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED','TIMED_OUT')
+                  NOT NULL DEFAULT 'PENDING',
+  idempotency_key VARCHAR(128) NOT NULL,
+  trace_id        VARCHAR(64)  NOT NULL,
+  token_budget    INT NULL,
+  max_steps       INT NULL,
+  deadline_at     DATETIME(3)  NULL,
+  token_used      INT NOT NULL DEFAULT 0,
+  steps_used      INT NOT NULL DEFAULT 0,
+  error_code      VARCHAR(64)  NULL,
+  started_at      DATETIME(3)  NULL,
+  finished_at     DATETIME(3)  NULL,
+  created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_we_tenant_idem (tenant_id, idempotency_key),
+  KEY idx_we_tenant_status (tenant_id, status, seq),
+  KEY idx_we_def (definition_id, seq),
+  KEY idx_we_trace (trace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE node_execution (
+  seq           BIGINT AUTO_INCREMENT UNIQUE,
+  id            CHAR(36)     NOT NULL,
+  execution_id  CHAR(36)     NOT NULL,
+  node_key      VARCHAR(160) NOT NULL,
+  display_order INT          NOT NULL,
+  status        ENUM('PENDING','SCHEDULED','RUNNING','SUCCEEDED','FAILED',
+                     'SKIPPED','SUSPENDED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  attempt       INT          NOT NULL DEFAULT 0,
+  input_digest  CHAR(64)     NULL,
+  output_digest CHAR(64)     NULL,
+  token_used    INT          NOT NULL DEFAULT 0,
+  latency_ms    INT          NULL,
+  retry_count   INT          NOT NULL DEFAULT 0,
+  error_code    VARCHAR(64)  NULL,
+  started_at    DATETIME(3)  NULL,
+  finished_at   DATETIME(3)  NULL,
+  created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_ne_exec_node_attempt (execution_id, node_key, attempt),
+  KEY idx_ne_exec_order (execution_id, display_order),
+  KEY idx_ne_exec_status (execution_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
