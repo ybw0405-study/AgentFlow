@@ -1,0 +1,303 @@
+"""DSL 结构校验（编译期）。失败返回带节点路径的错误列表，对应 HTTP 422。"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from typing import Any
+
+from pydantic import Field, ValidationError
+
+from ..config import Settings
+from .models import CamelModel, WorkflowDsl
+
+# ---- 错误码（与 architecture.md §8 对齐） ----
+DSL_VALIDATION = "DSL-VALIDATION-001"
+DSL_CYCLE = "DSL-CYCLE-001"
+DSL_REF = "DSL-REF-001"
+DSL_ORPHAN = "DSL-ORPHAN-001"
+DSL_BRANCH = "DSL-BRANCH-001"
+
+_VAR_REF = re.compile(r"\bvars\.([A-Za-z_][A-Za-z0-9_]*)")
+_NODE_REF = re.compile(r"\bnodes\.([a-z][a-zA-Z0-9_-]{0,63})")
+_BRANCH_NODE_TYPES = {"condition", "human_gate"}
+
+
+class DslError(CamelModel):
+    code: str
+    message: str
+    node_key: str | None = None
+    path: str | None = None
+
+
+class ValidationResult(CamelModel):
+    ok: bool
+    errors: list[DslError] = Field(default_factory=list)
+    normalized_dsl: dict[str, Any] | None = None
+    checksum: str | None = None
+
+
+def canonical_json(data: dict[str, Any]) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def checksum_of(dsl: WorkflowDsl) -> str:
+    return hashlib.sha256(canonical_json(dsl.canonical_dump()).encode("utf-8")).hexdigest()
+
+
+def _collect_strings(value: Any) -> list[str]:
+    """递归收集配置中的所有字符串（模板与表达式都按字符串存储）。"""
+    out: list[str] = []
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            out.extend(_collect_strings(v))
+    elif isinstance(value, list):
+        for v in value:
+            out.extend(_collect_strings(v))
+    return out
+
+
+def validate_dsl(raw: dict[str, Any], settings: Settings) -> ValidationResult:
+    # 1) Schema 层（Pydantic）
+    try:
+        dsl = WorkflowDsl.model_validate(raw)
+    except ValidationError as exc:
+        errors = [
+            DslError(
+                code=DSL_VALIDATION,
+                message=e["msg"],
+                path=".".join(str(p) for p in e["loc"]) or None,
+            )
+            for e in exc.errors()
+        ]
+        return ValidationResult(ok=False, errors=errors)
+
+    errors: list[DslError] = []
+    nodes = {n.key: n for n in dsl.nodes}
+
+    # 2) 重复 nodeKey
+    seen: set[str] = set()
+    for n in dsl.nodes:
+        if n.key in seen:
+            errors.append(
+                DslError(
+                    code=DSL_VALIDATION, message=f"duplicate nodeKey '{n.key}'", node_key=n.key
+                )
+            )
+        seen.add(n.key)
+
+    # 3) 阶段门：P0 仅启用部分节点类型
+    for n in dsl.nodes:
+        if n.type not in settings.supported_node_types:
+            errors.append(
+                DslError(
+                    code=DSL_VALIDATION,
+                    node_key=n.key,
+                    message=f"node type '{n.type}' is not enabled in the current phase",
+                )
+            )
+
+    # 4) 边端点存在性 + branch 合法性
+    for e in dsl.edges:
+        if e.from_ not in nodes:
+            errors.append(
+                DslError(
+                    code=DSL_REF, message=f"edge from unknown node '{e.from_}'", node_key=e.from_
+                )
+            )
+        if e.to not in nodes:
+            errors.append(
+                DslError(code=DSL_REF, message=f"edge to unknown node '{e.to}'", node_key=e.to)
+            )
+        if (
+            e.branch is not None
+            and nodes.get(e.from_) is not None
+            and nodes[e.from_].type not in _BRANCH_NODE_TYPES
+        ):
+            errors.append(
+                DslError(
+                    code=DSL_BRANCH,
+                    node_key=e.from_,
+                    message=f"branch edge from non-branch node '{e.from_}'",
+                )
+            )
+        if (
+            e.branch is not None
+            and nodes.get(e.from_) is not None
+            and nodes[e.from_].type == "human_gate"
+            and e.branch not in ("approved", "rejected")
+        ):
+            errors.append(
+                DslError(
+                    code=DSL_BRANCH,
+                    node_key=e.from_,
+                    message=f"human_gate branch must be 'approved' or 'rejected', got '{e.branch}'",
+                )
+            )
+        if nodes.get(e.to) is not None and nodes[e.to].type == "start":
+            errors.append(
+                DslError(
+                    code=DSL_VALIDATION,
+                    node_key=e.to,
+                    message="start node must not have incoming edges",
+                )
+            )
+
+    # 4.1) 审批只能出现在主图：子图（loop/parallel 体内）无法在挂起后原地续跑，
+    #      放进子图会导致裁决后整段子图重跑（重复副作用）。编译期就拒绝。
+    for key, node in _nested_nodes(dsl):
+        if node.type == "human_gate":
+            errors.append(
+                DslError(
+                    code=DSL_VALIDATION,
+                    node_key=node.key,
+                    message=(
+                        f"human_gate is only allowed in the top-level graph (found inside '{key}')"
+                    ),
+                )
+            )
+
+    # 5) start/end 数量
+    starts = [n.key for n in dsl.nodes if n.type == "start"]
+    ends = [n.key for n in dsl.nodes if n.type == "end"]
+    if len(starts) != 1:
+        errors.append(
+            DslError(
+                code=DSL_VALIDATION, message=f"exactly one start node required, got {len(starts)}"
+            )
+        )
+    if not ends:
+        errors.append(DslError(code=DSL_VALIDATION, message="at least one end node required"))
+
+    # 6) 环检测（Kahn）
+    if not any(e.code == DSL_REF for e in errors):
+        cycle_nodes = _find_cycle(nodes, dsl)
+        if cycle_nodes:
+            errors.append(
+                DslError(
+                    code=DSL_CYCLE,
+                    message="cycle detected: " + ", ".join(sorted(cycle_nodes)),
+                    node_key=sorted(cycle_nodes)[0],
+                )
+            )
+
+    # 7) 可达性（从 start BFS）
+    if starts and not any(e.code in (DSL_REF, DSL_CYCLE) for e in errors):
+        reachable = _reachable_from(starts[0], dsl)
+        for key in nodes:
+            if key not in reachable:
+                errors.append(
+                    DslError(
+                        code=DSL_ORPHAN,
+                        node_key=key,
+                        message=f"node '{key}' is unreachable from start",
+                    )
+                )
+
+    # 8) 变量/节点引用
+    if not any(e.code in (DSL_REF, DSL_CYCLE) for e in errors):
+        ancestors = _ancestor_sets(nodes, dsl)
+        for n in dsl.nodes:
+            for text in _collect_strings(n.config.canonical_dump()):
+                for var in _VAR_REF.findall(text):
+                    if var not in dsl.variables:
+                        errors.append(
+                            DslError(
+                                code=DSL_REF,
+                                node_key=n.key,
+                                message=f"undefined variable 'vars.{var}'",
+                            )
+                        )
+                for ref in _NODE_REF.findall(text):
+                    if ref not in nodes:
+                        errors.append(
+                            DslError(
+                                code=DSL_REF,
+                                node_key=n.key,
+                                message=f"reference to unknown node '{ref}'",
+                            )
+                        )
+                    elif ref == n.key or ref not in ancestors.get(n.key, set()):
+                        errors.append(
+                            DslError(
+                                code=DSL_REF,
+                                node_key=n.key,
+                                message=f"node '{ref}' is not an upstream ancestor of '{n.key}'",
+                            )
+                        )
+
+    if errors:
+        return ValidationResult(ok=False, errors=errors)
+    return ValidationResult(ok=True, normalized_dsl=dsl.canonical_dump(), checksum=checksum_of(dsl))
+
+
+def _nested_nodes(dsl: WorkflowDsl) -> list[tuple[str, Any]]:
+    """展开 loop.body / parallel.branches 里的子图节点（带父节点 key 便于定位）。"""
+    out: list[tuple[str, Any]] = []
+    for node in dsl.nodes:
+        if node.type == "loop":
+            out.extend((node.key, n) for n in node.config.body.nodes)
+        elif node.type == "parallel":
+            for name, branch in node.config.branches.items():
+                out.extend((f"{node.key}.{name}", n) for n in branch.nodes)
+    return out
+
+
+def _find_cycle(nodes: dict[str, Any], dsl: WorkflowDsl) -> set[str]:
+    in_degree = {k: 0 for k in nodes}
+    out: dict[str, list[str]] = {k: [] for k in nodes}
+    for e in dsl.edges:
+        if e.from_ in nodes and e.to in nodes:
+            in_degree[e.to] += 1
+            out[e.from_].append(e.to)
+    queue = [k for k, d in in_degree.items() if d == 0]
+    visited = 0
+    while queue:
+        cur = queue.pop()
+        visited += 1
+        for nxt in out[cur]:
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+    if visited == len(nodes):
+        return set()
+    return {k for k, d in in_degree.items() if d > 0}
+
+
+def _reachable_from(start: str, dsl: WorkflowDsl) -> set[str]:
+    out: dict[str, list[str]] = {}
+    for e in dsl.edges:
+        out.setdefault(e.from_, []).append(e.to)
+    seen: set[str] = set()
+    stack = [start]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        stack.extend(out.get(cur, []))
+    return seen
+
+
+def _ancestor_sets(nodes: dict[str, Any], dsl: WorkflowDsl) -> dict[str, set[str]]:
+    """每个节点的全部上游祖先（拓扑序传播）。"""
+    in_edges: dict[str, list[str]] = {k: [] for k in nodes}
+    out_edges: dict[str, list[str]] = {k: [] for k in nodes}
+    for e in dsl.edges:
+        if e.from_ in nodes and e.to in nodes:
+            in_edges[e.to].append(e.from_)
+            out_edges[e.from_].append(e.to)
+    in_degree = {k: len(v) for k, v in in_edges.items()}
+    queue = [k for k, d in in_degree.items() if d == 0]
+    ancestors: dict[str, set[str]] = {k: set() for k in nodes}
+    while queue:
+        cur = queue.pop()
+        for nxt in out_edges[cur]:
+            ancestors[nxt] |= ancestors[cur] | {cur}
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+    return ancestors
