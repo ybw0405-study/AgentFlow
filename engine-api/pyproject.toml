@@ -47,6 +47,8 @@ ignore = ["S104", "RUF001", "RUF002", "RUF003"]  # S104: 监听 0.0.0.0 由部�
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# 显式声明，避免 pytest-asyncio 未来版本把默认 loop scope 改为 function 导致行为漂移
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["integration: 需要 ephemeral docker 容器的集成测试"]

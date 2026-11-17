@@ -137,7 +137,7 @@ public class ConnectorInvoker {
                 builder.method(method, HttpRequest.BodyPublishers.noBody());
             }
             applyAuth(builder, connector, config, cmd.tenantId());
-            config.path("headers").fields().forEachRemaining(e ->
+            config.path("headers").properties().forEach(e ->
                     builder.header(e.getKey(), e.getValue().asText()));
 
             HttpResponse<byte[]> response = http.send(builder.build(),
