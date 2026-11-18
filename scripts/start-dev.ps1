@@ -38,12 +38,25 @@ Get-Content (Join-Path $root 'scripts/seed-demo.sql') -Raw -Encoding UTF8 |
   docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow 2>$null
 Write-Host '    grants + seed applied (duplicate key 可忽略)'
 
+# 先停掉上一次的服务：Windows 上运行中的 jar 是独占打开的，spring-boot:repackage 要把
+# 旧 jar 改名成 *.jar.original 时会被拒，构建直接失败（旧脚本因此每次重跑都要手动停服）。
+Write-Host '==> [2.9/5] 停掉在跑的服务（避免 jar 被占用导致构建失败）'
+& (Join-Path $PSScriptRoot 'stop-dev.ps1') -Quiet
+# 上次失败可能留下半成品 *.jar.original，repackage 遇到它会再次报错。
+Get-ChildItem -Path (Join-Path $root '*/target') -Filter '*.jar.original' -Recurse -ErrorAction SilentlyContinue |
+  ForEach-Object {
+    try { [System.IO.File]::Delete($_.FullName) } catch { Write-Warning ("清理残留失败：" + $_.FullName) }
+  }
+
 Write-Host '==> [3/5] 构建 Java 服务（跳过测试；测试走 verify-all）'
 Push-Location $root
 # 参数必须逐个加引号：PowerShell 会把 -Dcheckstyle.skip 解析成 -Dcheckstyle + .skip，
 # maven 收到 ".skip" 报 Unknown lifecycle phase 直接失败。
 mvn -q '-DskipTests' '-Dcheckstyle.skip=true' package
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'maven package failed' }
+if ($LASTEXITCODE -ne 0) {
+  Pop-Location
+  throw 'maven package failed（若报 Unable to rename *.jar.original：先 scripts/stop-dev.ps1 或在跑的服务没停干净）'
+}
 Pop-Location
 
 if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-token' }
