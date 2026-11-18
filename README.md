@@ -62,7 +62,9 @@ cd frontend; npm install; cd ..
 ./scripts/start-dev.ps1
 ```
 
-打开 <http://127.0.0.1:5173> ，账号（密码统一 `agentflow123`）：
+打开 <http://127.0.0.1:5174> ，账号（密码统一 `agentflow123`）：
+
+> 前端固定监听 `127.0.0.1:5174`（IPv4），避开常被本机其他项目（如 DocQA）占用的 5173；端口与协议在 `frontend/vite.config.ts` 中以 `strictPort` 固定，若 5174 被占用会直接报错而非静默顺延。
 
 | 账号 | 角色 | 空间 |
 |---|---|---|

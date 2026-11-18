@@ -27,7 +27,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph FE[前端 :5173]
+    subgraph FE[前端 :5174]
         VUE[Vue3 + Vue Flow]
     end
 
@@ -88,7 +88,7 @@ flowchart TB
 | connector-service | 8085 | P2 加入；P0–P1 由 engine 内置 mock 连接器替代（D3） |
 | audit-service | 8086 | RocketMQ 消费者 + `/admin/audit` 查询 |
 | engine-api | 8000 | 仅内网；拒绝无 `X-Internal-Token` 请求 |
-| 前端 dev | 5173 | Vite dev server，代理到 8080 |
+| 前端 dev | 5174 | Vite dev server（IPv4 `127.0.0.1`，`strictPort`），代理到 8080；避开常被其他项目占用的 5173 |
 
 ---
 

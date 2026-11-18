@@ -9,7 +9,9 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
-    port: 5173,
+    host: '127.0.0.1',
+    port: 5174,
+    strictPort: true,
     proxy: {
       '/api': {
         target: process.env.VITE_PROXY_GATEWAY_URL ?? 'http://127.0.0.1:8080',

@@ -1,7 +1,15 @@
-# AgentFlow 一键启动（Windows PowerShell）。
+﻿# AgentFlow 一键启动（Windows PowerShell）。
 # 顺序：基础设施(docker) → 迁移/授权/种子 → engine-api → Java 三服务 → 前端 dev server。
 # 日志：logs/*.log。停止：scripts/stop-dev.ps1。
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+# 说明：保持 Continue 而非 Stop。PowerShell 5.1 会把 native 命令（docker/mysql 等）
+# 写到 stderr 的普通警告（如 mysql 的“命令行密码不安全”）当成终止错误，导致脚本中断。
+# 真正的失败点在下方用 $LASTEXITCODE 显式检查 + throw 兜底，不依赖 EAP=Stop。
+# 清理大小写重复的代理变量：本机若同时存在 HTTPS_PROXY 与 https_proxy，
+# .NET 构造进程环境字典时会因大小写冲突让 Start-Process 抛"已添加项"异常。
+foreach ($n in @('http_proxy','https_proxy','no_proxy','HTTP_PROXY','HTTPS_PROXY','NO_PROXY','ALL_PROXY','all_proxy')) {
+  [Environment]::SetEnvironmentVariable($n, $null, 'Process')
+}
 $root = Split-Path -Parent $PSScriptRoot
 $logs = Join-Path $root 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -10,20 +18,25 @@ Write-Host '==> [1/5] 基础设施 (docker compose)'
 docker compose -f (Join-Path $root 'ops/docker-compose.infra.yml') up -d
 if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed — 请先启动 Docker Desktop' }
 
-Write-Host '==> [2/5] 等待 MySQL 迁移与授权完成'
+Write-Host '==> [2/5] 等待 MySQL 就绪并落地迁移/授权'
+# 不依赖 flyway/grants 容器的退出码：grants 容器在部分机器上因卷挂载路径
+# 解析偏差会拿不到 SQL 而 Exit(1)，死等它的退出码会导致脚本卡住。
+# 改为等 MySQL 健康检查通过，再从宿主机主动重放授权 SQL（幂等）。
 $deadline = (Get-Date).AddMinutes(3)
 do {
   Start-Sleep -Seconds 3
-  $grants = docker inspect -f '{{.State.ExitCode}}' agentflow-grants 2>$null
-  $ready = (Get-Date) -lt $deadline -and $grants -ne '0'
-  if (-not $ready) { continue }
-} until ($grants -eq '0')
-if ($grants -ne '0') { throw 'flyway/grants 未完成；docker compose logs flyway grants 查看' }
+  $health = docker inspect -f '{{.State.Health.Status}}' agentflow-mysql 2>$null
+} until ($health -eq 'healthy' -or (Get-Date) -ge $deadline)
+if ($health -ne 'healthy') { throw 'MySQL 未在 3 分钟内就绪；docker compose logs mysql 查看' }
 
-Write-Host '==> [2.5/5] 种子数据（幂等）'
-Get-Content (Join-Path $root 'scripts/seed-demo.sql') |
-  docker exec -i agentflow-mysql mysql -uroot -proot agentflow 2>$null
-Write-Host '    seed applied (duplicate key 可忽略)'
+Write-Host '==> [2.5/5] 授权 + 种子数据（幂等）'
+# 管道必须按 UTF-8 发送字节给 mysql（PS5.1 默认 ASCII 会毁掉中文），并显式声明 utf8mb4
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Get-Content (Join-Path $root 'db/mysql/grants/least-privilege.sql') -Raw -Encoding UTF8 |
+  docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow 2>$null
+Get-Content (Join-Path $root 'scripts/seed-demo.sql') -Raw -Encoding UTF8 |
+  docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow 2>$null
+Write-Host '    grants + seed applied (duplicate key 可忽略)'
 
 Write-Host '==> [3/5] 构建 Java 服务（跳过测试；测试走 verify-all）'
 Push-Location $root
@@ -31,12 +44,12 @@ mvn -q -DskipTests -Dcheckstyle.skip package
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'maven package failed' }
 Pop-Location
 
-$env:AF_INTERNAL_TOKEN = $env:AF_INTERNAL_TOKEN ?? 'dev-internal-token'
-$env:AF_JWT_SECRET = $env:AF_JWT_SECRET ?? 'dev-only-secret-key-0123456789abcdef'
+if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-token' }
+if ($null -eq $env:AF_JWT_SECRET) { $env:AF_JWT_SECRET = 'dev-only-secret-key-0123456789abcdef' }
 # 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
-$env:AF_COOKIE_SECURE = $env:AF_COOKIE_SECURE ?? 'false'
+if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
 # 本地全量 E2E 一轮会触发数十次执行；产品默认仍是 20 次/60s/用户
-$env:AF_RATE_LIMIT_TRIGGER_MAX = $env:AF_RATE_LIMIT_TRIGGER_MAX ?? '300'
+if ($null -eq $env:AF_RATE_LIMIT_TRIGGER_MAX) { $env:AF_RATE_LIMIT_TRIGGER_MAX = '300' }
 
 Write-Host '==> [4/5] 启动 engine-api :8000'
 $engineDir = Join-Path $root 'engine-api'
@@ -60,7 +73,7 @@ foreach ($svc in $javaServices) {
     -RedirectStandardError (Join-Path $logs ($svc.Name + '.err.log')) -WindowStyle Hidden
 }
 
-Write-Host '==> [5/5] 前端 :5173'
+Write-Host '==> [5/5] 前端 :5174'
 Start-Process -FilePath 'cmd.exe' -WorkingDirectory (Join-Path $root 'frontend') `
   -ArgumentList '/c','npm','run','dev' `
   -RedirectStandardOutput (Join-Path $logs 'frontend.out.log') `
@@ -83,7 +96,7 @@ if (-not $gwReady) { Write-Warning 'gateway 未在 120s 内就绪；查看 logs/
 
 Write-Host ''
 Write-Host 'AgentFlow 已启动：'
-Write-Host '  前端        http://127.0.0.1:5173'
+Write-Host '  前端        http://127.0.0.1:5174  (避开被 DocQA 占用的 5173)'
 Write-Host '  网关        http://127.0.0.1:8080'
 Write-Host '  演示账号    admin@agentflow.dev / agentflow123（ADMIN）'
 Write-Host '              editor@agentflow.dev / agentflow123（EDITOR · Space Alpha）'

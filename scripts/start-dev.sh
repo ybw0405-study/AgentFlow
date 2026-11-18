@@ -14,7 +14,7 @@ for i in $(seq 1 60); do
   [ "$code" = "0" ] && break
   sleep 3
 done
-docker exec -i agentflow-mysql mysql -uroot -proot agentflow < "$ROOT/scripts/seed-demo.sql" || true
+docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow < "$ROOT/scripts/seed-demo.sql" || true
 
 echo '==> [3/5] 构建 Java 服务'
 (cd "$ROOT" && mvn -q -DskipTests -Dcheckstyle.skip package)
@@ -39,7 +39,7 @@ for svc in workflow-service:8084 agent-gateway:8080 audit-service:8086 connector
     > "$LOGS/$name.out.log" 2> "$LOGS/$name.err.log" & echo $! > "$LOGS/$name.pid")
 done
 
-echo '==> [5/5] 前端 :5173'
+echo '==> [5/5] 前端 :5174'
 (cd "$ROOT/frontend" && nohup npm run dev > "$LOGS/frontend.out.log" 2> "$LOGS/frontend.err.log" &
   echo $! > "$LOGS/frontend.pid")
 
@@ -52,4 +52,4 @@ for i in $(seq 1 60); do
 done
 
 echo ''
-echo 'AgentFlow 已启动：http://127.0.0.1:5173  (admin@agentflow.dev / agentflow123)'
+echo 'AgentFlow 已启动：http://127.0.0.1:5174  (admin@agentflow.dev / agentflow123)'
