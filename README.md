@@ -158,6 +158,13 @@ Windows 上运行中的 jar 是独占打开的，不先停就会在 `spring-boot
 
 CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）。
 
+引擎侧新增或改动路由、请求/响应模型后，基线必须同步刷新，否则 `contract-drift` 会红：
+
+```powershell
+engine-api/.venv/Scripts/python.exe scripts/dump-openapi.py
+git add docs/openapi/engine-api.json
+```
+
 ## 安全
 
 凭据加密、出网沙箱、多租户隔离等控制的位置与已知限制见 [`SECURITY.md`](SECURITY.md)。漏洞请走私下渠道上报，不要开公开 Issue。

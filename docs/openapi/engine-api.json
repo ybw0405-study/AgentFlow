@@ -173,6 +173,45 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "LlmModelsResponse": {
+        "additionalProperties": false,
+        "description": "可用模型清单。未配置真实端点时 configured=false，前端据此退回手填。",
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "defaultModel": {
+            "title": "Defaultmodel",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "configured",
+          "defaultModel",
+          "models"
+        ],
+        "title": "LlmModelsResponse",
+        "type": "object"
+      },
       "PolicyIn": {
         "additionalProperties": false,
         "properties": {
@@ -767,6 +806,25 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/internal/llm/models": {
+      "get": {
+        "description": "模型清单只对已配置的端点发起，密钥与 base_url 不出现在响应里。",
+        "operationId": "llm_models_internal_llm_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmModelsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Llm Models"
       }
     },
     "/internal/metrics": {
