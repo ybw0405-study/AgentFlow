@@ -1,0 +1,11 @@
+# 统一以 LF 入库：跨平台协作时避免整文件行尾差异淹没真实改动。
+# 历史上曾出现脚本写回导致 CRLF 覆盖全文、单次改动 3000+ 行的情况。
+* text=auto eol=lf
+
+# 二进制：不参与换行归一化与文本 diff
+*.jar   binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
