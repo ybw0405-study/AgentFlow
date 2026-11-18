@@ -40,11 +40,14 @@ async function mountView() {
   return wrapper
 }
 
-/** 表单字段多且同类 input 复用，按 placeholder 定位比按下标稳。 */
-function field(wrapper: Awaited<ReturnType<typeof mountView>>, placeholderStart: string) {
-  const el = wrapper.findAll('input').find((i) => (i.attributes('placeholder') ?? '').startsWith(placeholderStart))
-  if (!el) throw new Error(`no input starting with ${placeholderStart}`)
-  return el
+/** 表单字段多且同类 input 复用，按 placeholder 定位；先找完全相同的，再退回前缀匹配。 */
+function field(wrapper: Awaited<ReturnType<typeof mountView>>, placeholder: string) {
+  const inputs = wrapper.findAll('input')
+  const exact = inputs.find((i) => i.attributes('placeholder') === placeholder)
+  if (exact) return exact
+  const partial = inputs.find((i) => (i.attributes('placeholder') ?? '').startsWith(placeholder))
+  if (!partial) throw new Error(`no input starting with ${placeholder}`)
+  return partial
 }
 
 async function fillLlmForm(wrapper: Awaited<ReturnType<typeof mountView>>): Promise<void> {
@@ -108,7 +111,48 @@ describe('连接器页面：模型接入', () => {
     expect(wrapper.text()).toContain('可选用 2 个模型')
   })
 
-  it('拉取失败时给出可操作的原因，而不是静默成功', async () => {
+  it('手填模型清单可与探测结果合并，上游不支持 /models 也能用', async () => {
+    mocks.create.mockResolvedValue({ id: 'c-new', name: 'deepseek' })
+    mocks.probeModels.mockResolvedValue({ ok: false, models: [], errorCode: 'CONN-HTTP-4XX' })
+
+    const wrapper = await mountView()
+    await fillLlmForm(wrapper)
+    await field(wrapper, 'deepseek-chat, deepseek-reasoner').setValue('my-model, deepseek-chat')
+    await createButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.update).toHaveBeenCalledWith('c-new', {
+      config: expect.objectContaining({
+        models: ['my-model', 'deepseek-chat'],
+        defaultModel: 'my-model',
+      }),
+    })
+    expect(wrapper.text()).toContain('已用手填的 2 个模型')
+  })
+
+  it('手填与探测都拿到时取并集并注明条数', async () => {
+    mocks.create.mockResolvedValue({ id: 'c-new', name: 'deepseek' })
+    mocks.probeModels.mockResolvedValue({
+      ok: true,
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      errorCode: null,
+    })
+
+    const wrapper = await mountView()
+    await fillLlmForm(wrapper)
+    await field(wrapper, 'deepseek-chat, deepseek-reasoner').setValue('my-model')
+    await createButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.update).toHaveBeenCalledWith('c-new', {
+      config: expect.objectContaining({
+        models: ['my-model', 'deepseek-chat', 'deepseek-reasoner'],
+      }),
+    })
+    expect(wrapper.text()).toContain('可选用 3 个模型')
+  })
+
+  it('拉取失败且没手填时给出可操作的原因，而不是静默成功', async () => {
     mocks.create.mockResolvedValue({ id: 'c-new', name: 'deepseek' })
     mocks.probeModels.mockResolvedValue({ ok: false, models: [], errorCode: 'CONN-HTTP-4XX' })
 

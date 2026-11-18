@@ -19,6 +19,7 @@ const form = reactive({
   name: '',
   baseUrl: '',
   allowedHosts: '',
+  models: '',
   defaultModel: '',
   authType: 'API_KEY' as ConnectorAuthType,
   secret: '',
@@ -60,6 +61,24 @@ function hostOf(baseUrl: string): string {
   } catch {
     return ''
   }
+}
+
+/** 用户手填的模型清单（逗号分隔）；与探测结果合并，给上游不支持 /models 的端点兜底。 */
+function manualModels(): string[] {
+  return form.models
+    .split(/[,，\s]+/)
+    .map((m) => m.trim())
+    .filter(Boolean)
+}
+
+function mergeModels(...groups: string[][]): string[] {
+  const seen = new Set<string>()
+  for (const group of groups) {
+    for (const m of group) {
+      if (m) seen.add(m)
+    }
+  }
+  return [...seen]
 }
 
 function llmConfig(models: string[], defaultModel: string): Record<string, unknown> {
@@ -105,6 +124,7 @@ async function create(): Promise<void> {
   error.value = null
   notice.value = null
   const isLlm = form.kind === 'LLM'
+  const typed = isLlm ? manualModels() : []
   try {
     if (isLlm && !form.allowedHosts.trim()) {
       form.allowedHosts = hostOf(form.baseUrl.trim())
@@ -113,24 +133,29 @@ async function create(): Promise<void> {
       name: form.name.trim(),
       type: form.kind,
       authType: form.authType,
-      config: isLlm ? llmConfig([], '') : toolConfig(),
+      config: isLlm ? llmConfig(typed, form.defaultModel.trim()) : toolConfig(),
     })
     if (form.authType !== 'NONE' && form.secret.trim()) {
       await connectorApi.authorize(created.id, form.secret.trim())
     }
 
     let suffix = ''
-    if (isLlm && form.secret.trim()) {
-      // 建好就立刻拉一次模型：连不上要当场知道，而不是等到执行时才暴露。
-      const probe = await connectorApi.probeModels(created.id)
+    if (isLlm) {
+      // 拉取只为省事：上游没有 /models 时，用户手填的清单照样能用
+      const probe = form.secret.trim()
+        ? await connectorApi.probeModels(created.id)
+        : { ok: false, models: [] as string[], errorCode: null }
+      const merged = mergeModels(typed, probe.models)
+      if (merged.length) {
+        const wanted = form.defaultModel.trim()
+        const fallback = merged.includes(wanted) ? wanted : merged[0]
+        await connectorApi.update(created.id, { config: llmConfig(merged, fallback) })
+      }
       if (probe.ok && probe.models.length) {
-        const models = probe.models
-        const fallback = form.defaultModel.trim() || models[0]
-        await connectorApi.update(created.id, {
-          config: llmConfig(models, models.includes(fallback) ? fallback : models[0]),
-        })
-        suffix = `，可选用 ${models.length} 个模型`
-      } else {
+        suffix = `，可选用 ${merged.length} 个模型`
+      } else if (merged.length) {
+        suffix = `，已用手填的 ${merged.length} 个模型${probe.errorCode ? `（自动拉取失败：${describeProbe(probe.errorCode)}）` : ''}`
+      } else if (probe.errorCode) {
         suffix = `，但${describeProbe(probe.errorCode)}`
       }
     }
@@ -139,6 +164,7 @@ async function create(): Promise<void> {
     form.name = ''
     form.baseUrl = ''
     form.allowedHosts = ''
+    form.models = ''
     form.defaultModel = ''
     form.secret = ''
     await load()
@@ -289,6 +315,20 @@ onMounted(load)
           v-model="form.allowedHosts"
           class="af-input"
           :placeholder="form.kind === 'LLM' ? '留空则取 Base URL 的域名' : 'api.example.com, *.trusted.io'"
+        >
+      </div>
+      <div
+        v-if="form.kind === 'LLM'"
+        style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px"
+      >
+        <label
+          style="width: 96px"
+          class="af-dim"
+        >模型</label>
+        <input
+          v-model="form.models"
+          class="af-input mono"
+          placeholder="deepseek-chat, deepseek-reasoner（留空则自动拉取）"
         >
       </div>
       <div

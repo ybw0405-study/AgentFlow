@@ -106,14 +106,24 @@ describe('节点配置抽屉', () => {
     expect(source.text()).toContain('deepseek（2 个模型）')
   })
 
-  it('选中连接后 model 从该连接的清单里选', () => {
+  it('选中连接后 model 候选来自该连接清单，且仍可手填', () => {
     const wrapper = mountDrawer(llm({ connectionId: 'c1', model: 'deepseek-chat' }), undefined, [
       { id: 'c1', name: 'deepseek', models: ['deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-chat' },
     ])
-    const modelSelect = wrapper.findAll('select').find((s) => s.html().includes('deepseek-reasoner'))
-    expect(modelSelect).toBeTruthy()
-    expect(wrapper.text()).toContain('经连接')
+    const options = wrapper.findAll('datalist option').map((o) => o.attributes('value'))
+    expect(options).toEqual(['deepseek-chat', 'deepseek-reasoner'])
+    // 手填能力必须保留：上游清单常常不全，锁成下拉就没法用别的模型
+    const modelInput = wrapper.findAll('input').find((i) => i.attributes('list') === 'af-connection-models')
+    expect(modelInput).toBeTruthy()
     expect(wrapper.text()).toContain('端点与密钥由服务端解密注入')
+  })
+
+  it('连接还没有模型清单时提示去拉取，并允许直接填', () => {
+    const wrapper = mountDrawer(llm({ connectionId: 'c1', model: '' }), undefined, [
+      { id: 'c1', name: 'deepseek', models: [], defaultModel: '' },
+    ])
+    expect(wrapper.text()).toContain('还没有模型清单')
+    expect(wrapper.findAll('input').some((i) => i.attributes('list') === 'af-connection-models')).toBe(true)
   })
 
   it('切到连接时把不在清单里的 model 对齐到默认模型', async () => {

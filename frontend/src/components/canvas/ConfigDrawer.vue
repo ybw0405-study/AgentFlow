@@ -202,38 +202,36 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
 
       <template v-if="activeConnection">
         <label class="af-label">model</label>
-        <select
-          v-if="activeConnection.models.length"
-          class="af-select mono"
+        <input
+          class="af-input mono"
           :value="cfg('model', '')"
-          @change="setCfg('model', ($event.target as HTMLSelectElement).value)"
+          list="af-connection-models"
+          :placeholder="activeConnection.models.length ? '从列表选择，或直接填模型名' : '该连接还没有模型清单，填一个模型名'"
+          @input="setCfg('model', ($event.target as HTMLInputElement).value)"
         >
+        <datalist id="af-connection-models">
           <option
             v-for="m in activeConnection.models"
             :key="m"
             :value="m"
-          >
-            {{ m }}
-          </option>
-          <option
-            v-if="!activeConnection.models.includes(cfg('model', ''))"
-            :value="cfg('model', '')"
-          >
-            {{ cfg('model', '') || '（未选择）' }}
-          </option>
-        </select>
-        <input
-          v-else
-          class="af-input mono"
-          :value="cfg('model', '')"
-          placeholder="该连接还没有模型清单，填一个模型名"
-          @input="setCfg('model', ($event.target as HTMLInputElement).value)"
-        >
+          />
+        </datalist>
         <p
           class="af-faint"
           style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
         >
-          经连接 <span class="mono">{{ activeConnection.name }}</span> 调用；端点与密钥由服务端解密注入，画布不持有。
+          <template v-if="activeConnection.models.length">
+            连接 <span class="mono">{{ activeConnection.name }}</span> 提供 {{ activeConnection.models.length }} 个候选；清单外的模型名也可直接填。
+          </template>
+          <template v-else>
+            连接 <span class="mono">{{ activeConnection.name }}</span> 还没有模型清单，到「连接器」页点「拉取模型」，或在这里直接填。
+          </template>
+        </p>
+        <p
+          class="af-faint"
+          style="font-size: 11px; line-height: 1.6; margin: 2px 0 0"
+        >
+          端点与密钥由服务端解密注入，画布只持连接 id。
         </p>
       </template>
 
