@@ -616,16 +616,32 @@ stateDiagram-v2
 |---|---|---|
 | `mock`（默认） | 内置，无网络 | 对 `(seed, prompt)` 确定性生成，重放安全，用于 P0 离线验收 |
 | `openai-compatible` | 仅来自 `AF_LLM_*` 环境变量 | 任意 OpenAI 兼容 `/chat/completions`（DeepSeek / Qwen / OpenAI / 本地 Ollama 等） |
+| `connector` | 节点配置 `connectionId` 指向的模型连接 | 引擎 → connector-service `/internal/connectors/{id}/invoke` 的 `chat` 操作；端点与密钥由服务端解密注入 |
+
+**模型连接（三路径中的首选）**：`tool_connector` 里 `type=LLM` 的一条记录即一条模型连接，
+`config` 声明 `baseUrl` / `allowedHosts` / `auth{headerName,valuePrefix}` /
+`operations{chat,models}`，密钥走既有的 `tool_credential`（AES-256-GCM，AAD 绑定
+`connectorId|tenantId`）。节点只持 `connectionId`，因此：
+
+- 密钥与 URL 不进 DSL、不进画布、不进事件载荷；换密钥或换端点不需要动工作流、不需要重启引擎。
+- 出网仍过 `SandboxPolicy`（白名单 + 私网拦截 + DNS rebinding 复核），与工具连接器同一套口径。
+- `callId` 由引擎按 `execution_id|node_key|attempt` 确定性派生，崩溃重放会命中
+  connector-service 的 `af:conncall:*` 幂等缓存，不重复出网（把 §5.3 的 at-least-once 拉回接近一次）。
+- 模型清单由 `POST /api/v1/connectors/{id}/models/probe` 现场拉取，服务端解密凭据后请求一次
+  `/models`，响应只含模型 id；失败按错误码分类（4xx/5xx/凭据缺失/沙箱拦截/非 OpenAI 格式）。
 
 信任边界：
 
-- **端点与密钥绝不来自 DSL 或用户入参**，只在 engine-api 进程装配期从环境变量读取，杜绝 SSRF 与凭据注入；密钥仅出现在 `Authorization` 头，日志/错误体/事件载荷一律脱敏（单测覆盖）。
+- **端点与密钥绝不来自 DSL 或用户入参**：走连接时 URL 与凭据只存在于 connector-service 的记录里（密文），
+  走进程级配置时只在 engine-api 装配期从环境变量读取。两条路径都不允许调用方指定 URL，杜绝 SSRF 与凭据注入；
+  密钥仅出现在 `Authorization` 头，日志/错误体/事件载荷一律脱敏（单测覆盖）。
 - `AF_PRODUCTION=true` 时强制要求 https 端点（`AF_LLM_ALLOW_INSECURE_HTTP` 仅本地调试例外）。
 - PII 第二层脱敏仍在 `LlmExecutor` 内先于 provider 执行；provider 不感知原始 prompt 之外的任何租户数据。
-- 输入侧 `mock-*` 占位模型名自动回落到 `AF_LLM_MODEL`，避免画布从 mock 切换时上游 400。
+- 输入侧 `mock-*` 占位模型名自动回落（进程级回落到 `AF_LLM_MODEL`，连接回落到该连接的 `defaultModel`），避免历史草稿切到真实端点时上游 400。
 - 回落只改变实际下发的模型名，不改变审计事实：`output.model` 与 `CommandCompleted` 记录**真实**模型名；声明值与实际值不一致时另存 `requestedModel`，事后可追「配了什么、跑了什么」。
+- 连接器错误码在执行详情里翻译成模型语义（`CONN-CREDENTIAL-*` → `LLM-CREDENTIAL-001`、`CONN-NOT_FOUND/DISABLED/SANDBOX` → `LLM-CONNECTION-001`、`CONN-HTTP-5XX/TIMEOUT` → 瞬时），避免把内部编码暴露给使用者，同时保证瞬时性判定正确。
 
-**模型清单**：画布可选的模型由引擎 `GET /internal/llm/models` 提供，经 workflow-service 转发为 `GET /api/v1/llm/models`（JWT 保护）。该端点只向已配置的那台端点请求一次 `/models`，响应仅含模型 id 与默认模型名；未配置端点时返回 `configured=false` 而非报错，上游不可用时返回错误码让前端退回手填。密钥与 base_url 永不出现在响应里，也不会被拼进任何 URL 由调用方指定。
+**模型清单**：画布有两处来源。走连接时由 `POST /api/v1/connectors/{id}/models/probe` 现场拉取（服务端解密凭据后请求该连接的 `/models`）；走进程级时由引擎 `GET /internal/llm/models` 提供，经 workflow-service 转发为 `GET /api/v1/llm/models`（JWT 保护）。两处响应都只含模型 id 与默认模型名；未配置端点时返回 `configured=false` 而非报错，上游不可用时返回错误码让前端退回手填。密钥与 base_url 永不出现在响应里，也不会被拼进任何 URL 由调用方指定。
 
 **重试分层**：provider 不做重试，只把上游状态精确分类为瞬时/永久（`LLM-RATE_LIMIT-001` / `LLM-TIMEOUT-001` / `LLM-UPSTREAM-001` 为瞬时；`LLM-AUTH-001` / `LLM-REQUEST-001` / `LLM-RESPONSE-001` / `LLM-NOT_CONFIGURED-001` 为永久）。重试由 §5.4 的引擎 RetryPolicy 统一执行，避免双层重试导致重复计费。
 
@@ -1120,7 +1136,7 @@ AgentFlow/
 3. **NodeCompleted 存完整脱敏输出**，其余事件存摘要+digest；溢出阈值 256KB 转 node_io。
 4. **SSE = Redis pub/sub + afterSeq 追平**；RocketMQ 仅审计兜底与 P3 审批回调。
 5. **E2E = API 级 pytest 打 gateway**（`e2e/`）；前端交互用 Vitest，Playwright 推迟 P3。
-6. **真实 LLM 放 engine-api 而非 connector-service**（2026-11-18）：`LlmExecutor` 已有 Provider 协议，只需新增 `openai-compatible` 实现并在装配期注册；密钥只经 `AF_LLM_*` 注入，不引入新的服务间信任边界。设计细节与「恰好一次」降级说明见 §5.7。
+6. **真实 LLM 先直连、后补模型连接**（2026-11-18）：最初 `LlmExecutor` 直接新增 `openai-compatible` 实现、密钥只经 `AF_LLM_*` 注入，不引入新的服务间信任边界。随后补了 `connectionId` 路径——把端点与密钥托管进 connector-service，节点只持连接 id。理由是「一台端点一套密钥」无法支撑多空间、多厂商复用，且换密钥要重启引擎；复用既有 connector 的密文存储与沙箱，比新造一套 provider 表更省且口径一致。进程级 `AF_LLM_*` 保留为本地快速试，两条路径共用同一份请求构造与响应解析（`build_chat_payload` / `extract_text`），避免语义漂移。设计细节见 §5.7。
 
 ---
 

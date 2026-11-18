@@ -80,9 +80,13 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 ## 接入真实模型（OpenAI 兼容）
 
-画布的 llm 节点默认就是真实 provider；引擎仍内置 mock provider，只在 DSL 显式写 `provider: mock` 时生效（离线演示与 CI 用，画布不再产出该配置）。要调用真实模型：
+推荐做法是在「连接器」页建一条**模型连接**：端点与密钥存在服务端（AES-256-GCM 密文），画布只引用连接 id，密钥不进 DSL、不落画布，换密钥也不必重启引擎。
 
-1. 在**启动脚本之前**设置环境变量（脚本不会覆盖它们，子进程会继承）：
+1. 「连接器」→ 类型选「模型接入（OpenAI 兼容）」，填名称、Base URL（如 `https://api.deepseek.com/v1`）、API Key。允许域名留空会取 Base URL 的域名。
+2. 点「新建模型连接」：服务端立刻用这份凭据请求一次 `/models`，拉到的模型写进连接。拉不到会给出具体原因（401、路径不对、出网被沙箱拦），不会静默成功。
+3. 画布选中 llm 节点，「模型来源」选这条连接，「model」从下拉里挑；新建 llm 节点会自动挂上第一条模型连接。执行详情里 `output.model` 是**实际下发**的模型名。
+
+也可以不用连接、走进程级单端点（适合本地快速试）：在**启动脚本之前**设置环境变量（脚本不会覆盖它们，子进程会继承）。
 
    ```powershell
    $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1'   # 或 Qwen/Ollama/OpenAI 等兼容端点
@@ -91,12 +95,11 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
    .\scripts\start-dev.ps1
    ```
 
-2. 画布里选中 llm 节点，`model` 输入框会列出服务端从上游 `/models` 读到的模型（`GET /api/v1/llm/models`），下拉选中即可，也允许直接手填。端点不通或上游不支持 `/models` 时退回纯手填并说明原因，不会把配置卡死。
-3. 「冻结并发布」→「运行」填 `initialVariables`，执行详情里能看到真实返回文本与上游 `usage`。`output.model` 是**实际下发**的模型名；历史草稿里若还留着 `mock-*` 占位名，回落时另有 `requestedModel` 标出声明值。
+此时「模型来源」留「进程默认」，model 下拉来自 `GET /api/v1/llm/models`。两种来源都允许手填模型名；端点不通或上游不支持 `/models` 时退回手填并说明原因，不会把配置卡死。
 
 约束与排错：
 
-- 端点与密钥**只来自环境变量**，画布 DSL 无法指定 URL，杜绝 SSRF / 凭据注入；密钥不进日志、错误体、事件载荷，`/api/v1/llm/models` 也只回模型 id。
+- 经连接调用时，端点与密钥**只在 connector-service 解密**并注入请求头；引擎与画布都只有连接 id。走进程级配置时同理，端点与密钥只来自环境变量，DSL 无法指定 URL。两条路径都不把密钥写进日志、错误体、事件载荷。
 - 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
 - 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）；内置 mock 才是确定性的。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
