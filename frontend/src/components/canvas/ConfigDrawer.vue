@@ -14,6 +14,13 @@ const props = defineProps<{
     error: string | null
     models: string[]
   } | null
+  /** 已启用且属于本空间的模型连接；选中后模型从该连接的清单里挑。 */
+  llmConnections?: {
+    id: string
+    name: string
+    models: string[]
+    defaultModel: string
+  }[]
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +46,38 @@ const modelWillFallback = computed(() => {
   const model = String(c.model ?? '')
   return !model || model.toLowerCase().startsWith('mock')
 })
+
+const connectionId = computed(() => cfg<string>('connectionId', ''))
+
+/** 当前选中的模型连接；为空表示走进程级 AF_LLM_*。 */
+const activeConnection = computed(
+  () => props.llmConnections?.find((c) => c.id === connectionId.value) ?? null,
+)
+
+/**
+ * 切换模型来源。切到某个连接时把 model 对齐到该连接的模型：留着上一个来源的模型名
+ * 会被上游判 400，而节点配置又看不出这层关系。
+ */
+function setSource(id: string): void {
+  if (!props.node) return
+  if (!id) {
+    emit('update', {
+      ...props.node,
+      config: { ...props.node.config, connectionId: undefined },
+    })
+    return
+  }
+  const target = props.llmConnections?.find((c) => c.id === id)
+  const current = cfg<string>('model', '')
+  const model =
+    target && target.models.length && !target.models.includes(current)
+      ? target.defaultModel || target.models[0]
+      : current
+  emit('update', {
+    ...props.node,
+    config: { ...props.node.config, connectionId: id, model },
+  })
+}
 
 const modelOptions = computed(() => props.modelCatalog?.models ?? [])
 
@@ -136,57 +175,121 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
     >
 
     <template v-if="node.type === 'llm'">
-      <label class="af-label">provider</label>
+      <label class="af-label">模型来源</label>
       <select
         class="af-select"
-        :value="cfg('provider', 'openai-compatible')"
-        @change="setCfg('provider', ($event.target as HTMLSelectElement).value)"
+        :value="connectionId"
+        @change="setSource(($event.target as HTMLSelectElement).value)"
       >
-        <option
-          v-if="cfg<string>('provider', '') === 'mock'"
-          value="mock"
-        >
-          mock（遗留节点 · 建议改为真实模型）
+        <option value="">
+          进程默认（AF_LLM_*）
         </option>
-        <option value="openai-compatible">
-          openai-compatible（真实模型）
+        <option
+          v-for="c in llmConnections ?? []"
+          :key="c.id"
+          :value="c.id"
+        >
+          {{ c.name }}{{ c.models.length ? `（${c.models.length} 个模型）` : '' }}
         </option>
       </select>
-      <label class="af-label">model</label>
-      <input
-        class="af-input mono"
-        :value="cfg('model', '')"
-        list="af-llm-models"
-        placeholder="从列表选择，或直接填模型名"
-        @input="setCfg('model', ($event.target as HTMLInputElement).value)"
-      >
-      <datalist id="af-llm-models">
-        <option
-          v-for="m in modelOptions"
-          :key="m"
-          :value="m"
-        />
-      </datalist>
       <p
+        v-if="!(llmConnections ?? []).length"
         class="af-faint"
         style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
       >
-        <template v-if="cfg<string>('provider', '') === 'mock'">
-          mock 离线运行，不发起网络请求；换到 openai-compatible 才会真正调用模型。
-        </template>
-        <template v-else-if="modelWillFallback">
-          <span class="af-accent">→ 实际下发：服务端默认模型（AF_LLM_MODEL）</span>；mock-* 名字不会被发送。
-        </template>
-        <template v-else>
-          → 实际下发：<span class="mono af-accent">{{ cfg('model', '') }}</span>
-        </template>
+        还没有模型连接。到「连接器」页新建一条「模型接入」，填 Base URL 与 API Key 后即可在这里选用。
       </p>
-      <p
-        class="af-faint"
-        style="font-size: 11px; line-height: 1.6; margin: 2px 0 0"
-      >
-        {{ modelStatus }}
-      </p>
+
+      <template v-if="activeConnection">
+        <label class="af-label">model</label>
+        <select
+          v-if="activeConnection.models.length"
+          class="af-select mono"
+          :value="cfg('model', '')"
+          @change="setCfg('model', ($event.target as HTMLSelectElement).value)"
+        >
+          <option
+            v-for="m in activeConnection.models"
+            :key="m"
+            :value="m"
+          >
+            {{ m }}
+          </option>
+          <option
+            v-if="!activeConnection.models.includes(cfg('model', ''))"
+            :value="cfg('model', '')"
+          >
+            {{ cfg('model', '') || '（未选择）' }}
+          </option>
+        </select>
+        <input
+          v-else
+          class="af-input mono"
+          :value="cfg('model', '')"
+          placeholder="该连接还没有模型清单，填一个模型名"
+          @input="setCfg('model', ($event.target as HTMLInputElement).value)"
+        >
+        <p
+          class="af-faint"
+          style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+        >
+          经连接 <span class="mono">{{ activeConnection.name }}</span> 调用；端点与密钥由服务端解密注入，画布不持有。
+        </p>
+      </template>
+
+      <template v-else>
+        <label class="af-label">provider</label>
+        <select
+          class="af-select"
+          :value="cfg('provider', 'openai-compatible')"
+          @change="setCfg('provider', ($event.target as HTMLSelectElement).value)"
+        >
+          <option
+            v-if="cfg<string>('provider', '') === 'mock'"
+            value="mock"
+          >
+            mock（遗留节点 · 建议改为真实模型）
+          </option>
+          <option value="openai-compatible">
+            openai-compatible（真实模型）
+          </option>
+        </select>
+        <label class="af-label">model</label>
+        <input
+          class="af-input mono"
+          :value="cfg('model', '')"
+          list="af-llm-models"
+          placeholder="从列表选择，或直接填模型名"
+          @input="setCfg('model', ($event.target as HTMLInputElement).value)"
+        >
+        <datalist id="af-llm-models">
+          <option
+            v-for="m in modelOptions"
+            :key="m"
+            :value="m"
+          />
+        </datalist>
+        <p
+          class="af-faint"
+          style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+        >
+          <template v-if="cfg<string>('provider', '') === 'mock'">
+            mock 离线运行，不发起网络请求；换到 openai-compatible 才会真正调用模型。
+          </template>
+          <template v-else-if="modelWillFallback">
+            <span class="af-accent">→ 实际下发：服务端默认模型（AF_LLM_MODEL）</span>；mock-* 名字不会被发送。
+          </template>
+          <template v-else>
+            → 实际下发：<span class="mono af-accent">{{ cfg('model', '') }}</span>
+          </template>
+        </p>
+        <p
+          class="af-faint"
+          style="font-size: 11px; line-height: 1.6; margin: 2px 0 0"
+        >
+          {{ modelStatus }}
+        </p>
+      </template>
       <label class="af-label">promptTemplate（Jinja2 沙箱）</label>
       <textarea
         class="af-textarea"

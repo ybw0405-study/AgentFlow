@@ -5,7 +5,7 @@ import { VueFlow } from '@vue-flow/core'
 import type { Connection, Edge as FlowEdge, Node as FlowNode } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { workflowApi, executionApi, llmApi } from '@/api'
+import { workflowApi, executionApi, llmApi, connectorApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
@@ -15,7 +15,7 @@ import type { FlowGraph, FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
-import type { WorkflowDefinitionDto } from '@/types/api'
+import type { WorkflowDefinitionDto, LlmConnectionConfig } from '@/types/api'
 import NodePalette from '@/components/canvas/NodePalette.vue'
 import ConfigDrawer from '@/components/canvas/ConfigDrawer.vue'
 import VariablesPanel from '@/components/canvas/VariablesPanel.vue'
@@ -97,6 +97,30 @@ const modelCatalog = ref<{
   models: string[]
 }>({ loaded: false, configured: false, defaultModel: '', error: null, models: [] })
 
+/** 模型连接：LLM 节点可以选用某条连接托管的端点与密钥，而不是进程级 AF_LLM_*。 */
+const llmConnections = ref<{ id: string; name: string; models: string[]; defaultModel: string }[]>([])
+
+async function loadLlmConnections(): Promise<void> {
+  try {
+    const rows = await connectorApi.list()
+    llmConnections.value = rows
+      .filter((c) => c.type === 'LLM' && c.enabled)
+      .map((c) => {
+        const cfg = (c.config ?? {}) as LlmConnectionConfig
+        const models = Array.isArray(cfg.models) ? cfg.models : []
+        return {
+          id: c.id,
+          name: c.name,
+          models,
+          defaultModel: cfg.defaultModel ?? models[0] ?? '',
+        }
+      })
+  } catch {
+    // 连接列表拿不到只影响可选项，画布仍可用进程级模型
+    llmConnections.value = []
+  }
+}
+
 async function loadModelCatalog(): Promise<void> {
   try {
     const dto = await llmApi.models()
@@ -153,7 +177,11 @@ function addNode(type: NodeType): void {
       data: {
         nodeType: type,
         label: key,
-        config: newNodeConfig(type, type === 'llm' ? modelCatalog.value.defaultModel : undefined),
+        config: newNodeConfig(
+          type,
+          type === 'llm' ? modelCatalog.value.defaultModel : undefined,
+          type === 'llm' ? (llmConnections.value[0] ?? null) : null,
+        ),
       },
     },
   ]
@@ -380,6 +408,7 @@ async function run(): Promise<void> {
 
 onMounted(async () => {
   void loadModelCatalog()
+  void loadLlmConnections()
   try {
     await load()
   } catch (e) {
@@ -525,6 +554,7 @@ onUnmounted(() => {
         :node="selectedNode"
         :issues="issues"
         :model-catalog="modelCatalog"
+        :llm-connections="llmConnections"
         @update="updateNode"
         @close="clearSelection"
         @remove="removeNode"

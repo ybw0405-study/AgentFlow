@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import redis.asyncio as aioredis
 
+from ..commands.providers.connector_llm import ConnectorLlmFactory
 from ..commands.providers.http_tool import HttpToolConnector
 from ..commands.providers.mock_tool import MockToolConnector
 from .condition import ConditionExecutor
@@ -30,9 +31,16 @@ def build_executors(
     subworkflow_resolver: SubworkflowResolver | None = None,
     connector_gateway: tuple[str, str] | None = None,
 ) -> dict[str, NodeExecutor]:
-    """connector_gateway=(gateway_base, internal_token) 时启用真实连接器。"""
+    """connector_gateway=(gateway_base, internal_token) 时启用真实连接器与模型连接。"""
     remote = (
         (lambda cid: HttpToolConnector(connector_gateway[0], connector_gateway[1], cid))
+        if connector_gateway
+        else None
+    )
+    connector_llms = (
+        ConnectorLlmFactory(
+            gateway_base_url=connector_gateway[0], internal_token=connector_gateway[1]
+        )
         if connector_gateway
         else None
     )
@@ -40,7 +48,7 @@ def build_executors(
     return {
         "start": StartExecutor(),
         "end": EndExecutor(),
-        "llm": LlmExecutor(llm_providers),
+        "llm": LlmExecutor(llm_providers, connector_llms),
         "tool": ToolExecutor(connectors),
         "condition": ConditionExecutor(),
         "transform": TransformExecutor(),

@@ -36,10 +36,93 @@ _MAX_MODEL_ENTRIES = 200
 _MAX_MODEL_ID_LEN = 200
 
 
-def _int_or(value: Any, fallback: int) -> int:
+def int_or(value: Any, fallback: int) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return fallback
     return max(0, int(value))
+
+
+def build_chat_payload(
+    *,
+    model: str,
+    prompt: str,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    output_mode: str,
+    output_schema: dict[str, Any] | None,
+    json_response_format: bool,
+    seed_value: int | None = None,
+) -> dict[str, Any]:
+    """构造 OpenAI 兼容 {@code /chat/completions} 请求体。
+
+    直连端点与经连接器代理两条路径共用这一份构造逻辑：请求体必须完全一致，
+    否则同一个工作流换一种接法就会得到不同结果。
+    """
+    system_parts: list[str] = []
+    if system:
+        system_parts.append(system)
+    if output_mode == "json":
+        system_parts.append(_JSON_SYSTEM_HINT)
+        if output_schema:
+            system_parts.append(
+                "Follow this JSON Schema: "
+                + json.dumps(output_schema, ensure_ascii=False, separators=(",", ":"))
+            )
+    messages: list[dict[str, str]] = []
+    if system_parts:
+        messages.append({"role": "system", "content": "\n".join(system_parts)})
+    messages.append({"role": "user", "content": prompt})
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if output_mode == "json" and json_response_format:
+        payload["response_format"] = {"type": "json_object"}
+    if seed_value is not None:
+        payload["seed"] = seed_value
+    return payload
+
+
+def extract_text(body: Any) -> str:
+    """从 chat completions 响应里取出助手文本；兼容 string 与分片 text 数组两种形态。"""
+    if not isinstance(body, dict):
+        return ""
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return ""
+    raw = message.get("content")
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        parts = [
+            str(part.get("text", ""))
+            for part in raw
+            if isinstance(part, dict) and part.get("type") in (None, "text")
+        ]
+        return "".join(parts).strip()
+    return ""
+
+
+def classify_status(status: int) -> tuple[str, bool]:
+    """把上游状态码归为（错误码，是否瞬时）；瞬时错误交给引擎 RetryPolicy 决定重试。"""
+    if status in (401, 403):
+        return "LLM-AUTH-001", False
+    if status == 429:
+        return "LLM-RATE_LIMIT-001", True
+    if status in (400, 404, 422):
+        return "LLM-REQUEST-001", False
+    return "LLM-UPSTREAM-001", True
 
 
 @dataclass(frozen=True)
@@ -196,6 +279,8 @@ class OpenAICompatibleProvider:
         output_schema: dict[str, Any] | None = None,
         seed: str,
         trace_id: str,
+        call_id: str = "",
+        space_id: str = "",
     ) -> CommandResult:
         started = time.monotonic()
         if not self.configured:
@@ -207,33 +292,19 @@ class OpenAICompatibleProvider:
             )
 
         resolved_model = self._resolve_model(model)
-        system_parts: list[str] = []
-        if system:
-            system_parts.append(system)
-        if output_mode == "json":
-            system_parts.append(_JSON_SYSTEM_HINT)
-            if output_schema:
-                system_parts.append(
-                    "Follow this JSON Schema: "
-                    + json.dumps(output_schema, ensure_ascii=False, separators=(",", ":"))
-                )
-        messages: list[dict[str, str]] = []
-        if system_parts:
-            messages.append({"role": "system", "content": "\n".join(system_parts)})
-        messages.append({"role": "user", "content": prompt})
-
-        payload: dict[str, Any] = {
-            "model": resolved_model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
-        if output_mode == "json" and self._json_response_format:
-            payload["response_format"] = {"type": "json_object"}
-        if self._send_seed:
-            # derived_seed 是 hex sha256；截断到 32bit 作为上游 seed（仅确定性复现，不作幂等键）
-            payload["seed"] = int(seed[:8], 16) % (2**31)
+        seed_value = int(seed[:8], 16) % (2**31) if self._send_seed else None
+        # derived_seed 是 hex sha256；截断到 32bit 作为上游 seed（仅确定性复现，不作幂等键）
+        payload = build_chat_payload(
+            model=resolved_model,
+            prompt=prompt,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            output_mode=output_mode,
+            output_schema=output_schema,
+            json_response_format=self._json_response_format,
+            seed_value=seed_value,
+        )
 
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -275,9 +346,9 @@ class OpenAICompatibleProvider:
 
         usage_raw = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         fallback_prompt_tokens = estimate_tokens(prompt + (system or ""))
-        prompt_tokens = _int_or(usage_raw.get("prompt_tokens"), fallback_prompt_tokens)
-        completion_tokens = _int_or(usage_raw.get("completion_tokens"), estimate_tokens(text))
-        total_tokens = _int_or(usage_raw.get("total_tokens"), prompt_tokens + completion_tokens)
+        prompt_tokens = int_or(usage_raw.get("prompt_tokens"), fallback_prompt_tokens)
+        completion_tokens = int_or(usage_raw.get("completion_tokens"), estimate_tokens(text))
+        total_tokens = int_or(usage_raw.get("total_tokens"), prompt_tokens + completion_tokens)
 
         return CommandResult(
             ok=True,
@@ -297,13 +368,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _classify_status(status: int) -> tuple[str, bool]:
-        if status in (401, 403):
-            return "LLM-AUTH-001", False
-        if status == 429:
-            return "LLM-RATE_LIMIT-001", True
-        if status in (400, 404, 422):
-            return "LLM-REQUEST-001", False
-        return "LLM-UPSTREAM-001", True
+        return classify_status(status)
 
     @staticmethod
     def _response_detail(resp: httpx.Response) -> str:
@@ -316,26 +381,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _extract_text(body: dict[str, Any]) -> str:
-        choices = body.get("choices")
-        if not isinstance(choices, list) or not choices:
-            return ""
-        first = choices[0]
-        if not isinstance(first, dict):
-            return ""
-        message = first.get("message")
-        if not isinstance(message, dict):
-            return ""
-        raw = message.get("content")
-        if isinstance(raw, str):
-            return raw.strip()
-        if isinstance(raw, list):
-            parts = [
-                str(part.get("text", ""))
-                for part in raw
-                if isinstance(part, dict) and part.get("type") in (None, "text")
-            ]
-            return "".join(parts).strip()
-        return ""
+        return extract_text(body)
 
     async def aclose(self) -> None:
         await self._client.aclose()

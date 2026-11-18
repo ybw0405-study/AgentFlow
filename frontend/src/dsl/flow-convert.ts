@@ -86,12 +86,15 @@ export function edgeId(e: { from: string; to: string; branch?: string }): string
 export function newNodeConfig(
   type: DslNode['type'],
   llmModel?: string,
+  llmConnection?: { id: string; defaultModel: string } | null,
 ): Record<string, unknown> {
   switch (type) {
     case 'llm':
+      // 已有模型连接就直接挂上：新建的节点开箱可用，不必再去翻连接列表
       return {
         provider: 'openai-compatible',
-        model: llmModel ?? '',
+        ...(llmConnection ? { connectionId: llmConnection.id } : {}),
+        model: llmModel || llmConnection?.defaultModel || '',
         promptTemplate: '{{ vars.question }}',
         maxTokens: 1024,
       }

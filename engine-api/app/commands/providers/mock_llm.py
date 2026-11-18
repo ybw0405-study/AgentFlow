@@ -30,6 +30,8 @@ class MockLLMProvider:
         output_schema: dict[str, Any] | None = None,
         seed: str,
         trace_id: str,
+        call_id: str = "",
+        space_id: str = "",
     ) -> CommandResult:
         started = time.monotonic()
         digest = hashlib.sha256(f"{seed}|{prompt}".encode()).hexdigest()

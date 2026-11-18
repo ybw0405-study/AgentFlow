@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 NodeKey = Annotated[str, Field(pattern=r"^[a-z][a-zA-Z0-9_-]{0,63}$")]
@@ -67,6 +67,9 @@ class EndConfig(CamelModel):
 
 
 class LlmConfig(CamelModel):
+    # 模型连接（tool_connector 中 type=LLM 的一条记录）的 id。给了它就走连接器托管的
+    # 端点与凭据，provider 与进程级 AF_LLM_* 都不再生效；为空时回落到 provider 语义。
+    connection_id: str | None = None
     provider: Literal["mock", "openai-compatible"] = "mock"
     model: str = Field(min_length=1)
     prompt_template: str = Field(min_length=1)
@@ -75,6 +78,14 @@ class LlmConfig(CamelModel):
     max_tokens: int = Field(1024, ge=1, le=32_000)
     output_mode: Literal["text", "json"] = "text"
     output_schema: dict[str, Any] | None = None
+
+    @field_validator("connection_id")
+    @classmethod
+    def _blank_connection_is_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
     @model_validator(mode="after")
     def _json_mode_needs_schema(self) -> LlmConfig:

@@ -46,14 +46,35 @@ class LLMProvider(Protocol):
         output_schema: dict[str, Any] | None,
         seed: str,
         trace_id: str,
+        call_id: str = "",
+        space_id: str = "",
     ) -> CommandResult: ...
 
 
 class LlmExecutor:
     node_type = "llm"
 
-    def __init__(self, providers: dict[str, LLMProvider]) -> None:
+    def __init__(
+        self,
+        providers: dict[str, LLMProvider],
+        connector_llms: Any | None = None,
+    ) -> None:
         self._providers = providers
+        # 连接器托管的模型：按 connectionId 懒加载 provider。为 None 表示当前部署未接连接器
+        # （例如只跑离线单测），此时引用模型的节点会给出明确错误而不是静默回落 mock。
+        self._connector_llms = connector_llms
+
+    def _provider_for(self, cfg: Any) -> LLMProvider:
+        if cfg.connection_id:
+            if self._connector_llms is None:
+                raise PermanentNodeError(
+                    "LLM-CONNECTION-001", "connector-backed models are not enabled"
+                )
+            return self._connector_llms.for_connection(cfg.connection_id)
+        provider = self._providers.get(cfg.provider)
+        if provider is None:
+            raise PermanentNodeError("LLM-PROVIDER-001", f"unknown provider '{cfg.provider}'")
+        return provider
 
     async def aclose(self) -> None:
         """释放真实 provider 持有的 httpx 连接池（mock provider 无此资源）。"""
@@ -61,6 +82,9 @@ class LlmExecutor:
             closer = getattr(provider, "aclose", None)
             if closer is not None:
                 await closer()
+        closer = getattr(self._connector_llms, "aclose", None)
+        if closer is not None:
+            await closer()
 
     async def execute(self, node: LlmNode, ctx: NodeContext) -> NodeResult:
         cfg = node.config
@@ -83,9 +107,7 @@ class LlmExecutor:
         if contains_pii(prompt) or (system is not None and contains_pii(system)):
             raise PiiBlockedError()
 
-        provider = self._providers.get(cfg.provider)
-        if provider is None:
-            raise PermanentNodeError("LLM-PROVIDER-001", f"unknown provider '{cfg.provider}'")
+        provider = self._provider_for(cfg)
 
         # 预算预占（D11）：预留 = promptTokens + maxTokens，生成上限钳到剩余额度
         grant: int | None = None
@@ -133,6 +155,8 @@ class LlmExecutor:
                 output_schema=cfg.output_schema,
                 seed=ctx.derived_seed(),
                 trace_id=ctx.trace_id,
+                call_id=call_id,
+                space_id=ctx.space_id,
             )
         except TransientNodeError as exc:
             await self._command_failed(ctx, call_id, exc.code)

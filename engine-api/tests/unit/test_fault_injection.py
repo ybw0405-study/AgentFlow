@@ -130,6 +130,8 @@ class _FlakyOnceProvider:
         output_schema=None,
         seed,
         trace_id,
+        call_id="",
+        space_id="",
     ):
         self.calls += 1
         if self.calls == 1:
@@ -189,6 +191,8 @@ class _AlwaysTransientProvider:
         output_schema=None,
         seed,
         trace_id,
+        call_id="",
+        space_id="",
     ):
         self.calls += 1
         raise TransientNodeError("LLM-TRANSIENT", "always")
@@ -297,6 +301,8 @@ class _ConcurrencyTrackingProvider:
         output_schema=None,
         seed,
         trace_id,
+        call_id="",
+        space_id="",
     ):
         self.current += 1
         self.peak = max(self.peak, self.current)

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   saveDraft: vi.fn(),
   push: vi.fn(),
   models: vi.fn(),
+  connections: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -17,6 +18,7 @@ vi.mock('@/api', async (importOriginal) => {
     workflowApi: { ...actual.workflowApi, detail: mocks.detail, saveDraft: mocks.saveDraft },
     executionApi: { ...actual.executionApi, trigger: vi.fn() },
     llmApi: { ...actual.llmApi, models: mocks.models },
+    connectorApi: { ...actual.connectorApi, list: mocks.connections },
   }
 })
 
@@ -96,6 +98,31 @@ describe('画布删除交互', () => {
     mocks.detail.mockReset()
     mocks.saveDraft.mockReset()
     mocks.saveDraft.mockResolvedValue(undefined)
+    mocks.connections.mockReset()
+    mocks.connections.mockResolvedValue([
+      {
+        id: 'c-deepseek',
+        tenantId: 'space-alpha',
+        name: 'deepseek',
+        type: 'LLM',
+        authType: 'API_KEY',
+        config: { models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+        enabled: true,
+        hasCredential: true,
+        inherited: false,
+      },
+      {
+        id: 'c-tool',
+        tenantId: 'space-alpha',
+        name: 'crm',
+        type: 'HTTP',
+        authType: 'API_KEY',
+        config: {},
+        enabled: true,
+        hasCredential: true,
+        inherited: false,
+      },
+    ])
     mocks.models.mockReset()
     mocks.models.mockResolvedValue({
       configured: true,
@@ -188,5 +215,53 @@ describe('画布删除交互', () => {
     const created = nodes.find((n) => n.id.startsWith('llm_'))
     expect(created?.data.config.provider).toBe('openai-compatible')
     expect(created?.data.config.model).toBe('deepseek-chat')
+  })
+
+  it('已有模型连接时，新建 llm 节点直接挂上它', async () => {
+    const wrapper = await mountCanvas()
+    const llmBtn = wrapper
+      .find('.af-palette')
+      .findAll('button')
+      .find((b) => b.find('.af-palette__type').text() === 'llm')
+    await llmBtn!.trigger('click')
+    await flushPromises()
+
+    const nodes = flow(wrapper).props('nodes') as {
+      id: string
+      data: { config: { connectionId?: string; model?: string } }
+    }[]
+    const created = nodes.find((n) => n.id.startsWith('llm_'))
+    // HTTP 类型的连接不该出现在模型来源里，所以只会挂上 LLM 那一条
+    expect(created?.data.config.connectionId).toBe('c-deepseek')
+  })
+
+  it('连接列表里只有 HTTP 连接时，llm 节点不带 connectionId', async () => {
+    mocks.connections.mockResolvedValue([
+      {
+        id: 'c-tool',
+        tenantId: 'space-alpha',
+        name: 'crm',
+        type: 'HTTP',
+        authType: 'API_KEY',
+        config: {},
+        enabled: true,
+        hasCredential: true,
+        inherited: false,
+      },
+    ])
+    const wrapper = await mountCanvas()
+    const llmBtn = wrapper
+      .find('.af-palette')
+      .findAll('button')
+      .find((b) => b.find('.af-palette__type').text() === 'llm')
+    await llmBtn!.trigger('click')
+    await flushPromises()
+
+    const nodes = flow(wrapper).props('nodes') as {
+      id: string
+      data: { config: { connectionId?: string } }
+    }[]
+    const created = nodes.find((n) => n.id.startsWith('llm_'))
+    expect(created?.data.config.connectionId).toBeUndefined()
   })
 })

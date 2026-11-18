@@ -14,14 +14,27 @@ interface Catalog {
   models: string[]
 }
 
-function mountDrawer(node: DslNode, catalog?: Catalog) {
+function mountDrawer(
+  node: DslNode,
+  catalog?: Catalog,
+  connections?: { id: string; name: string; models: string[]; defaultModel: string }[],
+) {
   return mount(ConfigDrawer, {
     props: {
       node,
       issues: [],
       modelCatalog: catalog ?? { loaded: true, configured: true, error: null, models: [] },
+      llmConnections: connections ?? [],
     },
   })
+}
+
+/** provider 下拉与「模型来源」下拉都存在，断言时只取前者，避免被来源选项干扰。 */
+function providerOptions(wrapper: ReturnType<typeof mountDrawer>): (string | undefined)[] {
+  const select = wrapper
+    .findAll('select')
+    .find((s) => s.html().includes('openai-compatible'))
+  return select!.findAll('option').map((o) => o.attributes('value'))
 }
 
 describe('节点配置抽屉', () => {
@@ -43,14 +56,12 @@ describe('节点配置抽屉', () => {
 
   it('provider 下拉不再提供 mock 选项', () => {
     const wrapper = mountDrawer(llm({ provider: 'openai-compatible', model: 'deepseek-chat' }))
-    const values = wrapper.findAll('option').map((o) => o.attributes('value'))
-    expect(values).toEqual(['openai-compatible'])
+    expect(providerOptions(wrapper)).toEqual(['openai-compatible'])
   })
 
   it('遗留 mock 节点仍能显示自身取值，便于改回真实模型', () => {
     const wrapper = mountDrawer(llm({ provider: 'mock', model: 'mock-large' }))
-    const values = wrapper.findAll('option').map((o) => o.attributes('value'))
-    expect(values).toEqual(['mock', 'openai-compatible'])
+    expect(providerOptions(wrapper)).toEqual(['mock', 'openai-compatible'])
   })
 
   it('模型清单渲染为 datalist 候选', () => {
@@ -79,5 +90,49 @@ describe('节点配置抽屉', () => {
     const wrapper = mountDrawer({ key: 'start_1', type: 'start', config: {} })
     const btn = wrapper.findAll('button').find((b) => b.text().includes('删除节点'))
     expect(btn).toBeTruthy()
+  })
+
+  it('没有模型连接时引导去连接器页新建', () => {
+    const wrapper = mountDrawer(llm({ provider: 'openai-compatible', model: 'deepseek-chat' }))
+    expect(wrapper.text()).toContain('还没有模型连接')
+  })
+
+  it('有模型连接时来源下拉列出连接与模型数', () => {
+    const wrapper = mountDrawer(llm({ model: 'deepseek-chat' }), undefined, [
+      { id: 'c1', name: 'deepseek', models: ['deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-chat' },
+    ])
+    const source = wrapper.findAll('select')[0]
+    expect(source.text()).toContain('进程默认')
+    expect(source.text()).toContain('deepseek（2 个模型）')
+  })
+
+  it('选中连接后 model 从该连接的清单里选', () => {
+    const wrapper = mountDrawer(llm({ connectionId: 'c1', model: 'deepseek-chat' }), undefined, [
+      { id: 'c1', name: 'deepseek', models: ['deepseek-chat', 'deepseek-reasoner'], defaultModel: 'deepseek-chat' },
+    ])
+    const modelSelect = wrapper.findAll('select').find((s) => s.html().includes('deepseek-reasoner'))
+    expect(modelSelect).toBeTruthy()
+    expect(wrapper.text()).toContain('经连接')
+    expect(wrapper.text()).toContain('端点与密钥由服务端解密注入')
+  })
+
+  it('切到连接时把不在清单里的 model 对齐到默认模型', async () => {
+    const wrapper = mountDrawer(llm({ model: 'gpt-4o-mini' }), undefined, [
+      { id: 'c1', name: 'deepseek', models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+    ])
+    await wrapper.findAll('select')[0].setValue('c1')
+    expect(wrapper.emitted('update')?.at(-1)?.[0]).toMatchObject({
+      config: { connectionId: 'c1', model: 'deepseek-chat' },
+    })
+  })
+
+  it('切回进程默认会清掉 connectionId', async () => {
+    const wrapper = mountDrawer(llm({ connectionId: 'c1', model: 'deepseek-chat' }), undefined, [
+      { id: 'c1', name: 'deepseek', models: ['deepseek-chat'], defaultModel: 'deepseek-chat' },
+    ])
+    await wrapper.findAll('select')[0].setValue('')
+    const emitted = wrapper.emitted('update')?.at(-1)?.[0] as { config: Record<string, unknown> }
+    expect(emitted.config.connectionId).toBeUndefined()
+    expect(emitted.config.model).toBe('deepseek-chat')
   })
 })
