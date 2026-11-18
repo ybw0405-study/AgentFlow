@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from .api.internal import router as internal_router
 from .api.problems import problem
 from .commands.providers.mock_llm import MockLLMProvider
+from .commands.providers.openai_compatible import OpenAICompatibleProvider
 from .config import Settings, get_settings
 from .db.migrate import run_migrations
 from .engine.dispatcher import Dispatcher
@@ -67,9 +68,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subworkflow_resolver = GatewaySubworkflowResolver(
             settings.gateway_base_url, settings.internal_token
         )
+        # 真实模型 provider 始终注册：未配置 AF_LLM_* 时调用会返回明确的
+        # LLM-NOT_CONFIGURED-001，而不是笼统的 unknown provider。
+        real_llm = OpenAICompatibleProvider.from_settings(settings)
+        llm_providers = {"mock": MockLLMProvider(), real_llm.name: real_llm}
         executors = build_executors(
             redis,
-            {"mock": MockLLMProvider()},
+            llm_providers,
             subworkflow_resolver,
             connector_gateway=(settings.gateway_base_url, settings.internal_token),
         )

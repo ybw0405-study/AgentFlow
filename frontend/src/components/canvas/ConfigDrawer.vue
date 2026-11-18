@@ -119,7 +119,7 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
           mock（离线）
         </option>
         <option value="openai-compatible">
-          openai-compatible（P1+）
+          openai-compatible（真实模型 · 需配置 AF_LLM_*）
         </option>
       </select>
       <label class="af-label">model</label>

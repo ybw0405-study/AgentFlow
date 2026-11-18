@@ -606,6 +606,26 @@ stateDiagram-v2
 
 发出 Command 前：`remaining = tokenBudget - tokenUsed`；`remaining ≤ 0` → `ExecutionFailed{errorCode: EXEC-BUDGET_EXHAUSTED}`，不再发任何 Command；否则该 Command 的 `maxTokens := min(node.maxTokens, remaining)`，Redis 预占；完成时按实际 `tokenUsed` 结算回冲。MySQL `budget_ledger` 由 projector 异步对账。
 
+### 5.7 LLM Provider（mock / 真实模型）
+
+`LlmExecutor` 只依赖 `LLMProvider` 协议（`complete(...) -> CommandResult`），注册表在应用装配期注入：
+
+| provider | 端点来源 | 语义 |
+|---|---|---|
+| `mock`（默认） | 内置，无网络 | 对 `(seed, prompt)` 确定性生成，重放安全，用于 P0 离线验收 |
+| `openai-compatible` | 仅来自 `AF_LLM_*` 环境变量 | 任意 OpenAI 兼容 `/chat/completions`（DeepSeek / Qwen / OpenAI / 本地 Ollama 等） |
+
+信任边界：
+
+- **端点与密钥绝不来自 DSL 或用户入参**，只在 engine-api 进程装配期从环境变量读取，杜绝 SSRF 与凭据注入；密钥仅出现在 `Authorization` 头，日志/错误体/事件载荷一律脱敏（单测覆盖）。
+- `AF_PRODUCTION=true` 时强制要求 https 端点（`AF_LLM_ALLOW_INSECURE_HTTP` 仅本地调试例外）。
+- PII 第二层脱敏仍在 `LlmExecutor` 内先于 provider 执行；provider 不感知原始 prompt 之外的任何租户数据。
+- 输入侧 `mock-*` 占位模型名自动回落到 `AF_LLM_MODEL`，避免画布从 mock 切换时上游 400。
+
+**重试分层**：provider 不做重试，只把上游状态精确分类为瞬时/永久（`LLM-RATE_LIMIT-001` / `LLM-TIMEOUT-001` / `LLM-UPSTREAM-001` 为瞬时；`LLM-AUTH-001` / `LLM-REQUEST-001` / `LLM-RESPONSE-001` / `LLM-NOT_CONFIGURED-001` 为永久）。重试由 §5.4 的引擎 RetryPolicy 统一执行，避免双层重试导致重复计费。
+
+**与 §5.3 的差异（必须知晓）**：真实模型是外部非确定性副作用，且上游普遍不支持按 callId 幂等去重。因此 §5.3 的「恰好一次」论断对真实 provider 降级为 **at-least-once**：`CommandIssued` 已落但 `CommandCompleted` 未落时崩溃恢复会重发调用，可能产生重复计费。`AF_LLM_SEND_SEED=true` 可向上游传递确定性 seed 提高复现性，但不构成幂等保证。需要强幂等时应接入支持 idempotency key 的上游，或在 connector 层加结果缓存。
+
 ---
 
 ## 6. DSL 规范
@@ -923,6 +943,13 @@ stateDiagram-v2
 | `PII-BLOCKED-001` | 200（执行内） | PII 第二层校验命中，节点永久失败 |
 | `EXPR-EVAL-001` | 200（执行内） | 表达式求值失败（永久） |
 | `LLM-RATE_LIMIT` / `TOOL-TIMEOUT` 等 | — | 瞬时，触发重试 |
+| `LLM-NOT_CONFIGURED-001` | 200（执行内） | 真实 provider 未配置 `AF_LLM_BASE_URL` / `AF_LLM_API_KEY`（永久） |
+| `LLM-AUTH-001` | 200（执行内） | 上游 401/403，密钥无效（永久，不重试） |
+| `LLM-REQUEST-001` | 200（执行内） | 上游 400/404/422，请求或模型名非法（永久） |
+| `LLM-RATE_LIMIT-001` | 200（执行内） | 上游 429（瞬时，重试） |
+| `LLM-TIMEOUT-001` | 200（执行内） | 上游超时（瞬时，重试） |
+| `LLM-UPSTREAM-001` | 200（执行内） | 上游 5xx / 网络异常（瞬时，重试） |
+| `LLM-RESPONSE-001` | 200（执行内） | 上游响应体非法、空内容或超限（永久） |
 
 ---
 
@@ -1088,12 +1115,13 @@ AgentFlow/
 3. **NodeCompleted 存完整脱敏输出**，其余事件存摘要+digest；溢出阈值 256KB 转 node_io。
 4. **SSE = Redis pub/sub + afterSeq 追平**；RocketMQ 仅审计兜底与 P3 审批回调。
 5. **E2E = API 级 pytest 打 gateway**（`e2e/`）；前端交互用 Vitest，Playwright 推迟 P3。
+6. **真实 LLM 放 engine-api 而非 connector-service**（2026-11-18）：`LlmExecutor` 已有 Provider 协议，只需新增 `openai-compatible` 实现并在装配期注册；密钥只经 `AF_LLM_*` 注入，不引入新的服务间信任边界。设计细节与「恰好一次」降级说明见 §5.7。
 
 ---
 
 ## 13. 实现期对齐记录（2026-11-16，P0 落地时与本文档的偏差修正）
 
-1. **错误码新增**（§8 补充）：`EXEC-INPUT-001`（start 入参校验失败，永久）、`EXEC-MAX_STEPS_EXCEEDED`、`CONN-FORBIDDEN-001`（连接器未授权）、`CONN-NOT_FOUND-001`、`LLM-PROVIDER-001`、`LLM-UPSTREAM-001`、`NODE-TIMEOUT`（瞬时）、`NODE-INTERNAL-001`（永久）、`EVT-CONCURRENCY-001`、`TOOL-OP-001`。
+1. **错误码新增**（§8 补充）：`EXEC-INPUT-001`（start 入参校验失败，永久）、`EXEC-MAX_STEPS_EXCEEDED`、`CONN-FORBIDDEN-001`（连接器未授权）、`CONN-NOT_FOUND-001`、`LLM-PROVIDER-001`、`LLM-UPSTREAM-001`、`NODE-TIMEOUT`（瞬时）、`NODE-INTERNAL-001`（永久）、`EVT-CONCURRENCY-001`、`TOOL-OP-001`；真实模型 provider（§5.7）另增 `LLM-NOT_CONFIGURED-001`、`LLM-AUTH-001`、`LLM-REQUEST-001`、`LLM-RATE_LIMIT-001`、`LLM-TIMEOUT-001`、`LLM-RESPONSE-001`。
 2. **成功响应信封**：外部 API 成功响应统一 `ApiResponse{code:"OK", msg, data, traceId}`（复用 DocQA 惯例）；错误一律 ProblemDetail。§7 的响应体示例均视为 `data` 字段内容。
 3. **RocketMQ 主题名**：`af-audit-event`（RocketMQ 主题不允许 `.`）。正文他处的 `af.audit.events` 以此为准。
 4. **审计只追加的第三重保证**：除 DB 授权外，V004 迁移内置 BEFORE UPDATE/DELETE 触发器（`AUD-APPENDONLY-001`）；audit-service 的 ArchUnit 测试禁止 repo 包依赖 MyBatis `@Update`/`@Delete`。

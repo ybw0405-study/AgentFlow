@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     default_max_parallelism: int = 4
     event_tail_max_limit: int = 500
 
+    # 真实 LLM（OpenAI 兼容 /chat/completions）。默认全部关闭：未配置时项目仍完全离线可跑。
+    # 端点/密钥只从这里注入，绝不来自 DSL 或用户入参（SSRF / 凭据注入防线）。
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"  # mock-* 占位模型名回落到此值
+    llm_timeout_s: float = 60.0
+    llm_max_response_chars: int = 100_000
+    llm_json_response_format: bool = True  # 上游不支持 response_format 时置 false
+    llm_send_seed: bool = False  # 部分厂商支持 seed，用于重放确定性；不支持时须关闭
+    llm_allow_insecure_http: bool = False  # 生产默认禁止明文 http 外送密钥
+
 
 _WEAK_INTERNAL_TOKENS = {"dev-internal-token", ""}
 
@@ -62,6 +73,17 @@ def _guard_production(settings: "Settings") -> None:
             "FAIL-FAST: AF_INTERNAL_TOKEN still uses a development default. "
             "Provide a strong value in production."
         )
+    if settings.llm_api_key:
+        insecure = not settings.llm_base_url.startswith("https://")
+        if insecure and not settings.llm_allow_insecure_http:
+            raise RuntimeError(
+                "FAIL-FAST: AF_LLM_BASE_URL must use https when a real model key is configured. "
+                "Set AF_LLM_ALLOW_INSECURE_HTTP=true only for local debugging."
+            )
+        if not settings.llm_model or settings.llm_model.startswith("mock"):
+            raise RuntimeError(
+                "FAIL-FAST: AF_LLM_MODEL must be a real model name when a real model key is set."
+            )
 
 
 @lru_cache

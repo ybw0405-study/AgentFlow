@@ -55,6 +55,13 @@ class LlmExecutor:
     def __init__(self, providers: dict[str, LLMProvider]) -> None:
         self._providers = providers
 
+    async def aclose(self) -> None:
+        """释放真实 provider 持有的 httpx 连接池（mock provider 无此资源）。"""
+        for provider in self._providers.values():
+            closer = getattr(provider, "aclose", None)
+            if closer is not None:
+                await closer()
+
     async def execute(self, node: LlmNode, ctx: NodeContext) -> NodeResult:
         cfg = node.config
         tctx = ctx.template_context()

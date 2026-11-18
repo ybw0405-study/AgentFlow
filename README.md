@@ -75,6 +75,30 @@ cd frontend; npm install; cd ..
 
 WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.ps1` 停掉 Windows 侧）。
 
+## 接入真实模型（OpenAI 兼容）
+
+默认全离线（内置 mock provider，确定性输出，用于验收「恰好一次」）。要调用真实模型：
+
+1. 在**启动脚本之前**设置环境变量（脚本不会覆盖它们，子进程会继承）：
+
+   ```powershell
+   $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1'   # 或 Qwen/Ollama/OpenAI 等兼容端点
+   $env:AF_LLM_API_KEY  = '<你的密钥>'
+   $env:AF_LLM_MODEL    = 'deepseek-chat'
+   .\scripts\start-dev.ps1
+   ```
+
+2. 画布里选中 llm 节点，右侧 `provider` 选 `openai-compatible（真实模型）`；`model` 可以直接填真实模型名，留着 `mock-large` 也会自动回落到 `AF_LLM_MODEL`。
+3. 「冻结并发布」→「运行」填 `initialVariables`，执行详情里能看到真实返回文本与上游 `usage`。
+
+约束与排错：
+
+- 端点与密钥**只来自环境变量**，画布 DSL 无法指定 URL，杜绝 SSRF / 凭据注入；密钥不进日志、错误体、事件载荷。
+- 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
+- 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
+- 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）；内置 mock 才是确定性的。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
+- `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
+
 ## 演示脚本（P0 验收路径）
 
 1. 登录 `editor@agentflow.dev` → 新建工作流 `demo`。
@@ -131,6 +155,13 @@ CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`pyth
 | `AF_MONTHLY_CALL_LIMIT` / `AF_MONTHLY_TOKEN_LIMIT` | 10000 / 50000 | 成本中心月度初始限额（子租户沿祖先链取最小） |
 | `AF_CHECKPOINT_INTERVAL` | 10 | 每 N 事件一次 CheckpointCreated |
 | `AF_GATE_SWEEP_INTERVAL_S` | 15 | human_gate 超时裁决扫描间隔 |
+| `AF_LLM_BASE_URL` | 空 | 真实模型端点（OpenAI 兼容，如 `https://api.deepseek.com/v1`）；空则 provider 未启用 |
+| `AF_LLM_API_KEY` | 空 | 上游密钥；只在 engine-api 进程内使用，绝不写入日志/事件/仓库 |
+| `AF_LLM_MODEL` | gpt-4o-mini | 默认模型；节点里填 `mock-*` 占位名时自动回落到它 |
+| `AF_LLM_TIMEOUT_S` / `AF_LLM_MAX_RESPONSE_CHARS` | 60 / 100000 | 单次调用超时、响应文本上限 |
+| `AF_LLM_JSON_RESPONSE_FORMAT` | true | 若上游不支持 `response_format` 则置 false |
+| `AF_LLM_SEND_SEED` | false | 是否向上游传递确定性 seed（仅部分厂商支持） |
+| `AF_LLM_ALLOW_INSECURE_HTTP` | false | 生产守护例外：允许明文 http 端点（仅本地调试） |
 | `AF_GATE_RELAY_INTERVAL_MS` | 5000 | 裁决 outbox 重投间隔（引擎不可达时补偿） |
 | `AF_EVAL_POLL_INTERVAL_MS` | 3000 | 评测/A-B 结果收口轮询间隔 |
 | `AF_RATE_LIMIT_TRIGGER_MAX` / `AF_RATE_LIMIT_LOGIN_MAX` | 20 / 10（start-dev 设 300） | 网关固定窗口限流（次/60s/用户｜IP） |
