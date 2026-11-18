@@ -40,7 +40,9 @@ Write-Host '    grants + seed applied (duplicate key 可忽略)'
 
 Write-Host '==> [3/5] 构建 Java 服务（跳过测试；测试走 verify-all）'
 Push-Location $root
-mvn -q -DskipTests -Dcheckstyle.skip package
+# 参数必须逐个加引号：PowerShell 会把 -Dcheckstyle.skip 解析成 -Dcheckstyle + .skip，
+# maven 收到 ".skip" 报 Unknown lifecycle phase 直接失败。
+mvn -q '-DskipTests' '-Dcheckstyle.skip=true' package
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'maven package failed' }
 Pop-Location
 
