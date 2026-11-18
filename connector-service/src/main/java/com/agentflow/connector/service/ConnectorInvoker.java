@@ -6,10 +6,7 @@ import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.domain.ConnectorRepository.CredentialRow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -25,10 +22,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -171,7 +164,7 @@ public class ConnectorInvoker {
                             transientError ? "CONN-HTTP-5XX" : "CONN-HTTP-4XX",
                             transientError, latency);
                 }
-                byte[] body = readBodyLimited(stream, MAX_RESPONSE_BYTES,
+                byte[] body = BoundedBodyReader.read(stream, MAX_RESPONSE_BYTES,
                         Duration.ofMillis(Math.max(cmd.timeoutMs(), 1_000)));
                 if (body == null) {
                     return InvokeResult.failure("CONN-RESPONSE-TOO_LARGE", false, latency);
@@ -362,47 +355,5 @@ public class ConnectorInvoker {
 
     private static long elapsed(long startedNanos) {
         return (System.nanoTime() - startedNanos) / 1_000_000;
-    }
-
-    /**
-     * 读取响应体，超过 {@code maxBytes} 立即放弃并返回 null。
-     *
-     * <p>读取放在独立线程并设总时长上限：仅靠 request timeout 只能约束到响应头，
-     * 逐字节滴流的上游仍能把连接拖死（slow-loris）。
-     */
-    private static byte[] readBodyLimited(InputStream in, int maxBytes, Duration budget)
-            throws Exception {
-        CompletableFuture<byte[]> reading = CompletableFuture.supplyAsync(() -> {
-            try {
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                byte[] chunk = new byte[8_192];
-                int read;
-                while ((read = in.read(chunk)) != -1) {
-                    if (buffer.size() + read > maxBytes) {
-                        return null;
-                    }
-                    buffer.write(chunk, 0, read);
-                }
-                return buffer.toByteArray();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        });
-        try {
-            return reading.get(Math.max(budget.toMillis(), 1_000), TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            reading.cancel(true);
-            try {
-                in.close();
-            } catch (IOException ignored) {
-                // 关闭失败不影响判定，超时已成立
-            }
-            throw new HttpTimeoutException("upstream body read timed out");
-        } catch (ExecutionException e) {
-            if (e.getCause() instanceof UncheckedIOException io) {
-                throw io.getCause();
-            }
-            throw e;
-        }
     }
 }

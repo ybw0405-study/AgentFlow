@@ -12,6 +12,7 @@ import com.agentflow.connector.web.ConnectorDtos.CreateRequest;
 import com.agentflow.connector.web.ConnectorDtos.UpdateRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -39,6 +40,9 @@ public class ConnectorService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Duration OAUTH_STATE_TTL = Duration.ofMinutes(10);
+    private static final Duration TOKEN_TIMEOUT = Duration.ofSeconds(10);
+    /** token 响应只有几十字节，上限设小一些；解析前先兜住异常上游。 */
+    private static final int MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5)).build();
 
@@ -181,17 +185,25 @@ public class ConnectorService {
                 + "&redirect_uri=" + enc(oauth.path("redirectUri").asText(""));
         try {
             HttpRequest request = HttpRequest.newBuilder(uri)
-                    .timeout(Duration.ofSeconds(10))
+                    .timeout(TOKEN_TIMEOUT)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString(form))
                     .build();
-            HttpResponse<String> response = HTTP.send(request,
-                    HttpResponse.BodyHandlers.ofString());
+            HttpResponse<InputStream> response = HTTP.send(request,
+                    HttpResponse.BodyHandlers.ofInputStream());
+            byte[] payload;
+            try (InputStream stream = response.body()) {
+                payload = BoundedBodyReader.read(stream, MAX_TOKEN_RESPONSE_BYTES, TOKEN_TIMEOUT);
+            }
+            if (payload == null) {
+                throw new BusinessException(ErrorCode.AGT_UPSTREAM_001,
+                        "oauth token endpoint response exceeds limit");
+            }
             if (response.statusCode() >= 400) {
                 throw new BusinessException(ErrorCode.AGT_UPSTREAM_001,
                         "oauth token endpoint returned " + response.statusCode());
             }
-            JsonNode token = JSON.readTree(response.body());
+            JsonNode token = JSON.readTree(payload);
             String accessToken = token.path("access_token").asText("");
             if (accessToken.isBlank()) {
                 throw new BusinessException(ErrorCode.AGT_UPSTREAM_001,
