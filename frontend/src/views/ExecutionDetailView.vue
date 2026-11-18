@@ -5,7 +5,7 @@ import { executionApi } from '@/api'
 import { openSse } from '@/api/sse'
 import type { SseSession } from '@/api/sse'
 import { useAuthStore } from '@/stores/auth'
-import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import type { EngineEvent, ExecutionDetail, NodeExecutionDto, NodeIo } from '@/types/api'
 import NodeTree from '@/components/execution/NodeTree.vue'
 import IoPanel from '@/components/execution/IoPanel.vue'
@@ -25,6 +25,11 @@ let sse: SseSession | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 let reconnectDelay = 1000
+/**
+ * 已处理事件的最大 seq。SSE 本身保序，但断线重连会从 afterSeq 重新回放，
+ * 若不去重，历史 NodeStarted 会把已经 SUCCEEDED 的节点刷回 RUNNING（状态倒退闪烁）。
+ */
+const lastSeq = ref(0)
 
 const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT'])
 
@@ -62,6 +67,10 @@ async function cancel(): Promise<void> {
 
 function handleLiveEvent(e: EngineEvent): void {
   if (!detail.value) return
+  if (typeof e.seq === 'number') {
+    if (e.seq <= lastSeq.value) return
+    lastSeq.value = e.seq
+  }
   const exec = detail.value.execution
   switch (e.eventType) {
     case 'ExecutionStarted':
@@ -121,7 +130,9 @@ function connectSse(): void {
   const headers: Record<string, string> = {}
   if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`
   if (auth.currentSpaceId) headers['X-Space-Id'] = auth.currentSpaceId
-  sse = openSse(`/api/v1/executions/${executionId}/events/stream`, { headers }, {
+  // 带上已处理位置：重连只补增量，不必每次回放整条事件流
+  const url = `/api/v1/executions/${executionId}/events/stream?afterSeq=${lastSeq.value}`
+  sse = openSse(url, { headers }, {
     onFrame: (frame) => {
       if (frame.event === 'engine-event') {
         try {
@@ -152,7 +163,7 @@ onMounted(async () => {
   try {
     await load()
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    error.value = errorText(e)
     return
   }
   if (TERMINAL.has(detail.value?.execution.status ?? '')) {

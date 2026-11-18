@@ -6,7 +6,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
-import org.springframework.data.redis.listener.adapter.MessageListenerAdapter;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 /** Redis 订阅（SSE 扇出）+ SSE 任务线程池。 */
@@ -18,9 +17,8 @@ public class RedisEventsConfiguration {
                                                         SseHub sseHub) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(factory);
-        container.addMessageListener(
-                new MessageListenerAdapter(sseHub, "onMessage"),
-                new ChannelTopic(SseHub.CHANNEL));
+        // SseHub 自身实现 MessageListener，注册即生效
+        container.addMessageListener(sseHub, new ChannelTopic(SseHub.CHANNEL));
         return container;
     }
 
