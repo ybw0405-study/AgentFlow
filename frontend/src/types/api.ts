@@ -250,3 +250,11 @@ export interface ExperimentDto {
   summaryJson?: string
   createdAt?: string
 }
+
+/** 引擎侧模型清单。configured=false 表示进程没有配置真实端点，前端应退回手填。 */
+export interface LlmModelsDto {
+  configured: boolean
+  defaultModel: string
+  models: string[]
+  error: string | null
+}

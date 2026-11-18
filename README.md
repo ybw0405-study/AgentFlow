@@ -39,7 +39,7 @@ flowchart LR
 | 健康检查（各服务 `/health`，依赖不可用返回 503） | ✅ P0 |
 | 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
 | 审计只追加（触发器 + 最小授权 + MQ） | ✅ P0 |
-| mock LLM / mock 连接器（离线演示，恰好一次计数） | ✅ P0 |
+| mock LLM / mock 连接器（引擎侧离线演示与 CI，画布默认不产出） | ✅ P0 |
 
 画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
 | condition / loop / parallel / transform / subworkflow 节点 | ✅ P1 |
@@ -80,7 +80,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 ## 接入真实模型（OpenAI 兼容）
 
-默认全离线（内置 mock provider，确定性输出，用于验收「恰好一次」）。要调用真实模型：
+画布的 llm 节点默认就是真实 provider；引擎仍内置 mock provider，只在 DSL 显式写 `provider: mock` 时生效（离线演示与 CI 用，画布不再产出该配置）。要调用真实模型：
 
 1. 在**启动脚本之前**设置环境变量（脚本不会覆盖它们，子进程会继承）：
 
@@ -91,12 +91,12 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
    .\scripts\start-dev.ps1
    ```
 
-2. 画布里选中 llm 节点，右侧 `provider` 选 `openai-compatible（真实模型）`；`model` 可以直接填真实模型名，留着 `mock-large` 也会自动回落到 `AF_LLM_MODEL`。执行详情「节点 I/O」里 `output.model` 是**实际下发**的模型名，回落发生时另有 `requestedModel` 标出 DSL 里声明的值。
-3. 「冻结并发布」→「运行」填 `initialVariables`，执行详情里能看到真实返回文本与上游 `usage`。
+2. 画布里选中 llm 节点，`model` 输入框会列出服务端从上游 `/models` 读到的模型（`GET /api/v1/llm/models`），下拉选中即可，也允许直接手填。端点不通或上游不支持 `/models` 时退回纯手填并说明原因，不会把配置卡死。
+3. 「冻结并发布」→「运行」填 `initialVariables`，执行详情里能看到真实返回文本与上游 `usage`。`output.model` 是**实际下发**的模型名；历史草稿里若还留着 `mock-*` 占位名，回落时另有 `requestedModel` 标出声明值。
 
 约束与排错：
 
-- 端点与密钥**只来自环境变量**，画布 DSL 无法指定 URL，杜绝 SSRF / 凭据注入；密钥不进日志、错误体、事件载荷。
+- 端点与密钥**只来自环境变量**，画布 DSL 无法指定 URL，杜绝 SSRF / 凭据注入；密钥不进日志、错误体、事件载荷，`/api/v1/llm/models` 也只回模型 id。
 - 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
 - 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）；内置 mock 才是确定性的。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。

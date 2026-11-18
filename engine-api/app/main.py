@@ -84,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.store = store
         app.state.event_log = event_log
         app.state.dispatcher = dispatcher
+        app.state.llm_provider = real_llm  # /internal/llm/models 读模型清单
         await dispatcher.recover_on_startup()  # D4：崩溃恢复扫描
         dispatcher.start_sweep()  # 周期兜底
         dispatcher.start_gate_sweeper()  # human_gate 超时自动裁决

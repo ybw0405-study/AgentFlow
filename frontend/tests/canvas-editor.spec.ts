@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   detail: vi.fn(),
   saveDraft: vi.fn(),
   push: vi.fn(),
+  models: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -15,6 +16,7 @@ vi.mock('@/api', async (importOriginal) => {
     ...actual,
     workflowApi: { ...actual.workflowApi, detail: mocks.detail, saveDraft: mocks.saveDraft },
     executionApi: { ...actual.executionApi, trigger: vi.fn() },
+    llmApi: { ...actual.llmApi, models: mocks.models },
   }
 })
 
@@ -85,7 +87,6 @@ async function mountCanvas() {
   await flushPromises()
   return wrapper
 }
-
 function flow(wrapper: Awaited<ReturnType<typeof mountCanvas>>) {
   return wrapper.findComponent({ name: 'VueFlow' })
 }
@@ -95,6 +96,13 @@ describe('画布删除交互', () => {
     mocks.detail.mockReset()
     mocks.saveDraft.mockReset()
     mocks.saveDraft.mockResolvedValue(undefined)
+    mocks.models.mockReset()
+    mocks.models.mockResolvedValue({
+      configured: true,
+      defaultModel: 'deepseek-chat',
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      error: null,
+    })
   })
 
   it('点击连线后出现选中浮条，删除按钮可移除该连线', async () => {
@@ -162,5 +170,23 @@ describe('画布删除交互', () => {
       .findAll('button')
       .find((b) => b.find('.af-palette__type').text() === 'start')
     expect(startBtn?.attributes('disabled')).toBeDefined()
+  })
+
+  it('新建 llm 节点默认接真实 provider，并带上服务端默认模型', async () => {
+    const wrapper = await mountCanvas()
+    const llmBtn = wrapper
+      .find('.af-palette')
+      .findAll('button')
+      .find((b) => b.find('.af-palette__type').text() === 'llm')
+    await llmBtn!.trigger('click')
+    await flushPromises()
+
+    const nodes = flow(wrapper).props('nodes') as {
+      id: string
+      data: { config: { provider?: string; model?: string } }
+    }[]
+    const created = nodes.find((n) => n.id.startsWith('llm_'))
+    expect(created?.data.config.provider).toBe('openai-compatible')
+    expect(created?.data.config.model).toBe('deepseek-chat')
   })
 })

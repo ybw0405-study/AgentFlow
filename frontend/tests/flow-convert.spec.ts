@@ -49,8 +49,13 @@ describe('flow-convert', () => {
   })
 
   it('newNodeConfig provides type defaults', () => {
-    expect(newNodeConfig('llm').provider).toBe('mock')
+    expect(newNodeConfig('llm', 'deepseek-chat').provider).toBe('openai-compatible')
+    expect(newNodeConfig('llm', 'deepseek-chat').model).toBe('deepseek-chat')
     expect(newNodeConfig('tool').connectorId).toBe('mock.search')
     expect(newNodeConfig('end').resultMapping).toBeTruthy()
+  })
+
+  it('没有模型清单时不写死占位模型名', () => {
+    expect(newNodeConfig('llm').model).toBe('')
   })
 })

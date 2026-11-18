@@ -321,3 +321,77 @@ async def test_end_to_end_execution_uses_real_provider(settings, fake_redis, mem
 
     assert status == "SUCCEEDED"
     assert calls == ["deepseek-chat", "deepseek-chat"]
+
+
+# ---------- 模型清单（画布下拉的数据来源） ----------
+
+
+async def test_list_models_reads_upstream_catalog() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "deepseek-reasoner", "owned_by": "x"},
+                    {"id": "deepseek-chat"},
+                    {"id": "deepseek-chat"},  # 上游重复项不应重复出现
+                ],
+            },
+        )
+
+    catalog = await _provider(handler).list_models()
+
+    assert catalog.configured is True
+    assert catalog.error is None
+    assert catalog.models == ["deepseek-chat", "deepseek-reasoner"]
+    assert seen["url"] == "https://llm.example.test/v1/models"
+    assert seen["auth"] == f"Bearer {KEY}"
+
+
+async def test_list_models_unconfigured_returns_empty_without_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("未配置端点时不应发起请求")
+
+    catalog = await _provider(handler, api_key="").list_models()
+
+    assert catalog.configured is False
+    assert catalog.models == []
+    assert catalog.error is None
+
+
+async def test_list_models_rejects_without_leaking_upstream_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"message": f"bad key {KEY}"}})
+
+    catalog = await _provider(handler).list_models()
+
+    assert catalog.configured is True
+    assert catalog.models == []
+    assert catalog.error == "LLM-AUTH-001"
+
+
+async def test_list_models_handles_non_json_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>not json</html>")
+
+    catalog = await _provider(handler).list_models()
+
+    assert catalog.configured is True
+    assert catalog.models == []
+    assert catalog.error == "LLM-RESPONSE-001"
+
+
+async def test_list_models_transport_failure_is_reported_not_raised() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
+
+    catalog = await _provider(handler).list_models()
+
+    assert catalog.configured is True
+    assert catalog.models == []
+    assert catalog.error == "LLM-UPSTREAM-001"

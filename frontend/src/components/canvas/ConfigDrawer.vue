@@ -7,6 +7,13 @@ defineOptions({ name: 'ConfigDrawer' })
 const props = defineProps<{
   node: DslNode | null
   issues: { nodeKey?: string; field?: string; message: string }[]
+  /** 模型清单的加载态；loaded=false 表示画布仍在拉取。 */
+  modelCatalog?: {
+    loaded: boolean
+    configured: boolean
+    error: string | null
+    models: string[]
+  } | null
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +38,17 @@ const modelWillFallback = computed(() => {
   if (c.provider !== 'openai-compatible') return false
   const model = String(c.model ?? '')
   return !model || model.toLowerCase().startsWith('mock')
+})
+
+const modelOptions = computed(() => props.modelCatalog?.models ?? [])
+
+const modelStatus = computed<string>(() => {
+  const catalog = props.modelCatalog
+  if (!catalog || !catalog.loaded) return '正在读取模型清单…'
+  if (!catalog.configured) return '服务端未配置 AF_LLM_*，暂时列不出模型；请先配置端点与密钥'
+  if (catalog.error) return `模型清单不可用（${catalog.error}），可直接手填模型名`
+  if (!catalog.models.length) return '上游未返回任何模型，可直接手填模型名'
+  return `共 ${catalog.models.length} 个可用模型，从下拉选择或直接手填`
 })
 
 function setCfg(key: string, value: unknown): void {
@@ -121,29 +139,40 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
       <label class="af-label">provider</label>
       <select
         class="af-select"
-        :value="cfg('provider', 'mock')"
+        :value="cfg('provider', 'openai-compatible')"
         @change="setCfg('provider', ($event.target as HTMLSelectElement).value)"
       >
-        <option value="mock">
-          mock（离线）
+        <option
+          v-if="cfg<string>('provider', '') === 'mock'"
+          value="mock"
+        >
+          mock（遗留节点 · 建议改为真实模型）
         </option>
         <option value="openai-compatible">
-          openai-compatible（真实模型 · 需配置 AF_LLM_*）
+          openai-compatible（真实模型）
         </option>
       </select>
       <label class="af-label">model</label>
       <input
         class="af-input mono"
         :value="cfg('model', '')"
-        placeholder="deepseek-chat"
+        list="af-llm-models"
+        placeholder="从列表选择，或直接填模型名"
         @input="setCfg('model', ($event.target as HTMLInputElement).value)"
       >
+      <datalist id="af-llm-models">
+        <option
+          v-for="m in modelOptions"
+          :key="m"
+          :value="m"
+        />
+      </datalist>
       <p
         class="af-faint"
         style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
       >
-        <template v-if="cfg('provider', 'mock') === 'mock'">
-          mock 离线运行，model 只作标识，不会发起网络请求。
+        <template v-if="cfg<string>('provider', '') === 'mock'">
+          mock 离线运行，不发起网络请求；换到 openai-compatible 才会真正调用模型。
         </template>
         <template v-else-if="modelWillFallback">
           <span class="af-accent">→ 实际下发：服务端默认模型（AF_LLM_MODEL）</span>；mock-* 名字不会被发送。
@@ -151,6 +180,12 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
         <template v-else>
           → 实际下发：<span class="mono af-accent">{{ cfg('model', '') }}</span>
         </template>
+      </p>
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 2px 0 0"
+      >
+        {{ modelStatus }}
       </p>
       <label class="af-label">promptTemplate（Jinja2 沙箱）</label>
       <textarea

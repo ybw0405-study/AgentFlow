@@ -51,6 +51,10 @@ public class EngineGatewayClient {
     public record EventsPage(List<EngineEvent> events, long lastSeq) {
     }
 
+    public record LlmModelsResponse(boolean configured, String defaultModel,
+                                    List<String> models, String error) {
+    }
+
     public DslValidationResponse validateDsl(Map<String, Object> dsl) {
         try {
             return http.post().uri("/dsl/validate")
@@ -138,6 +142,19 @@ public class EngineGatewayClient {
             return body == null ? Map.of() : body;
         } catch (RestClientException e) {
             throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine state failed");
+        }
+    }
+
+    /** 可用 LLM 模型清单（画布下拉用）。引擎未配置真实端点时 configured=false。 */
+    public LlmModelsResponse listLlmModels() {
+        try {
+            return http.get()
+                    .uri("/llm/models")
+                    .headers(this::applyInternal)
+                    .retrieve()
+                    .body(LlmModelsResponse.class);
+        } catch (RestClientException e) {
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine models failed");
         }
     }
 

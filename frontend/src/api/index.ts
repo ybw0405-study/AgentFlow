@@ -14,6 +14,7 @@ import type {
   ExecutionDto,
   LoginData,
   MeData,
+  LlmModelsDto,
   NodeIo,
   PageResult,
   TriggerData,
@@ -193,4 +194,8 @@ export const adminApi = {
     get<AdminUsage>('/admin/usage', period ? { period } : undefined),
   audit: (params: { traceId?: string; eventType?: string; cursor?: string; limit?: number }) =>
     get<PageResult<AdminAuditRow>>('/admin/audit', params),
+}
+
+export const llmApi = {
+  models: () => get<LlmModelsDto>('/llm/models'),
 }

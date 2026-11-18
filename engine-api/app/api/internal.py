@@ -30,6 +30,15 @@ class GateResolveRequest(CamelModel):
     comment: str | None = None
 
 
+class LlmModelsResponse(CamelModel):
+    """可用模型清单。未配置真实端点时 configured=false，前端据此退回手填。"""
+
+    configured: bool
+    default_model: str
+    models: list[str]
+    error: str | None = None
+
+
 def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
@@ -41,6 +50,19 @@ def _store(request: Request) -> EventStore:
 @router.post("/dsl/validate")
 async def validate(body: ValidateRequest, request: Request) -> ValidationResult:
     return validate_dsl(body.dsl, _settings(request))
+
+
+@router.get("/llm/models")
+async def llm_models(request: Request) -> LlmModelsResponse:
+    """模型清单只对已配置的端点发起，密钥与 base_url 不出现在响应里。"""
+    settings = _settings(request)
+    catalog = await request.app.state.llm_provider.list_models()
+    return LlmModelsResponse(
+        configured=catalog.configured,
+        default_model=settings.llm_model if catalog.configured else "",
+        models=catalog.models,
+        error=catalog.error,
+    )
 
 
 @router.post("/executions", status_code=202)

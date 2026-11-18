@@ -5,7 +5,7 @@ import { VueFlow } from '@vue-flow/core'
 import type { Connection, Edge as FlowEdge, Node as FlowNode } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { workflowApi, executionApi } from '@/api'
+import { workflowApi, executionApi, llmApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
@@ -88,6 +88,31 @@ const selectedEdgeLabel = computed<string | null>(() => {
 
 const hasStart = computed(() => nodes.value.some((n) => n.data.nodeType === 'start'))
 
+/** 模型清单：只影响配置抽屉的可选项与新建节点默认值，不参与 DSL 校验。 */
+const modelCatalog = ref<{
+  loaded: boolean
+  configured: boolean
+  defaultModel: string
+  error: string | null
+  models: string[]
+}>({ loaded: false, configured: false, defaultModel: '', error: null, models: [] })
+
+async function loadModelCatalog(): Promise<void> {
+  try {
+    const dto = await llmApi.models()
+    modelCatalog.value = { loaded: true, ...dto }
+  } catch (e) {
+    // 清单拿不到不该阻断画布：抽屉会提示手填
+    modelCatalog.value = {
+      loaded: true,
+      configured: false,
+      defaultModel: '',
+      error: e instanceof ApiError ? e.code : 'UNREACHABLE',
+      models: [],
+    }
+  }
+}
+
 async function load(): Promise<void> {
   const detail = await workflowApi.detail(workflowId)
   def.value = detail.definition
@@ -125,7 +150,11 @@ function addNode(type: NodeType): void {
       id: key,
       type: AF_NODE_TYPE,
       position: { x: 220 + offset, y: 140 + offset },
-      data: { nodeType: type, label: key, config: newNodeConfig(type) },
+      data: {
+        nodeType: type,
+        label: key,
+        config: newNodeConfig(type, type === 'llm' ? modelCatalog.value.defaultModel : undefined),
+      },
     },
   ]
   selectedKey.value = key
@@ -350,6 +379,7 @@ async function run(): Promise<void> {
 }
 
 onMounted(async () => {
+  void loadModelCatalog()
   try {
     await load()
   } catch (e) {
@@ -494,6 +524,7 @@ onUnmounted(() => {
       <ConfigDrawer
         :node="selectedNode"
         :issues="issues"
+        :model-catalog="modelCatalog"
         @update="updateNode"
         @close="clearSelection"
         @remove="removeNode"

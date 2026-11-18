@@ -78,12 +78,20 @@ export function edgeId(e: { from: string; to: string; branch?: string }): string
   return `${e.from}->${e.to}${e.branch ? `#${e.branch}` : ''}`
 }
 
-export function newNodeConfig(type: DslNode['type']): Record<string, unknown> {
+/** 新建节点的初始配置。
+ *
+ * llm 默认接真实 provider：模型名取引擎给出的默认值，拿不到就留空由校验提示，
+ * 不再写死 mock-* 占位名——那会让节点看起来能跑、实际走的是服务端默认模型。
+ */
+export function newNodeConfig(
+  type: DslNode['type'],
+  llmModel?: string,
+): Record<string, unknown> {
   switch (type) {
     case 'llm':
       return {
-        provider: 'mock',
-        model: 'mock-large',
+        provider: 'openai-compatible',
+        model: llmModel ?? '',
         promptTemplate: '{{ vars.question }}',
         maxTokens: 1024,
       }

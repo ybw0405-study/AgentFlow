@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -30,12 +31,28 @@ logger = logging.getLogger(__name__)
 _CHAT_COMPLETIONS_PATH = "/chat/completions"
 _MAX_LOG_DETAIL = 200
 _JSON_SYSTEM_HINT = "Return a valid JSON object only, with no markdown fences or extra text."
+_MODELS_TIMEOUT_S = 15.0
+_MAX_MODEL_ENTRIES = 200
+_MAX_MODEL_ID_LEN = 200
 
 
 def _int_or(value: Any, fallback: int) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return fallback
     return max(0, int(value))
+
+
+@dataclass(frozen=True)
+class ModelCatalog:
+    """上游模型清单。
+
+    configured=False 表示进程未配置 AF_LLM_*，此时 models 为空是正常状态而非故障；
+    error 只携带错误码，绝不回传上游响应体（可能含内部信息）。
+    """
+
+    configured: bool
+    models: list[str]
+    error: str | None = None
 
 
 class OpenAICompatibleProvider:
@@ -100,6 +117,54 @@ class OpenAICompatibleProvider:
     def _redact(self, text: str) -> str:
         safe = text.replace(self._api_key, "***") if self._api_key else text
         return safe[:_MAX_LOG_DETAIL]
+
+    async def list_models(self) -> ModelCatalog:
+        """读取上游 /models，供画布下拉选择。
+
+        端点由 chat completions 端点反推，只访问已配置的那一台主机；返回体只取
+        `data[].id`，其余字段（owner、权限等）一律丢弃。失败只回错误码，让前端
+        能降级成手填而不是整块配置不可用。
+        """
+        if not self.configured:
+            return ModelCatalog(configured=False, models=[])
+
+        url = self._endpoint[: -len(_CHAT_COMPLETIONS_PATH)] + "/models"
+        try:
+            resp = await self._client.get(
+                url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=min(self._timeout_s, _MODELS_TIMEOUT_S),
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("llm list_models transport failure detail=%s", type(exc).__name__)
+            return ModelCatalog(configured=True, models=[], error="LLM-UPSTREAM-001")
+
+        if resp.status_code != 200:
+            code, _ = self._classify_status(resp.status_code)
+            logger.warning("llm list_models rejected status=%s code=%s", resp.status_code, code)
+            return ModelCatalog(configured=True, models=[], error=code)
+
+        try:
+            body = resp.json()
+        except (ValueError, UnicodeDecodeError):
+            return ModelCatalog(configured=True, models=[], error="LLM-RESPONSE-001")
+        raw = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(raw, list):
+            return ModelCatalog(configured=True, models=[], error="LLM-RESPONSE-001")
+
+        models: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            model_id = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(model_id, str):
+                continue
+            model_id = model_id.strip()[:_MAX_MODEL_ID_LEN]
+            if model_id and model_id not in seen:
+                seen.add(model_id)
+                models.append(model_id)
+                if len(models) >= _MAX_MODEL_ENTRIES:
+                    break
+        return ModelCatalog(configured=True, models=sorted(models))
 
     @staticmethod
     def _ms(started: float) -> int:
