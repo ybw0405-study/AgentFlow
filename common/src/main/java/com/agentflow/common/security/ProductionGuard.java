@@ -6,16 +6,23 @@ import java.util.Set;
 /**
  * 生产环境配置守护（fail-fast）。
  *
- * <p>本地开发与单元测试默认关闭，无需任何设置，保证演示与测试可运行。
- * 生产环境通过设置环境变量 {@code AF_PRODUCTION=true}
- * （或 JVM 参数 {@code -Dagentflow.production=true}）开启。开启后，任何仍在使用
- * 仓库内 dev 默认值的敏感配置都会在启动期直接拒绝启动，避免公开仓库中的默认
- * 凭证被带入生产。
+ * <p>本地开发与单元测试无需任何设置，保证演示与测试可运行；但「未显式声明」不等于
+ * 「可以裸奔」。以下任一信号出现即进入守护模式：
+ * <ol>
+ *   <li>{@code AF_PRODUCTION=true} 环境变量；</li>
+ *   <li>{@code -Dagentflow.production=true} JVM 参数；</li>
+ *   <li>{@code AF_ENV} 为 {@code production} / {@code prod} / {@code staging}；</li>
+ *   <li>{@code SPRING_PROFILES_ACTIVE} 含 {@code prod}（Spring 部署的通行约定）。</li>
+ * </ol>
+ *
+ * <p>进入守护后，任何仍在使用仓库内 dev 默认值的敏感配置都会在启动期直接拒绝启动，
+ * 避免公开仓库中的默认凭证被带入生产。
  */
 public final class ProductionGuard {
 
     public static final String ENV_FLAG = "AF_PRODUCTION";
     public static final String SYS_FLAG = "agentflow.production";
+    public static final String ENV_NAME = "AF_ENV";
 
     /** 仓库中出现过的 dev 默认值：JWT 密钥、内部令牌、凭据主密钥（base64）、DB 弱口令。 */
     private static final Set<String> WEAK_VALUES = Set.of(
@@ -25,16 +32,44 @@ public final class ProductionGuard {
             "dev-only-secret-key-0123456789abcdef",
             "ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM=");
 
+    /** 明确表示非生产的取值：出现时即使其他信号命中也不守护（便于本地以 prod profile 调试）。 */
+    private static final Set<String> DEV_MARKERS = Set.of("dev", "local", "test", "development");
+
     private ProductionGuard() {
     }
 
     /** 是否处于生产守护模式。 */
     public static boolean productionEnabled() {
+        String envName = System.getenv(ENV_NAME);
+        if (envName != null && DEV_MARKERS.contains(envName.trim().toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+
         String flag = System.getenv(ENV_FLAG);
         if (flag == null || flag.isBlank()) {
             flag = System.getProperty(SYS_FLAG);
         }
-        return Boolean.parseBoolean(flag);
+        if (Boolean.parseBoolean(flag)) {
+            return true;
+        }
+
+        if (envName != null) {
+            String normalized = envName.trim().toLowerCase(Locale.ROOT);
+            if (normalized.equals("production") || normalized.equals("prod")
+                    || normalized.equals("staging")) {
+                return true;
+            }
+        }
+
+        String profiles = System.getenv("SPRING_PROFILES_ACTIVE");
+        if (profiles != null) {
+            for (String profile : profiles.split(",")) {
+                if (profile.trim().toLowerCase(Locale.ROOT).startsWith("prod")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 生产环境下拒绝 dev 默认值 / 空值；非生产环境直接放行。 */

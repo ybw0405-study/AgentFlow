@@ -57,15 +57,32 @@ class Settings(BaseSettings):
 
 
 _WEAK_INTERNAL_TOKENS = {"dev-internal-token", ""}
+_DEV_MARKERS = {"dev", "local", "test", "development"}
 
 
 def _is_true(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def production_enabled() -> bool:
+    """生产守护判定，与 Java 侧 ProductionGuard 保持一致的四路信号。
+
+    显式声明 dev/local/test 时一律不守护（便于本地以生产档位调试其余行为）。
+    """
+    env_name = os.getenv("AF_ENV", "").strip().lower()
+    if env_name in _DEV_MARKERS:
+        return False
+    if _is_true(os.getenv("AF_PRODUCTION", "false")):
+        return True
+    if env_name in {"production", "prod", "staging"}:
+        return True
+    profiles = os.getenv("SPRING_PROFILES_ACTIVE", "")
+    return any(p.strip().lower().startswith("prod") for p in profiles.split(","))
+
+
 def _guard_production(settings: "Settings") -> None:
-    """生产模式（AF_PRODUCTION=true）拒绝仓库内的 dev 默认令牌，避免默认凭证上线。"""
-    if not _is_true(os.getenv("AF_PRODUCTION", "false")):
+    """生产模式拒绝仓库内的 dev 默认令牌与外送密钥的明文通道。"""
+    if not production_enabled():
         return
     token = settings.internal_token
     if token in _WEAK_INTERNAL_TOKENS or token.startswith("dev-"):
