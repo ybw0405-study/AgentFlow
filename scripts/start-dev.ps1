@@ -53,6 +53,14 @@ if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
 # 本地全量 E2E 一轮会触发数十次执行；产品默认仍是 20 次/60s/用户
 if ($null -eq $env:AF_RATE_LIMIT_TRIGGER_MAX) { $env:AF_RATE_LIMIT_TRIGGER_MAX = '300' }
 
+# 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
+# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。
+if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
+    if ($null -eq $env:AF_LLM_BASE_URL) { $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1' }
+    $env:AF_LLM_API_KEY = $env:DEEPSEEK_API_KEY
+    if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-flash' }
+}
+
 Write-Host '==> [4/5] 启动 engine-api :8000'
 $engineDir = Join-Path $root 'engine-api'
 $enginePy = Join-Path $engineDir '.venv/Scripts/python.exe'

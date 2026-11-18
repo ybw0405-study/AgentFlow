@@ -26,6 +26,14 @@ export AF_COOKIE_SECURE="${AF_COOKIE_SECURE:-false}"
 # 本地全量 E2E 一轮会触发数十次执行；产品默认仍是 20 次/60s/用户
 export AF_RATE_LIMIT_TRIGGER_MAX="${AF_RATE_LIMIT_TRIGGER_MAX:-300}"
 
+# 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
+# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。
+if [ -z "${AF_LLM_API_KEY:-}" ] && [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+  export AF_LLM_BASE_URL="${AF_LLM_BASE_URL:-https://api.deepseek.com/v1}"
+  export AF_LLM_API_KEY="$DEEPSEEK_API_KEY"
+  export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-flash}"
+fi
+
 echo '==> [4/5] engine-api :8000'
 PY="$ROOT/engine-api/.venv/Scripts/python.exe"
 [ -x "$PY" ] || PY="$ROOT/engine-api/.venv/bin/python"
