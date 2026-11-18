@@ -1,13 +1,20 @@
 package com.agentflow.connector.config;
 
+import com.agentflow.common.health.DependencyHealth;
+import com.agentflow.common.health.HealthController;
+import com.agentflow.common.health.HealthProbe;
+import com.agentflow.common.health.RedisHealthProbe;
 import com.agentflow.common.security.JwtService;
 import com.agentflow.common.web.GlobalExceptionHandler;
 import com.agentflow.common.web.TraceIdFilter;
 import com.agentflow.connector.crypto.CredentialCipher;
 import com.agentflow.connector.service.SandboxPolicy;
+import java.util.List;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /** 连接器服务装配：JWT 验签、凭据密钥、沙箱策略、横切组件。 */
 @Configuration
@@ -42,5 +49,27 @@ public class ConnectorConfiguration {
     @Bean
     public GlobalExceptionHandler globalExceptionHandler() {
         return new GlobalExceptionHandler();
+    }
+
+    /** 健康度 = MySQL（连接器与凭据元数据）+ Redis（调用幂等缓存）。 */
+    @Bean
+    public HealthController healthController(DataSource dataSource, StringRedisTemplate redis) {
+        List<HealthProbe> probes = List.of(
+                jdbcProbe(dataSource),
+                new RedisHealthProbe(redis));
+        return new HealthController("connector", probes);
+    }
+
+    /** 取一次连接并 isValid(2)：只验证可用性，不触业务读写。 */
+    private static HealthProbe jdbcProbe(DataSource dataSource) {
+        return () -> {
+            try (var connection = dataSource.getConnection()) {
+                return connection.isValid(2)
+                        ? DependencyHealth.up("mysql")
+                        : DependencyHealth.down("mysql", "connection invalid");
+            } catch (Exception e) {
+                return DependencyHealth.down("mysql", DependencyHealth.summarise(e));
+            }
+        };
     }
 }

@@ -3,10 +3,14 @@ package com.agentflow.audit.web;
 import com.agentflow.audit.repo.AuditEventMapper;
 import com.agentflow.common.api.ApiResponse;
 import com.agentflow.common.api.PageResult;
+import com.agentflow.common.health.DependencyHealth;
+import com.agentflow.common.health.HealthController;
+import com.agentflow.common.health.HealthProbe;
 import com.agentflow.common.security.JwtService;
 import com.agentflow.common.web.GlobalExceptionHandler;
 import com.agentflow.common.web.TraceIdFilter;
 import java.util.List;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -62,5 +66,20 @@ class AuditWebConfiguration {
     @Bean
     GlobalExceptionHandler globalExceptionHandler() {
         return new GlobalExceptionHandler();
+    }
+
+    /** 审计服务的健康度只取决于 MySQL：MQ 消费积压不影响查询能力。 */
+    @Bean
+    HealthController healthController(DataSource dataSource) {
+        List<HealthProbe> probes = List.of(() -> {
+            try (var connection = dataSource.getConnection()) {
+                return connection.isValid(2)
+                        ? DependencyHealth.up("mysql")
+                        : DependencyHealth.down("mysql", "connection invalid");
+            } catch (Exception e) {
+                return DependencyHealth.down("mysql", DependencyHealth.summarise(e));
+            }
+        });
+        return new HealthController("audit", probes);
     }
 }

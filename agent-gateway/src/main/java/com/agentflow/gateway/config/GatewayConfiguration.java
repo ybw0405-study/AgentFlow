@@ -1,11 +1,16 @@
 package com.agentflow.gateway.config;
 
+import com.agentflow.common.health.HealthController;
+import com.agentflow.common.health.HealthProbe;
+import com.agentflow.common.health.RedisHealthProbe;
 import com.agentflow.common.security.JwtService;
 import com.agentflow.common.web.GlobalExceptionHandler;
 import com.agentflow.common.web.TraceIdFilter;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 @Configuration
 public class GatewayConfiguration {
@@ -23,5 +28,12 @@ public class GatewayConfiguration {
     @Bean
     public GlobalExceptionHandler globalExceptionHandler() {
         return new GlobalExceptionHandler();
+    }
+
+    /** 网关自身无状态，健康度取决于限流/幂等所依赖的 Redis。 */
+    @Bean
+    public HealthController healthController(StringRedisTemplate redis) {
+        List<HealthProbe> probes = List.of(new RedisHealthProbe(redis));
+        return new HealthController("gateway", probes);
     }
 }

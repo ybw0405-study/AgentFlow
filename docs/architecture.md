@@ -505,6 +505,8 @@ CREATE TABLE node_io (
 | GET | `/internal/executions/{id}/nodes/{key}/io` | 节点 I/O（gateway 已做权限） |
 | GET | `/internal/health` `/internal/metrics` | 健康/指标 |
 
+Java 侧四个服务统一暴露 `GET /health`（不走 `/api/v1` 前缀，免认证）：网关探 Redis，workflow / connector 探 MySQL + Redis，audit 探 MySQL。200 为 `UP`，503 为 `DEGRADED`；生产守护下不回依赖明细。探针实现留在各服务内，`common` 只提供 `HealthProbe` 抽象——保持 common 不依赖 `java.sql`（§13.1 架构门禁）。
+
 ---
 
 ## 5. 执行引擎（核心）

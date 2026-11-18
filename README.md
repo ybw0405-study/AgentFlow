@@ -125,6 +125,21 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 停止：`./scripts/stop-dev.ps1`（`-Infra` 连容器一起停）。
 
+## 健康检查
+
+每个服务都暴露探活端点，可直接作为容器 liveness / readiness 探针：
+
+| 服务 | 端点 | 反映的依赖 |
+|---|---|---|
+| agent-gateway :8080 | `GET /health` | Redis（限流、幂等） |
+| workflow-service :8084 | `GET /health` | MySQL + Redis |
+| connector-service :8085 | `GET /health` | MySQL + Redis |
+| audit-service :8086 | `GET /health` | MySQL |
+| engine-api :8000 | `GET /internal/health` | 进程存活 |
+| engine-api :8000 | `GET /internal/metrics` | Prometheus 文本（需内部令牌） |
+
+返回 200 为 `UP`，503 为 `DEGRADED`（至少一个依赖不可用，不应继续接流量）。生产守护开启时不返回依赖明细，只给 `unavailable`，避免把内部拓扑暴露给未认证调用方。
+
 ## 工程门禁
 
 ```powershell
@@ -143,16 +158,17 @@ CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`pyth
 | `AF_AUDIT_MYSQL_USER` | af_audit | 审计写入账号（仅 SELECT/INSERT audit_event） |
 | `AF_PG_DSN` | postgresql://agentflow:agentflow@127.0.0.1:5433/agentflow_events | 事件库 |
 | `AF_REDIS_HOST/PORT` / `AF_REDIS_URL` | 127.0.0.1:6379 | 缓存/租约/预算/事件频道 |
-| `AF_MQ_ENABLED` / `AF_ROCKETMQ_NAMESRV` | false / 127.0.0.1:9876 | 审计 MQ；false 时降级为日志 |
+| `AF_MQ_ENABLED` / `AF_ROCKETMQ_NAMESRV` | false / 127.0.0.1:9876 | 审计 MQ；false 时审计只写进程日志（每次 emit WARN），需要留痕的环境必须开启 |
 | `AF_DEFAULT_TOKEN_BUDGET` / `AF_DEFAULT_MAX_STEPS` / `AF_DEFAULT_DEADLINE_MS` | 50000 / 50 / 120000 | 租户政策上限（触发时钳制） |
 | `AF_AUTHORIZED_CONNECTORS` | mock.search,mock.echo,mock.flaky | 内置 mock 连接器（真实连接器由 connector-service 目录自动授权） |
 | `AF_CONNECTOR_SERVICE` | http://127.0.0.1:8085 | gateway → connector-service 路由目标 |
 | `AF_CRED_MASTER_KEY` | 本地 dev 值（base64 32B） | 凭据主密钥；生产必须经 KMS/环境注入 |
 | `AF_CRED_MASTER_KEY_PREVIOUS` | 空 | 轮换窗口内的旧主密钥（base64，逗号分隔），用于解密历史密文；全量重加密后清空 |
-| `AF_PRODUCTION` | false | 生产守护开关；置 true 后若仍使用 dev 默认密钥/弱口令、未开启 DB TLS 或未设 Cookie Secure，启动即 fail-fast |
+| `AF_PRODUCTION` | false | 生产守护开关。满足任一条件即进入守护：`AF_PRODUCTION=true`、`-Dagentflow.production=true`、`AF_ENV=production/staging`、`SPRING_PROFILES_ACTIVE` 含 `prod`。守护期内若仍用 dev 默认密钥/弱口令、未开 DB TLS 或未设 Cookie Secure，启动即 fail-fast；`AF_ENV=dev` 可显式退出守护 |
 | `AF_MYSQL_USE_TLS` / `AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL` | false / true | 数据库 TLS；生产守护要求前者为 true，并应显式关闭后者 |
 | `AF_SANDBOX_ALLOW_HTTP` / `AF_SANDBOX_ALLOW_LOOPBACK` | false / false | 沙箱是否允许明文 http / 环回地址（仅本地调试开启） |
 | `AF_MONTHLY_CALL_LIMIT` / `AF_MONTHLY_TOKEN_LIMIT` | 10000 / 50000 | 成本中心月度初始限额（子租户沿祖先链取最小） |
+| `AF_DEMO_ACCOUNTS` | true | 登录页是否下发演示账号提示；生产守护开启时恒不下发 |
 | `AF_CHECKPOINT_INTERVAL` | 10 | 每 N 事件一次 CheckpointCreated |
 | `AF_GATE_SWEEP_INTERVAL_S` | 15 | human_gate 超时裁决扫描间隔 |
 | `AF_LLM_BASE_URL` | 空 | 真实模型端点（OpenAI 兼容，如 `https://api.deepseek.com/v1`）；空则 provider 未启用 |
