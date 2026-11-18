@@ -131,6 +131,10 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 停止：`./scripts/stop-dev.ps1`（`-Infra` 连容器一起停）。
 
+重跑不必先手动停：`start-dev` 在构建前会先执行 `stop-dev` 并清掉残留的半成品 `*.jar.original`。
+Windows 上运行中的 jar 是独占打开的，不先停就会在 `spring-boot:repackage` 改名时失败。
+`stop-dev` 只停本仓库的进程（按仓库路径判定），不会影响同机其他项目的同名服务。
+
 ## 健康检查
 
 每个服务都暴露探活端点，可直接作为容器 liveness / readiness 探针：
