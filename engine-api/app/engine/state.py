@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from ..events.types import Event, EventType
@@ -33,6 +34,9 @@ class ExecutionState:
     error_code: str | None = None
     events_since_checkpoint: int = 0
     lease_lost: bool = False  # 租约丢失标记：置位后禁止再写事件（§8.5）
+    # ExecutionCreated 的落库时间。deadline 必须按「执行创建」而非「本次 worker 启动」
+    # 计算，否则崩溃恢复会把总超时窗口重置，长跑流程可被无限续命。
+    created_at: datetime | None = None
 
     def node(self, key: str) -> NodeRuntime:
         return self.nodes.setdefault(key, NodeRuntime())
@@ -68,6 +72,7 @@ class ExecutionState:
         if et == EventType.EXECUTION_CREATED:
             self.status = "PENDING"
             self.seed = p.get("executionSeed", self.seed)
+            self.created_at = event.created_at
         elif et == EventType.EXECUTION_STARTED:
             self.status = "RUNNING"
         elif et == EventType.EXECUTION_COMPLETED:

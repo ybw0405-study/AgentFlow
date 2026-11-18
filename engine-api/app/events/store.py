@@ -142,21 +142,27 @@ class EventStore:
             )
         return [self._row_to_event(r) for r in rows]
 
-    async def open_executions(self) -> list[uuid.UUID]:
-        """恢复扫描（D4）：所有未达终态的执行。"""
+    async def open_executions(self, limit: int = 200) -> list[uuid.UUID]:
+        """恢复扫描（D4）：所有未达终态的执行。
+
+        带上限：一次故障可能遗留上万条 OPEN，全量拉回内存既慢又会挤掉正常调度；
+        按最近更新时间取前 N 条，剩余部分由下一轮扫描继续。
+        """
         pool = self._require_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT execution_id FROM execution_tracker WHERE status = 'OPEN'"
-                " ORDER BY updated_at"
+                " ORDER BY updated_at LIMIT $1",
+                limit,
             )
         return [r["execution_id"] for r in rows]
 
-    async def suspended_gates(self) -> list[tuple[uuid.UUID, str, dict]]:
+    async def suspended_gates(self, limit: int = 500) -> list[tuple[uuid.UUID, str, dict]]:
         """仍在等待裁决的 gate（超时扫描用）。
 
         以事件为唯一真相：有 GateSuspended 且其后没有同节点 GateResolved，
-        且执行本身还没落终态。
+        且执行本身还没落终态。按 seq 升序取最早的一批，避免长期挂起的 gate
+        因为新事件不断涌入而永远排在后面。
         """
         pool = self._require_pool()
         async with pool.acquire() as conn:
@@ -175,7 +181,8 @@ class EventStore:
                 "     WHERE t.execution_id = s.execution_id"
                 "       AND t.event_type IN ('ExecutionCompleted','ExecutionFailed',"
                 "                            'ExecutionTimedOut','ExecutionCancelled'))"
-                " ORDER BY s.seq"
+                " ORDER BY s.seq LIMIT $1",
+                limit,
             )
         return [
             (r["execution_id"], r["node_key"], json.loads(r["payload"]))

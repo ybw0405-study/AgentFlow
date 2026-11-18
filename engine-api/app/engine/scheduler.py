@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -36,6 +37,24 @@ logger = logging.getLogger(__name__)
 
 class LeaseLostError(Exception):
     """租约丢失：必须静默停止，禁止再写任何事件（§8.5）。"""
+
+
+def _deadline_from(state: ExecutionState, policy: Policy) -> float | None:
+    """把绝对截止时刻换算成本进程的 monotonic 时间点。
+
+    基于 ExecutionCreated 的落库时间而非本次运行起点：崩溃恢复、审批回填后的续跑
+    都不应重置总超时预算，否则挂起越久、可用时间反而越长。
+    """
+    if not policy.deadline_ms:
+        return None
+    now_wall = datetime.now(UTC)
+    created = state.created_at
+    if created is None:
+        return time.monotonic() + policy.deadline_ms / 1000
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    remaining_ms = policy.deadline_ms - (now_wall - created).total_seconds() * 1000
+    return time.monotonic() + max(remaining_ms, 0) / 1000
 
 
 def _edge_active(edge: Any, state: ExecutionState) -> bool:
@@ -168,7 +187,7 @@ class Scheduler:
                 EventType.EXECUTION_STARTED,
                 {"workerId": self._worker_id},
             )
-        deadline_at = (time.monotonic() + policy.deadline_ms / 1000) if policy.deadline_ms else None
+        deadline_at = _deadline_from(state, policy)
         try:
             for layer in dag.layers:
                 await self._check_stop_conditions(execution_id, state, deadline_at, lease)

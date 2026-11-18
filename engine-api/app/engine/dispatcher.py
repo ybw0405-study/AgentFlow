@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import secrets
 import uuid
@@ -446,9 +448,6 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def _digest(obj: Any) -> str:
-    import hashlib
-    import json
-
     return hashlib.sha256(
         json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str).encode()
     ).hexdigest()
