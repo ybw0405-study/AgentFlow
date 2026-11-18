@@ -39,13 +39,17 @@ public final class PiiMasker {
     public record PiiMaskingResult(String masked, List<String> categories, int count) {
     }
 
-    private static final List<Object[]> RULES = List.of(
-            new Object[] {"EMAIL", EMAIL, false},
-            new Object[] {"ID_CARD", ID_CARD_18, false},
-            new Object[] {"ID_CARD", ID_CARD_15, false},
-            new Object[] {"PHONE", PHONE, false},
-            new Object[] {"BANK_CARD", BANK_CARD, true},   // true = 需通过 Luhn 校验才命中
-            new Object[] {"PASSPORT", PASSPORT, false});
+    /** 单条脱敏规则。luhn=true 时还要过模 10 校验才算命中（银行卡）。 */
+    private record Rule(String category, Pattern pattern, boolean luhnCheck) {
+    }
+
+    private static final List<Rule> RULES = List.of(
+            new Rule("EMAIL", EMAIL, false),
+            new Rule("ID_CARD", ID_CARD_18, false),
+            new Rule("ID_CARD", ID_CARD_15, false),
+            new Rule("PHONE", PHONE, false),
+            new Rule("BANK_CARD", BANK_CARD, true),
+            new Rule("PASSPORT", PASSPORT, false));
 
     public static PiiMaskingResult mask(String text) {
         if (text == null || text.isEmpty()) {
@@ -55,27 +59,24 @@ public final class PiiMasker {
                 Normalizer.normalize(text, Normalizer.Form.NFKC)).replaceAll("");
         Set<String> categories = new LinkedHashSet<>();
         int count = 0;
-        for (Object[] rule : RULES) {
-            String category = (String) rule[0];
-            Pattern pattern = (Pattern) rule[1];
-            boolean luhnCheck = (boolean) rule[2];
-            Matcher m = pattern.matcher(masked);
+        for (Rule rule : RULES) {
+            Matcher m = rule.pattern().matcher(masked);
             StringBuffer sb = new StringBuffer();
             int hits = 0;
             while (m.find()) {
                 String candidate = m.group();
-                if (luhnCheck && !luhnValid(candidate)) {
+                if (rule.luhnCheck() && !luhnValid(candidate)) {
                     m.appendReplacement(sb, Matcher.quoteReplacement(candidate));
                     continue;
                 }
-                m.appendReplacement(sb, Matcher.quoteReplacement("[" + category + "]"));
+                m.appendReplacement(sb, Matcher.quoteReplacement("[" + rule.category() + "]"));
                 hits++;
             }
             m.appendTail(sb);
             masked = sb.toString();
             if (hits > 0) {
                 count += hits;
-                categories.add(category);
+                categories.add(rule.category());
             }
         }
         return new PiiMaskingResult(masked, List.copyOf(categories), count);
