@@ -148,6 +148,8 @@ class LlmExecutor:
             error_cls = TransientNodeError if result.transient else PermanentNodeError
             raise error_cls(result.error_code or "LLM-UNKNOWN", "llm command failed")
 
+        # provider 可能把 mock-* 占位名回落到服务端默认模型；审计需记录真实下发的模型名
+        resolved_model = str(result.extra.get("model") or cfg.model)
         await ctx.emit(
             EventType.COMMAND_COMPLETED,
             {
@@ -155,6 +157,8 @@ class LlmExecutor:
                 "responseDigest": digest_of(result.data),
                 "tokenUsed": result.token_usage,
                 "latencyMs": result.latency_ms,
+                "model": resolved_model,
+                **({"requestedModel": cfg.model} if resolved_model != cfg.model else {}),
             },
         )
         if grant is not None and ctx.budget is not None:
@@ -171,9 +175,11 @@ class LlmExecutor:
             "text": result.data.get("text", ""),
             "parsed": result.data.get("parsed"),
             "tokenUsage": usage,
-            "model": cfg.model,
+            "model": resolved_model,
             "latencyMs": result.latency_ms,
         }
+        if resolved_model != cfg.model:
+            output["requestedModel"] = cfg.model
         return NodeResult(
             output=output,
             input_snapshot={
