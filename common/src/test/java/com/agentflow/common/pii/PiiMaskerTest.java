@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** 与 Python 侧 tests/unit/test_pii.py 共享同一组测试向量（pii-v1 parity 门禁）。 */
+/** 与 Python 侧 tests/unit/test_pii.py 共享同一组测试向量（pii-v2 parity 门禁）。 */
 class PiiMaskerTest {
 
     @Test

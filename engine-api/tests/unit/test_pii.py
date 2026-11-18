@@ -1,4 +1,4 @@
-"""PII pii-v1：与 Java 侧规则逐条对齐（含 NFKC 与零宽字符注入）。"""
+"""PII pii-v2：与 Java 侧规则逐条对齐（含 NFKC 与零宽字符注入）。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from app.governance.pii import contains_pii, detect_categories, mask_text
 
 
 def test_phone_masked():
-    # pii-v1 先 NFKC 归一化：全角标点变半角
+    # pii-v2 先 NFKC 归一化：全角标点变半角
     r = mask_text("我的电话是13812345678，请联系")
     assert r.masked == "我的电话是[PHONE],请联系"
     assert "PHONE" in r.categories and r.count == 1

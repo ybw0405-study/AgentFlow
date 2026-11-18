@@ -1,7 +1,7 @@
 """llm 节点：模板渲染 → PII 第二层 → 预算预占 → LLMCommand。
 
 纪律：
-- PII 第二层（US-05）：渲染后的 prompt 再过一遍 pii-v1 mask；命中只记类别与数量，
+- PII 第二层（US-05）：渲染后的 prompt 再过一遍 pii-v2 mask；命中只记类别与数量，
   若二次脱敏后仍检出 PII（不应发生）则 PII-BLOCKED-001 永久失败。
 - 预算硬停止（D11）：reserve 失败即 BudgetExhaustedError，Command 绝不发出；
   发出的 Command maxTokens 被钳到预占额度，保证 tokenUsed ≤ budget。

@@ -36,7 +36,8 @@ flowchart LR
 | 事件溯源 + 崩溃恢复（execution_spec 自足 + 启动/周期扫描） | ✅ P0 提前实现 |
 | SSE 实时节点状态 + 事件追平 | ✅ P0 |
 | JWT + refresh 轮换 + 租户隔离（跨租户 404）+ RBAC | ✅ P0 |
-| 预算钳制 / 硬停止、PII 双层脱敏（pii-v1 双端同规则） | ✅ P0 |
+| 健康检查（各服务 `/health`，依赖不可用返回 503） | ✅ P0 |
+| 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
 | 审计只追加（触发器 + 最小授权 + MQ） | ✅ P0 |
 | mock LLM / mock 连接器（离线演示，恰好一次计数） | ✅ P0 |
 | condition / loop / parallel / transform / subworkflow 节点 | ✅ P1 |
@@ -189,7 +190,7 @@ CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`pyth
 
 ## 已知限制
 
-1. 审计经 MQ 异步落库；`AF_MQ_ENABLED=false` 时降级为日志（outbox + relay 仍未落地）。
+1. 审计经 MQ 异步落库；`AF_MQ_ENABLED=false` 时审计只写进程日志（每次 emit 一条 WARN），outbox + relay 仍未落地。需要留痕的环境必须开启 MQ。
 2. 预算预占的崩溃泄漏窗口已由 checkpoint/恢复对账收敛（`BudgetLedger.reconcile`）；Redis 全部丢失时会从事件流重建。
 3. 沙箱做「域名白名单 + 解析期私网拦截」，未做 DNS 钉扎（rebinding 由生产 egress 代理兜底）。
 4. RocketMQ 的 Python 消费端未启用（引擎不消费 MQ）；审批回调走 HTTP + `gate_resolve_outbox` 重投（P3）。

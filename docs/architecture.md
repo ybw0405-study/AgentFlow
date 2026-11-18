@@ -98,7 +98,7 @@ flowchart TB
 
 ```
 agentflow-parent
-├── common            # DTO/错误码/ProblemDetail/trace/tenant/pii-v1/幂等组件/JWT
+├── common            # DTO/错误码/ProblemDetail/trace/tenant/pii-v2/幂等组件/JWT
 ├── agent-gateway     # 路由、安全过滤器、治理过滤器；只依赖 common
 ├── workflow-service  # 依赖 common；调用 engine 只能经 gateway（ArchUnit 强制）
 └── audit-service     # 依赖 common；MQ 消费者 + 审计查询
@@ -983,7 +983,7 @@ AgentFlow/
 │       ├── error/        # ErrorCode 枚举 + ProblemDetailFactory
 │       ├── trace/        # TraceContext, MdcFilter, TraceRestTemplateInterceptor
 │       ├── tenant/       # TenantContext, TenantHierarchyResolver
-│       ├── pii/          # PiiMasker（pii-v1，与 Python 同规则）
+│       ├── pii/          # PiiMasker（pii-v2，与 Python 同规则）
 │       ├── idempotency/  # IdempotencyService（Redis + MySQL 双写）
 │       └── security/     # JwtService, RbacConstants
 │   └── src/test/java/... # pii、幂等、JWT 单测

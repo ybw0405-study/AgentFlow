@@ -111,7 +111,7 @@ public class ExecutionService {
                                     + ",deadlineMs=" + deadlineMs)));
         }
 
-        // PII 第一层脱敏（pii-v1）：递归处理变量中的字符串
+        // PII 第一层脱敏（pii-v2）：递归处理变量中的字符串
         var masked = maskVariables(variables == null ? Map.of() : variables);
         Map<String, Object> maskedVars = masked.values();
         if (!masked.categories().isEmpty()) {
