@@ -1,5 +1,6 @@
 import { del, get, patch, post, put } from './http'
 import type {
+  BootstrapData,
   ConnectorDto,
   EvalCaseDto,
   EvalDatasetDto,
@@ -28,6 +29,7 @@ export const authApi = {
   refresh: () => post<LoginData>('/auth/refresh'),
   logout: () => post<void>('/auth/logout'),
   me: () => get<MeData>('/auth/me'),
+  bootstrap: () => get<BootstrapData>('/auth/bootstrap'),
 }
 
 export const workflowApi = {

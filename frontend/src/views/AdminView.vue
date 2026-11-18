@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { adminApi } from '@/api'
 import type { AdminAuditRow, AdminBudgetRow, AdminUsageRow } from '@/api'
-import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 
 const tab = ref<'usage' | 'audit'>('usage')
 const budgetLedger = ref<AdminBudgetRow[]>([])
@@ -20,7 +20,7 @@ async function loadUsage(): Promise<void> {
     budgetLedger.value = data.budgetLedger ?? []
     executions.value = data.executions ?? []
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    error.value = errorText(e)
   }
 }
 
@@ -32,7 +32,7 @@ async function loadAudit(reset = true): Promise<void> {
     auditItems.value = reset ? page.items : [...auditItems.value, ...page.items]
     auditCursor.value = page.nextCursor
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    error.value = errorText(e)
   }
 }
 

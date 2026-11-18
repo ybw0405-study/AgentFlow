@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { connectorApi } from '@/api'
 import type { ConnectorAuthType, ConnectorDto } from '@/types/api'
-import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -25,7 +25,7 @@ const canManage = computed(() => {
 })
 
 function describe(e: unknown): string {
-  return e instanceof ApiError ? `${e.code}: ${e.message}` : '操作失败'
+  return errorText(e)
 }
 
 async function load(): Promise<void> {

@@ -36,6 +36,9 @@ agentflow:
   engine:
     authorized-connectors: ${AF_AUTHORIZED_CONNECTORS:mock.search,mock.echo,mock.flaky}
     poll-interval-ms: ${AF_ENGINE_POLL_INTERVAL_MS:500}
+  # 登录页的演示账号提示（凭据与种子数据一致）。生产守护开启时无论此值如何都不会下发。
+  demo:
+    enabled: ${AF_DEMO_ACCOUNTS:true}
   tenant:
     default-token-budget: ${AF_DEFAULT_TOKEN_BUDGET:50000}
     default-max-steps: ${AF_DEFAULT_MAX_STEPS:50}

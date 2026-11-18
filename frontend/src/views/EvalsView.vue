@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { evalApi, workflowApi } from '@/api'
 import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import type {
   EvalCaseDto,
   EvalDatasetDto,
@@ -47,7 +48,7 @@ const experimentViews = computed(() =>
 )
 
 function describe(e: unknown): string {
-  return e instanceof ApiError ? `${e.code}: ${e.message}` : '操作失败'
+  return errorText(e)
 }
 
 function parseSummary(raw?: string): Record<string, unknown> | null {

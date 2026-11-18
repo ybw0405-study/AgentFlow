@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { executionApi } from '@/api'
-import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import type { ExecutionDto } from '@/types/api'
 
 const props = defineProps<{ definitionId?: string }>()
@@ -24,7 +24,7 @@ async function load(reset = true): Promise<void> {
     items.value = reset ? page.items : [...items.value, ...page.items]
     nextCursor.value = page.nextCursor
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    error.value = errorText(e)
   } finally {
     loading.value = false
   }

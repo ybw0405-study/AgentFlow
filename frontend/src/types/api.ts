@@ -42,6 +42,18 @@ export interface MeData {
   memberships: Membership[]
 }
 
+export interface DemoAccount {
+  email: string
+  password: string
+  label: string
+  role: string
+}
+
+export interface BootstrapData {
+  demoMode: boolean
+  demoAccounts: DemoAccount[]
+}
+
 export interface WorkflowDefinitionDto {
   seq: number
   id: string

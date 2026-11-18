@@ -28,15 +28,28 @@ export const useAuthStore = defineStore('auth', {
       this.accessToken = data.accessToken
       await this.loadMe()
     },
+    /**
+     * 首次会话恢复（应用启动 / 路由守卫）。只尝试一次，避免每次导航都打刷新接口。
+     */
     async restore(): Promise<boolean> {
       if (this.restored) return this.isAuthenticated
       this.restored = true
+      return this.refreshSession()
+    },
+    /**
+     * 强制刷新 access token。与 {@link restore} 的区别是不受 restored 短路，
+     * 专供请求拦截器在收到 401 后调用——否则 token 过期时会把「旧 token 仍存在」
+     * 当成「会话有效」，重试必然再 401 且不会跳登录页。
+     */
+    async refreshSession(): Promise<boolean> {
       try {
         const data = await authApi.refresh()
         this.accessToken = data.accessToken
         await this.loadMe()
         return true
       } catch {
+        this.accessToken = null
+        this.user = null
         return false
       }
     },
@@ -65,7 +78,7 @@ export function wireSessionHooks(routerPushLogin: () => void): void {
   setSessionHooks({
     getAccessToken: () => useAuthStore().accessToken,
     getSpaceId: () => useAuthStore().currentSpaceId,
-    refresh: () => useAuthStore().restore(),
+    refresh: () => useAuthStore().refreshSession(),
     onUnauthorized: () => {
       const store = useAuthStore()
       store.accessToken = null

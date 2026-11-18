@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { gateApi } from '@/api'
-import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import type { GateTaskDto } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 
@@ -18,7 +18,7 @@ const canApprove = computed(() => {
 })
 
 function describe(e: unknown): string {
-  return e instanceof ApiError ? `${e.code}: ${e.message}` : '操作失败'
+  return errorText(e)
 }
 
 async function load(): Promise<void> {

@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { workflowApi } from '@/api'
-import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import type { WorkflowDefinitionDto, WorkflowVersionDto } from '@/types/api'
 
 const route = useRoute()
@@ -30,7 +30,7 @@ async function freeze(): Promise<void> {
     notice.value = '已冻结新版本'
     await load()
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '冻结失败'
+    error.value = errorText(e)
   } finally {
     busy.value = false
   }
@@ -44,7 +44,7 @@ async function publish(versionId: string): Promise<void> {
     notice.value = '已发布'
     await load()
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '发布失败'
+    error.value = errorText(e)
   } finally {
     busy.value = false
   }
@@ -58,7 +58,7 @@ async function rollback(versionId: string): Promise<void> {
     notice.value = '已回滚'
     await load()
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '回滚失败'
+    error.value = errorText(e)
   } finally {
     busy.value = false
   }
@@ -83,7 +83,7 @@ function diffSource(versionId: string | null): string {
 }
 
 onMounted(() => load().catch((e) => {
-  error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+  error.value = errorText(e)
 }))
 </script>
 

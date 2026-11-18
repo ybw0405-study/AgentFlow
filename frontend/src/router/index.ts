@@ -31,15 +31,21 @@ const router = createRouter({
     { path: '/approvals', name: 'approvals', component: () => import('@/views/ApprovalsView.vue') },
     { path: '/evals', name: 'evals', component: () => import('@/views/EvalsView.vue') },
     { path: '/admin', name: 'admin', component: () => import('@/views/AdminView.vue') },
+    // 兜底：任何未匹配路径都应给出明确页面，而不是空白
+    { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue') },
   ],
 })
 
 router.beforeEach(async (to) => {
-  if (to.name === 'login') return true
   const auth = useAuthStore()
+  if (to.name === 'login') {
+    // 已登录再访问登录页没有意义，直接回工作台
+    if (auth.isAuthenticated) return { name: 'workflows' }
+    return true
+  }
   if (!auth.isAuthenticated) {
     const ok = await auth.restore()
-    if (!ok) return { name: 'login' }
+    if (!ok) return { name: 'login', query: to.fullPath === '/' ? {} : { next: to.fullPath } }
   }
   return true
 })

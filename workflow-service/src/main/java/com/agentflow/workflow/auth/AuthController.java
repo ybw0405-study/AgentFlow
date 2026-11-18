@@ -2,6 +2,7 @@ package com.agentflow.workflow.auth;
 
 import com.agentflow.common.api.ApiResponse;
 import com.agentflow.common.security.JwtService;
+import com.agentflow.common.security.ProductionGuard;
 import com.agentflow.workflow.security.JwtAuthFilter;
 import com.agentflow.common.tenant.TenantHierarchyResolver;
 import com.agentflow.workflow.tenant.MybatisTenantTreePort;
@@ -35,6 +36,13 @@ public class AuthController {
     private final TenantMapper tenantMapper;
     private final boolean cookieSecure;
     private final long refreshTtlDays;
+    private final boolean demoEnabled;
+
+    /** 与 db/mysql/init 中的种子账号一致；生产环境不会下发。 */
+    private static final List<DemoAccount> DEMO_ACCOUNTS = List.of(
+            new DemoAccount("admin@agentflow.dev", "agentflow123", "平台管理员", "ADMIN"),
+            new DemoAccount("editor@agentflow.dev", "agentflow123", "空间编辑者", "EDITOR"),
+            new DemoAccount("viewer@agentflow.dev", "agentflow123", "只读成员", "VIEWER"));
 
     public AuthController(AuthService authService, RefreshTokenService refreshTokenService,
                           UserMapper userMapper, TenantMapper tenantMapper,
@@ -42,13 +50,16 @@ public class AuthController {
                           @org.springframework.beans.factory.annotation.Value(
                                   "${agentflow.jwt.cookie-secure:true}") boolean cookieSecure,
                           @org.springframework.beans.factory.annotation.Value(
-                                  "${agentflow.jwt.refresh-ttl-days:14}") long refreshTtlDays) {
+                                  "${agentflow.jwt.refresh-ttl-days:14}") long refreshTtlDays,
+                          @org.springframework.beans.factory.annotation.Value(
+                                  "${agentflow.demo.enabled:true}") boolean demoEnabled) {
         this.authService = authService;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;
         this.tenantMapper = tenantMapper;
         this.cookieSecure = cookieSecure;
         this.refreshTtlDays = refreshTtlDays;
+        this.demoEnabled = demoEnabled;
     }
 
     public record LoginRequest(@NotBlank @Size(max = 255) String email,
@@ -63,6 +74,26 @@ public class AuthController {
 
     public record MeData(String userId, String email, String displayName,
                          List<MembershipData> memberships) {
+    }
+
+    public record DemoAccount(String email, String password, String label, String role) {
+    }
+
+    public record BootstrapData(boolean demoMode, List<DemoAccount> demoAccounts) {
+    }
+
+    /**
+     * 登录页启动数据：当前是否为演示环境、以及可直接试用的账号。
+     *
+     * <p>演示账号只用于本地种子数据，生产环境恒定返回空列表——即便配置误开，
+     * {@link ProductionGuard#productionEnabled()} 也会把凭据挡掉，避免白名单泄露。
+     */
+    @GetMapping("/bootstrap")
+    public ApiResponse<BootstrapData> bootstrap() {
+        if (ProductionGuard.productionEnabled() || !demoEnabled) {
+            return ApiResponse.ok(new BootstrapData(false, List.of()));
+        }
+        return ApiResponse.ok(new BootstrapData(true, DEMO_ACCOUNTS));
     }
 
     @PostMapping("/login")

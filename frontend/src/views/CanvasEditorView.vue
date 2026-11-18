@@ -7,6 +7,7 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { workflowApi, executionApi } from '@/api'
 import { ApiError } from '@/api/http'
+import { errorText } from '@/api/errors'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
 import type { FlowEdgeLike, FlowGraph, FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
@@ -157,7 +158,7 @@ async function saveNow(): Promise<void> {
     if (e instanceof ApiError && e.fieldErrors.length) {
       issues.value = e.fieldErrors.map((f) => ({ nodeKey: f.field, message: f.message }))
     }
-    error.value = e instanceof ApiError ? `保存失败 ${e.code}（trace ${e.traceId ?? '-'}）` : '保存失败'
+    error.value = errorText(e)
   }
 }
 
@@ -198,7 +199,7 @@ async function freeze(): Promise<string | null> {
     await load()
     return version.id
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '冻结失败'
+    error.value = errorText(e)
     return null
   } finally {
     busy.value = false
@@ -214,7 +215,7 @@ async function freezeAndPublish(): Promise<void> {
     notice.value = '已发布为当前版本'
     await load()
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '发布失败'
+    error.value = errorText(e)
   } finally {
     busy.value = false
   }
@@ -240,7 +241,7 @@ async function run(): Promise<void> {
     })
     void router.push({ name: 'execution-detail', params: { id: result.executionId } })
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '触发失败'
+    error.value = errorText(e)
   } finally {
     busy.value = false
   }
@@ -250,7 +251,7 @@ onMounted(async () => {
   try {
     await load()
   } catch (e) {
-    error.value = e instanceof ApiError ? `${e.code}: ${e.message}` : '加载失败'
+    error.value = errorText(e)
   } finally {
     setTimeout(() => {
       suppressWatch = false
