@@ -40,6 +40,8 @@ flowchart LR
 | 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
 | 审计只追加（触发器 + 最小授权 + MQ） | ✅ P0 |
 | mock LLM / mock 连接器（离线演示，恰好一次计数） | ✅ P0 |
+
+画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
 | condition / loop / parallel / transform / subworkflow 节点 | ✅ P1 |
 | 灰度发布、故障注入测试套件 | ✅ P1 |
 | 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | ✅ P2 |
@@ -89,7 +91,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
    .\scripts\start-dev.ps1
    ```
 
-2. 画布里选中 llm 节点，右侧 `provider` 选 `openai-compatible（真实模型）`；`model` 可以直接填真实模型名，留着 `mock-large` 也会自动回落到 `AF_LLM_MODEL`。
+2. 画布里选中 llm 节点，右侧 `provider` 选 `openai-compatible（真实模型）`；`model` 可以直接填真实模型名，留着 `mock-large` 也会自动回落到 `AF_LLM_MODEL`。执行详情「节点 I/O」里 `output.model` 是**实际下发**的模型名，回落发生时另有 `requestedModel` 标出 DSL 里声明的值。
 3. 「冻结并发布」→「运行」填 `initialVariables`，执行详情里能看到真实返回文本与上游 `usage`。
 
 约束与排错：

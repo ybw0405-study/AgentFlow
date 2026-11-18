@@ -4,7 +4,17 @@ import type { NodeType } from '@/dsl/types'
 
 defineOptions({ name: 'NodePalette' })
 
+const props = defineProps<{ startTaken: boolean }>()
+
 const emit = defineEmits<{ add: [type: NodeType] }>()
+
+function disabled(type: NodeType): boolean {
+  return type === 'start' && props.startTaken
+}
+
+function titleFor(meta: { type: NodeType; description: string }): string {
+  return disabled(meta.type) ? '已存在 start 节点：一个工作流只能有一个' : meta.description
+}
 </script>
 
 <template>
@@ -19,7 +29,8 @@ const emit = defineEmits<{ add: [type: NodeType] }>()
       v-for="meta in NODE_TYPE_METAS"
       :key="meta.type"
       class="af-palette__item"
-      :title="meta.description"
+      :disabled="disabled(meta.type)"
+      :title="titleFor(meta)"
       @click="emit('add', meta.type)"
     >
       <span class="mono af-palette__type">{{ meta.type }}</span>
@@ -62,6 +73,15 @@ const emit = defineEmits<{ add: [type: NodeType] }>()
 
 .af-palette__item:hover {
   border-color: var(--af-accent-border);
+}
+
+.af-palette__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.af-palette__item:disabled:hover {
+  border-color: var(--af-border);
 }
 
 .af-palette__type {

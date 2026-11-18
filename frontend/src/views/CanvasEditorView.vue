@@ -9,7 +9,9 @@ import { workflowApi, executionApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
-import type { FlowEdgeLike, FlowGraph, FlowNodeLike } from '@/dsl/flow-convert'
+import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge } from '@/dsl/graph-ops'
+import type { CanvasEdge } from '@/dsl/graph-ops'
+import type { FlowGraph, FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
@@ -26,10 +28,18 @@ const workflowId = route.params.id as string
 
 const def = ref<WorkflowDefinitionDto | null>(null)
 const nodes = ref<FlowNodeLike[]>([])
-const edges = ref<FlowEdgeLike[]>([])
+const edges = ref<CanvasEdge[]>([])
 const variables = ref<Record<string, VariableSpec>>({})
 const defaults = ref<DslDefaults>({})
 const selectedKey = ref<string | null>(null)
+const selectedEdgeId = ref<string | null>(null)
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+let suppressWatch = true
+/** 最近一次落盘的 DSL 快照；选中态变化不进 DSL，不应触发保存。 */
+let lastSavedJson = ''
+/** 保存进行中又有改动时置位，落盘完成后补排一次，避免丢草稿。 */
+let savePending = false
 const sourceMode = ref(false)
 const issues = ref<ValidationIssue[]>([])
 const saveState = ref<'saved' | 'saving' | 'error'>('saved')
@@ -53,7 +63,7 @@ const nodesForFlow = computed({
 const edgesForFlow = computed({
   get: () => edges.value as unknown as FlowEdge[],
   set: (v) => {
-    edges.value = v as unknown as FlowEdgeLike[]
+    edges.value = v as unknown as CanvasEdge[]
   },
 })
 
@@ -71,6 +81,13 @@ const selectedNode = computed<DslNode | null>(() => {
   }
 })
 
+const selectedEdgeLabel = computed<string | null>(() => {
+  const e = edges.value.find((x) => x.id === selectedEdgeId.value)
+  return e ? `${e.source} → ${e.target}` : null
+})
+
+const hasStart = computed(() => nodes.value.some((n) => n.data.nodeType === 'start'))
+
 async function load(): Promise<void> {
   const detail = await workflowApi.detail(workflowId)
   def.value = detail.definition
@@ -87,11 +104,18 @@ function applyDsl(dsl: WorkflowDsl): void {
   edges.value = graph.edges
   variables.value = dsl.variables ?? {}
   defaults.value = dsl.defaults ?? {}
+  selectedKey.value = null
+  selectedEdgeId.value = null
   issues.value = validateDslLocal(dsl)
+  lastSavedJson = JSON.stringify(toDsl())
 }
 
 let keyCounter = 0
 function addNode(type: NodeType): void {
+  if (type === 'start' && hasStart.value) {
+    notice.value = 'start 节点只能有一个，请先删除多余的 start 再添加'
+    return
+  }
   let key = `${type}_${++keyCounter}`
   while (nodes.value.some((n) => n.id === key)) key = `${type}_${++keyCounter}`
   const offset = nodes.value.length * 30
@@ -105,18 +129,49 @@ function addNode(type: NodeType): void {
     },
   ]
   selectedKey.value = key
+  selectedEdgeId.value = null
 }
 
 function onConnect(conn: Connection): void {
-  edges.value = [
-    ...edges.value,
-    { id: `${conn.source}->${conn.target}`, source: conn.source, target: conn.target },
-  ]
+  const next = addEdge(edges.value, conn.source, conn.target)
+  if (!next) {
+    notice.value = `连线 ${conn.source} → ${conn.target} 已存在`
+    return
+  }
+  edges.value = next
+}
+
+/** 只有一条选中通道：选中节点或选中连线，二者互斥。 */
+function selectNode(id: string): void {
+  selectedKey.value = id
+  selectedEdgeId.value = null
+  if (edges.value.some((e) => e.selected)) {
+    edges.value = markSelectedEdge(edges.value, null)
+  }
+}
+
+function selectEdge(id: string): void {
+  selectedEdgeId.value = id
+  selectedKey.value = null
+  edges.value = markSelectedEdge(edges.value, id)
+}
+
+function clearSelection(): void {
+  selectedKey.value = null
+  selectedEdgeId.value = null
+  if (edges.value.some((e) => e.selected)) {
+    edges.value = markSelectedEdge(edges.value, null)
+  }
 }
 
 function onNodeClick(e: unknown): void {
   const id = (e as { node?: { id?: string } }).node?.id
-  if (id) selectedKey.value = id
+  if (id) selectNode(id)
+}
+
+function onEdgeClick(e: unknown): void {
+  const id = (e as { edge?: { id?: string } }).edge?.id
+  if (id) selectEdge(id)
 }
 
 function updateNode(updated: DslNode): void {
@@ -135,23 +190,49 @@ function updateNode(updated: DslNode): void {
 }
 
 function removeNode(key: string): void {
-  nodes.value = nodes.value.filter((n) => n.id !== key)
-  edges.value = edges.value.filter((e) => e.source !== key && e.target !== key)
-  selectedKey.value = null
+  const next = removeNodeOp(nodes.value, edges.value, key)
+  nodes.value = next.nodes
+  edges.value = next.edges
+  if (selectedKey.value === key) selectedKey.value = null
+  if (selectedEdgeId.value && !edges.value.some((e) => e.id === selectedEdgeId.value)) {
+    selectedEdgeId.value = null
+  }
+}
+
+function removeEdge(id: string): void {
+  edges.value = removeEdgeOp(edges.value, id)
+  if (selectedEdgeId.value === id) selectedEdgeId.value = null
+}
+
+/** 选中条上的删除入口：连线优先于节点（两者互斥，此处只做兜底）。 */
+function removeSelected(): void {
+  if (selectedEdgeId.value) removeEdge(selectedEdgeId.value)
+  else if (selectedKey.value) removeNode(selectedKey.value)
 }
 
 // ---------- 自动保存（防抖 1s） ----------
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-let suppressWatch = true
+function dslSnapshot(): string {
+  return JSON.stringify(toDsl())
+}
+
+function scheduleSave(): void {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => void saveNow(), 1000)
+}
 
 async function saveNow(): Promise<void> {
-  if (saveState.value === 'saving') return
+  if (saveState.value === 'saving') {
+    savePending = true
+    return
+  }
   saveState.value = 'saving'
   error.value = null
-  issues.value = validateDslLocal(toDsl())
+  const dsl = toDsl()
+  issues.value = validateDslLocal(dsl)
   try {
-    await workflowApi.saveDraft(workflowId, toDsl())
+    await workflowApi.saveDraft(workflowId, dsl)
+    lastSavedJson = JSON.stringify(dsl)
     saveState.value = 'saved'
   } catch (e) {
     saveState.value = 'error'
@@ -159,6 +240,11 @@ async function saveNow(): Promise<void> {
       issues.value = e.fieldErrors.map((f) => ({ nodeKey: f.field, message: f.message }))
     }
     error.value = errorText(e)
+  } finally {
+    if (savePending) {
+      savePending = false
+      if (dslSnapshot() !== lastSavedJson) scheduleSave()
+    }
   }
 }
 
@@ -167,22 +253,38 @@ watch(
   () => {
     if (suppressWatch) return
     issues.value = validateDslLocal(toDsl())
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => void saveNow(), 1000)
+    if (dslSnapshot() === lastSavedJson) return
+    scheduleSave()
   },
   { deep: true },
 )
+
+function isTextEntry(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    el.isContentEditable === true
+  )
+}
 
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') {
     e.preventDefault()
     void saveNow()
   } else if (e.key === 'Escape') {
-    selectedKey.value = null
+    clearSelection()
     sourceMode.value = false
-  } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKey.value) {
-    const target = e.target as HTMLElement
-    if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (isTextEntry(e.target)) return
+    if (selectedEdgeId.value) {
+      e.preventDefault()
+      removeEdge(selectedEdgeId.value)
+    } else if (selectedKey.value) {
+      e.preventDefault()
       removeNode(selectedKey.value)
     }
   }
@@ -345,7 +447,10 @@ onUnmounted(() => {
     </div>
 
     <div style="flex: 1; display: flex; min-height: 0; position: relative">
-      <NodePalette @add="addNode" />
+      <NodePalette
+        :start-taken="hasStart"
+        @add="addNode"
+      />
       <div style="flex: 1; position: relative">
         <VueFlow
           v-model:nodes="nodesForFlow"
@@ -354,7 +459,8 @@ onUnmounted(() => {
           :delete-key-code="null"
           @connect="onConnect"
           @node-click="onNodeClick"
-          @pane-click="selectedKey = null"
+          @edge-click="onEdgeClick"
+          @pane-click="clearSelection"
         >
           <Background
             :gap="24"
@@ -365,6 +471,19 @@ onUnmounted(() => {
             <WorkflowNode v-bind="props" />
           </template>
         </VueFlow>
+        <div
+          v-if="selectedEdgeId || selectedKey"
+          class="af-selection"
+        >
+          <span class="mono af-dim">{{ selectedEdgeId ? `连线 ${selectedEdgeLabel}` : `节点 ${selectedKey}` }}</span>
+          <button
+            class="af-btn af-btn--sm af-btn--danger"
+            @click="removeSelected"
+          >
+            删除
+          </button>
+          <span class="af-faint">Del</span>
+        </div>
         <DslSourcePanel
           v-if="sourceMode"
           :dsl="dslForSource"
@@ -376,7 +495,7 @@ onUnmounted(() => {
         :node="selectedNode"
         :issues="issues"
         @update="updateNode"
-        @close="selectedKey = null"
+        @close="clearSelection"
         @remove="removeNode"
       />
     </div>
@@ -437,6 +556,28 @@ onUnmounted(() => {
 
 .af-flow .vue-flow__edge:hover .vue-flow__edge-path {
   stroke: var(--af-accent);
+}
+
+.af-flow .vue-flow__edge.selected .vue-flow__edge-path,
+.af-flow .vue-flow__edge.selected:hover .vue-flow__edge-path {
+  stroke: var(--af-accent);
+  stroke-width: 2.5;
+}
+
+.af-selection {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--af-panel);
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius);
+  font-size: 12px;
+  z-index: 5;
 }
 
 .af-flow .vue-flow__controls {

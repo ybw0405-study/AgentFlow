@@ -24,6 +24,15 @@ function cfg<T>(key: string, fallback: T): T {
   return (c?.[key] as T | undefined) ?? fallback
 }
 
+/** provider 侧会把 mock-* 占位名回落到服务端默认模型，界面上要说清"实际会下发什么"。 */
+const modelWillFallback = computed(() => {
+  if (!props.node) return false
+  const c = props.node.config as Record<string, unknown>
+  if (c.provider !== 'openai-compatible') return false
+  const model = String(c.model ?? '')
+  return !model || model.toLowerCase().startsWith('mock')
+})
+
 function setCfg(key: string, value: unknown): void {
   if (!props.node) return
   emit('update', { ...props.node, config: { ...props.node.config, [key]: value } })
@@ -126,8 +135,23 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
       <input
         class="af-input mono"
         :value="cfg('model', '')"
+        placeholder="deepseek-chat"
         @input="setCfg('model', ($event.target as HTMLInputElement).value)"
       >
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        <template v-if="cfg('provider', 'mock') === 'mock'">
+          mock 离线运行，model 只作标识，不会发起网络请求。
+        </template>
+        <template v-else-if="modelWillFallback">
+          <span class="af-accent">→ 实际下发：服务端默认模型（AF_LLM_MODEL）</span>；mock-* 名字不会被发送。
+        </template>
+        <template v-else>
+          → 实际下发：<span class="mono af-accent">{{ cfg('model', '') }}</span>
+        </template>
+      </p>
       <label class="af-label">promptTemplate（Jinja2 沙箱）</label>
       <textarea
         class="af-textarea"
@@ -254,7 +278,6 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
 
     <div style="margin-top: 20px">
       <button
-        v-if="node.type !== 'start'"
         class="af-btn af-btn--danger af-btn--sm"
         @click="emit('remove', node.key)"
       >
