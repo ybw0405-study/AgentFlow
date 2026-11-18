@@ -41,6 +41,14 @@ public class ConnectorService {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Duration OAUTH_STATE_TTL = Duration.ofMinutes(10);
     private static final Duration TOKEN_TIMEOUT = Duration.ofSeconds(10);
+    /** 模型清单探测是交互操作，用户就在页面上等，超时要短于一次执行。 */
+    private static final int PROBE_TIMEOUT_MS = 15_000;
+    /**
+     * 连接器类型。LLM 表示「模型接入」：baseUrl 指向 OpenAI 兼容端点，凭据是 API Key，
+     * operations 声明 chat（POST /chat/completions）与 models（GET /models）。
+     * 与 HTTP 工具连接器共用同一套加密、归属与沙箱策略，区别只在于引擎怎么用它。
+     */
+    private static final java.util.Set<String> TYPES = java.util.Set.of("HTTP", "LLM");
     /** token 响应只有几十字节，上限设小一些；解析前先兜住异常上游。 */
     private static final int MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -51,15 +59,18 @@ public class ConnectorService {
     private final TenantHierarchyResolver resolver;
     private final SandboxPolicy sandbox;
     private final ConnectorAudit audit;
+    private final ConnectorInvoker invoker;
 
     public ConnectorService(ConnectorRepository repo, CredentialCipher cipher,
                             com.agentflow.connector.tenant.JdbcTenantTreePort treePort,
-                            SandboxPolicy sandbox, ConnectorAudit audit) {
+                            SandboxPolicy sandbox, ConnectorAudit audit,
+                            ConnectorInvoker invoker) {
         this.repo = repo;
         this.cipher = cipher;
         this.resolver = new TenantHierarchyResolver(treePort);
         this.sandbox = sandbox;
         this.audit = audit;
+        this.invoker = invoker;
     }
 
     public List<ConnectorView> list(TenantInfo tenant) {
@@ -75,7 +86,7 @@ public class ConnectorService {
     public ConnectorView create(TenantInfo tenant, CreateRequest req, String traceId) {
         requireAdmin(tenant);
         String name = requireText(req.name(), "name");
-        String type = req.type() == null || req.type().isBlank() ? "HTTP" : req.type();
+        String type = requireType(req.type());
         String authType = req.authType() == null ? "NONE" : req.authType().toUpperCase();
         validateAuthType(authType);
         Map<String, Object> config = req.config() == null ? Map.of() : req.config();
@@ -239,6 +250,21 @@ public class ConnectorService {
                 .filter(ConnectorRow::enabled).toList();
     }
 
+    /**
+     * 探测该模型连接指向的端点支持哪些模型，用于建连接时挑选，避免让用户凭空猜模型名。
+     *
+     * <p>只要可见即可探测（继承来的连接也能验一次能不能用），但只有 LLM 类型可探测：
+     * 普通工具连接器的 {@code /models} 没有统一语义。
+     */
+    public ConnectorInvoker.ProbeResult probeModels(TenantInfo tenant, String id) {
+        ConnectorRow row = requireVisible(tenant, id);
+        if (!"LLM".equals(row.type())) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "only llm connectors expose a model list");
+        }
+        return invoker.probeModels(row, PROBE_TIMEOUT_MS);
+    }
+
     /** 内部：invoke 前的归属校验。 */
     public boolean canInvoke(String spaceId, ConnectorRow row) {
         return chainOf(spaceId).contains(row.tenantId());
@@ -286,6 +312,16 @@ public class ConnectorService {
         if (!List.of("NONE", "API_KEY", "BASIC", "OAUTH2").contains(authType)) {
             throw new BusinessException(ErrorCode.COM_VALIDATION_001, "unsupported authType");
         }
+    }
+
+    /** 类型收敛：空值按 HTTP（历史行为），未知类型拒绝，避免存进一个没人认识的值。 */
+    private static String requireType(String raw) {
+        String type = raw == null || raw.isBlank()
+                ? "HTTP" : raw.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!TYPES.contains(type)) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001, "unsupported connector type");
+        }
+        return type;
     }
 
     /** 沙箱配置前置校验：宁可创建时失败，也不要运行时才发现出不去网。 */

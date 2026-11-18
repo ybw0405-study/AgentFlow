@@ -258,3 +258,20 @@ export interface LlmModelsDto {
   models: string[]
   error: string | null
 }
+
+/** 模型连接探测结果：只回模型 id，端点与密钥不出服务端。 */
+export interface ModelProbeDto {
+  ok: boolean
+  models: string[]
+  errorCode: string | null
+}
+
+/** 模型连接里 config 的已知字段，仅在读取时用来收窄类型。 */
+export interface LlmConnectionConfig {
+  baseUrl?: string
+  allowedHosts?: string[]
+  models?: string[]
+  defaultModel?: string
+  auth?: { headerName?: string; valuePrefix?: string }
+  operations?: Record<string, { method?: string; path?: string }>
+}

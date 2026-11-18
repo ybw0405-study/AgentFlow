@@ -77,6 +77,16 @@ public class ConnectorController {
         return ApiResponse.ok(null);
     }
 
+    /**
+     * 拉取该模型连接可用模型清单。凭据在服务端解密并注入请求头，前端只拿到模型 id，
+     * 端点地址与密钥都不出本进程。
+     */
+    @PostMapping("/{id}/models/probe")
+    public ApiResponse<com.agentflow.connector.service.ConnectorInvoker.ProbeResult> probeModels(
+            @PathVariable String id) {
+        return ApiResponse.ok(connectors.probeModels(TenantContext.require(), id));
+    }
+
     private static String traceId(HttpServletRequest request) {
         return org.slf4j.MDC.get(com.agentflow.common.trace.TraceIdContext.MDC_KEY);
     }

@@ -15,6 +15,7 @@ import type {
   LoginData,
   MeData,
   LlmModelsDto,
+  ModelProbeDto,
   NodeIo,
   PageResult,
   TriggerData,
@@ -71,6 +72,8 @@ export const connectorApi = {
   remove: (id: string) => del<void>(`/connectors/${id}`),
   authorize: (id: string, secret: string) =>
     put<void>(`/connectors/${id}/authorize`, { secret }),
+  /** 拉取模型连接指向端点的模型清单（服务端解密凭据后出网，只回 id）。 */
+  probeModels: (id: string) => post<ModelProbeDto>(`/connectors/${id}/models/probe`, {}),
 }
 
 export const gateApi = {

@@ -3,7 +3,9 @@ package com.agentflow.connector.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +34,7 @@ class ConnectorServiceTest {
 
     private ConnectorRepository repo;
     private ConnectorAudit audit;
+    private ConnectorInvoker invoker;
     private ConnectorService service;
 
     private static TenantInfo tenant(String spaceId, String userId, String role) {
@@ -42,13 +45,14 @@ class ConnectorServiceTest {
     void setUp() {
         repo = mock(ConnectorRepository.class);
         audit = mock(ConnectorAudit.class);
+        invoker = mock(ConnectorInvoker.class);
         JdbcTenantTreePort port = mock(JdbcTenantTreePort.class);
         when(port.find("space-a")).thenReturn(new TenantNode("space-a", "team", "SPACE"));
         when(port.find("team")).thenReturn(new TenantNode("team", "org", "TEAM"));
         when(port.find("org")).thenReturn(new TenantNode("org", null, "ORG"));
         service = new ConnectorService(repo, new CredentialCipher(KEY), port,
                 new SandboxPolicy(false, false, h -> new java.net.InetAddress[]{
-                        java.net.InetAddress.getByName("93.184.216.34")}), audit);
+                        java.net.InetAddress.getByName("93.184.216.34")}), audit, invoker);
     }
 
     private static ConnectorRow row(String id, String tenantId, boolean enabled) {
@@ -105,6 +109,55 @@ class ConnectorServiceTest {
 
         assertThat(view.id()).isEqualTo("new-id");
         verify(audit).record(any(), any(), anyString(), any());
+    }
+
+    @Test
+    void createRejectsUnknownType() {
+        assertThatThrownBy(() -> service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c1", "GRPC", "NONE", Map.of(
+                        "baseUrl", "https://api.example.com",
+                        "allowedHosts", List.of("api.example.com"))), "t"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("unsupported connector type");
+    }
+
+    @Test
+    void createNormalisesBlankTypeToHttp() {
+        when(repo.findByTenantAndName("space-a", "c1")).thenReturn(Optional.empty());
+        when(repo.findById(anyString())).thenReturn(Optional.of(row("new-id", "space-a", true)));
+
+        service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c1", " ", "NONE", Map.of(
+                        "baseUrl", "https://api.example.com",
+                        "allowedHosts", List.of("api.example.com"))), "t");
+
+        verify(repo).insert(anyString(), anyString(), anyString(), eq("HTTP"),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void probeOnlyAppliesToLlmConnectors() {
+        when(repo.findById("conn-x")).thenReturn(Optional.of(row("conn-x", "space-a", true)));
+        assertThatThrownBy(() -> service.probeModels(tenant("space-a", "u-admin", "ADMIN"), "conn-x"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("only llm connectors");
+        verify(invoker, never()).probeModels(any(), anyInt());
+    }
+
+    @Test
+    void probeDelegatesForLlmConnector() {
+        Map<String, Object> config = Map.of("baseUrl", "https://api.deepseek.com/v1",
+                "allowedHosts", List.of("api.deepseek.com"));
+        when(repo.findById("conn-llm")).thenReturn(Optional.of(new ConnectorRow(
+                "conn-llm", "space-a", "deepseek", "LLM", "API_KEY",
+                JSON.valueToTree(config), true, "u-admin")));
+        when(invoker.probeModels(any(), anyInt())).thenReturn(
+                new ConnectorInvoker.ProbeResult(true, List.of("deepseek-chat"), null));
+
+        var result = service.probeModels(tenant("space-a", "u-editor", "EDITOR"), "conn-llm");
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.models()).containsExactly("deepseek-chat");
     }
 
     @Test

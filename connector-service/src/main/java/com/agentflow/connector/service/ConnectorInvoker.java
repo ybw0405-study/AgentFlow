@@ -78,6 +78,91 @@ public class ConnectorInvoker {
         }
     }
 
+    /** 模型清单探测结果。只回模型 id，不回上游响应体（可能含账号信息）。 */
+    public record ProbeResult(boolean ok, List<String> models, String errorCode) {
+        static ProbeResult failure(String code) {
+            return new ProbeResult(false, List.of(), code);
+        }
+    }
+
+    /**
+     * 读取某个连接所指向端点的 {@code /models} 清单，供前端在建连接时挑选模型。
+     *
+     * <p>不走 {@link #invoke}：那条路带按 callId 的幂等缓存与并发锁，探测是交互式操作，
+     * 每次都是新 callId，写缓存只会留下无人读取的键。这里复用同一套 URI 构建、白名单
+     * 校验与凭据注入，保证与真实调用完全一致的出网口径。
+     */
+    public ProbeResult probeModels(ConnectorRow connector, int timeoutMs) {
+        JsonNode config = connector.config();
+        try {
+            // operations.models 未声明时 buildUri 回落到 /models，与 chat 的路径解析规则一致
+            InvokeCommand cmd = new InvokeCommand(connector.tenantId(), connector.id(),
+                    UUID.randomUUID().toString(), "models", Map.of(), timeoutMs, "");
+            SandboxPolicy.ValidatedTarget target = buildUri(connector, config, cmd);
+            sandbox.assertNoRebinding(target.uri().getHost(), target.resolved());
+            HttpRequest.Builder builder = HttpRequest.newBuilder(target.uri())
+                    .timeout(Duration.ofMillis(Math.max(timeoutMs, 1_000)))
+                    .header("Accept", "application/json")
+                    .method("GET", HttpRequest.BodyPublishers.noBody());
+            applyAuth(builder, connector, config, connector.tenantId());
+
+            HttpResponse<InputStream> response = http.send(builder.build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream stream = response.body()) {
+                if (response.statusCode() >= 300 && response.statusCode() < 400) {
+                    return ProbeResult.failure("CONN-REDIRECT-001");
+                }
+                if (response.statusCode() >= 400) {
+                    return ProbeResult.failure(response.statusCode() >= 500
+                            || response.statusCode() == 429 ? "CONN-HTTP-5XX" : "CONN-HTTP-4XX");
+                }
+                byte[] body = BoundedBodyReader.read(stream, MAX_RESPONSE_BYTES,
+                        Duration.ofMillis(Math.max(timeoutMs, 1_000)));
+                if (body == null) {
+                    return ProbeResult.failure("CONN-RESPONSE-TOO_LARGE");
+                }
+                Map<String, Object> parsed = parseBody(body);
+                if (!(parsed.get("data") instanceof List<?>)) {
+                    // 端点不像 OpenAI 兼容服务，或 /models 被网关改写；给出可区分的错误码
+                    return ProbeResult.failure("CONN-RESPONSE-001");
+                }
+                return new ProbeResult(true, modelIds(parsed), null);
+            }
+        } catch (SandboxPolicy.Violation e) {
+            log.warn("sandbox rejected model probe for {}: {}", connector.id(), e.getMessage());
+            return ProbeResult.failure("CONN-SANDBOX-001");
+        } catch (CredentialException e) {
+            return ProbeResult.failure(e.code);
+        } catch (HttpTimeoutException e) {
+            return ProbeResult.failure("CONN-TIMEOUT");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ProbeResult.failure("CONN-TIMEOUT");
+        } catch (Exception e) {
+            log.warn("model probe for {} failed: {}", connector.id(), e.toString());
+            return ProbeResult.failure("CONN-UPSTREAM-001");
+        }
+    }
+
+    /** 从 OpenAI 兼容响应里只取 {@code data[].id}，去重排序并按条数/长度截断，其余字段一律丢弃。 */
+    static List<String> modelIds(Map<String, Object> body) {
+        Object raw = body.get("data");
+        java.util.TreeSet<String> ids = new java.util.TreeSet<>();
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map && map.get("id") instanceof String text
+                        && !text.isBlank()) {
+                    String trimmed = text.trim();
+                    ids.add(trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed);
+                    if (ids.size() >= 200) {
+                        break;
+                    }
+                }
+            }
+        }
+        return List.copyOf(ids);
+    }
+
     public InvokeResult invoke(InvokeCommand cmd) {
         long started = System.nanoTime();
         String cacheKey = "af:conncall:" + cmd.callId();
@@ -286,8 +371,26 @@ public class ConnectorInvoker {
                             secret.getBytes(StandardCharsets.UTF_8)));
         } else {
             String headerName = config.path("auth").path("headerName").asText("X-API-Key");
-            builder.header(headerName, secret);
+            builder.header(headerName, authValue(config, secret));
         }
+    }
+
+    /**
+     * 凭据头取值。OpenAI 兼容端点要求 {@code Authorization: Bearer sk-xxx}，即密文前要加固定
+     * 前缀；前缀由连接配置声明（{@code auth.valuePrefix}），默认空以兼容既有连接器。
+     *
+     * <p>前缀来自配置而非用户输入的密钥，仍做字符校验：header 值里出现 CR/LF 会被 JDK 拒绝，
+     * 但报错发生在出网时，早失败并给出明确原因更利于排查。
+     */
+    static String authValue(JsonNode config, String secret) {
+        String prefix = config.path("auth").path("valuePrefix").asText("");
+        if (prefix.isEmpty()) {
+            return secret;
+        }
+        if (prefix.length() > 32 || prefix.chars().anyMatch(c -> c < 0x20 || c > 0x7e)) {
+            throw new CredentialException("CONN-CONFIG-001", "auth.valuePrefix malformed");
+        }
+        return prefix + secret;
     }
 
     private static Map<String, Object> parseBody(byte[] body) {
