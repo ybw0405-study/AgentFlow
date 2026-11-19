@@ -54,9 +54,12 @@ echo '==> [5/5] 前端 :5174'
 
 echo '==> 等待 gateway 就绪'
 for i in $(seq 1 60); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/api/v1/auth/login \
-    -H 'Content-Type: application/json' -d '{}' || true)"
-  [ "$code" = "400" ] || [ "$code" = "401" ] || [ "$code" = "422" ] && break
+  # /health 会连带探 Redis：依赖不可用时返回 503，正好当作 readiness 用
+  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true)"
+  if [ "$code" = "200" ]; then
+    echo "    就绪（约 $((i * 2))s）"
+    break
+  fi
   sleep 2
 done
 

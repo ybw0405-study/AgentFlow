@@ -104,19 +104,24 @@ Start-Process -FilePath 'cmd.exe' -WorkingDirectory (Join-Path $root 'frontend')
   -RedirectStandardError (Join-Path $logs 'frontend.err.log') -WindowStyle Hidden
 
 Write-Host '==> 等待 gateway 就绪'
+# /health 会连带探 Redis：依赖不可用时返回 503，正好当作 readiness 用
 $gwReady = $false
+$gwTimer = [Diagnostics.Stopwatch]::StartNew()
 foreach ($i in 1..60) {
   try {
-    Invoke-WebRequest -Uri 'http://127.0.0.1:8080/api/v1/auth/login' -Method Post `
-      -ContentType 'application/json' -Body '{}' -TimeoutSec 2 -ErrorAction Stop | Out-Null
+    # 必须带 -UseBasicParsing：Windows PowerShell 5.1 默认走 IE DOM 解析，
+    # 非交互模式下一律抛错，探测会永远判不成就绪。
+    Invoke-WebRequest -Uri 'http://127.0.0.1:8080/health' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop | Out-Null
+    $gwReady = $true; break
   } catch {
-    if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -in @(400,401,422)) {
-      $gwReady = $true; break
-    }
   }
   Start-Sleep -Seconds 2
 }
-if (-not $gwReady) { Write-Warning 'gateway 未在 120s 内就绪；查看 logs/*.log' }
+if ($gwReady) {
+  Write-Host ("    就绪（{0:N1}s）" -f $gwTimer.Elapsed.TotalSeconds)
+} else {
+  Write-Warning 'gateway 未在 120s 内就绪；查看 logs/*.log'
+}
 
 Write-Host ''
 Write-Host 'AgentFlow 已启动：'
