@@ -105,15 +105,19 @@ def test_canary_routing_and_rollback(client, editor_token, admin_token):
     assert resp.status_code == 404, resp.text
 
     # 6. 灰度决策已写审计（MQ 异步，轮询等待落库）
+    # 必须按本次工作流的 definitionId 过滤：审计表是跨轮次累积的，
+    # 只按 eventType 过滤会被历史记录蒙过去，MQ 断链也照样「通过」。
+    # wf_id 每轮都是新建的，命中即说明是本轮写下的一行。
     import time
-    deadline = time.monotonic() + 15
-    event_types: list[str] = []
+    matched: list[dict] = []
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         resp = client.get("/api/v1/admin/audit", headers=ad,
                           params={"limit": 100, "eventType": "WF_CANARY_ROUTED"})
         assert resp.status_code == 200, resp.text
-        event_types = [i.get("eventType") for i in resp.json()["data"]["items"]]
-        if event_types:
+        matched = [i for i in resp.json()["data"]["items"]
+                   if wf_id in (i.get("payloadJson") or "")]
+        if matched:
             break
         time.sleep(0.5)
-    assert "WF_CANARY_ROUTED" in event_types, event_types[:20]
+    assert matched, f"no WF_CANARY_ROUTED audit row for definition {wf_id}"

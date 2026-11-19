@@ -24,7 +24,9 @@ public interface AuditEventMapper {
     @Select("<script>"
             + "SELECT seq, id, tenant_id AS tenantId, trace_id AS traceId,"
             + " execution_id AS executionId, actor_id AS actorId, event_type AS eventType,"
-            + " payload_redacted AS payloadRedacted, token_used AS tokenUsed,"
+            // 别名必须与 AuditRow 的字段名一致（payloadJson）：写成 payloadRedacted 时
+            // MyBatis 对不上号，接口返回的 payloadJson 恒为 null，前端审计详情是空的。
+            + " payload_redacted AS payloadJson, token_used AS tokenUsed,"
             + " latency_ms AS latencyMs, created_at AS createdAt"
             + " FROM audit_event WHERE seq &lt; #{beforeSeq}"
             + "<if test='traceId != null'> AND trace_id = #{traceId}</if>"
