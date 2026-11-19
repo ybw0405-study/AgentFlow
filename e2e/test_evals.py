@@ -57,12 +57,18 @@ def _publish_workflow(client, editor_token, admin_token, dsl: dict) -> tuple[str
 
 
 def _wait_run(client, token, run_id: str, timeout_s: float = 90.0) -> dict:
+    """等到评测运行真正收口。
+
+    只把 SUCCEEDED / FAILED / CANCELLED 当终态：run 行是插入即 RUNNING，
+    但用「!= RUNNING 就算完」会让中间态（或异常写入）也蒙混过关。
+    """
+    terminal = {"SUCCEEDED", "FAILED", "CANCELLED"}
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         resp = client.get(f"/api/v1/evals/runs/{run_id}", headers=headers(token, SPACE_A))
         assert resp.status_code == 200, resp.text
         detail = resp.json()["data"]
-        if detail["run"]["status"] != "RUNNING":
+        if detail["run"]["status"] in terminal:
             return detail
         time.sleep(1.0)
     raise AssertionError(f"eval run {run_id} did not finish in {timeout_s}s")

@@ -292,19 +292,23 @@ public class EvalService {
                                 : execution.errorCode());
             }
         }
-        recount(run.id());
+        recount(run);
     }
 
-    private void recount(String runId) {
-        List<ResultRow> results = evals.listResults(runId);
+    private void recount(RunRow run) {
+        List<ResultRow> results = evals.listResults(run.id());
         int passed = (int) results.stream().filter(r -> Boolean.TRUE.equals(r.passed())).count();
         int failed = (int) results.stream()
                 .filter(r -> "FAILED".equals(r.status()) || "ERROR".equals(r.status())).count();
-        boolean done = results.stream().noneMatch(
+        evals.updateRunCounters(run.id(), passed, failed);
+        // 结果条数不足就先不收口：createRun 先写 run 行、再逐条写用例结果，
+        // 轮询正好落在中间时会看到「0 条结果」，把 run 直接判成成功（total 也被改成 0），
+        // 前端显示「0/0 通过」而实际用例还在跑。
+        boolean allResultsVisible = results.size() >= run.total();
+        boolean done = allResultsVisible && results.stream().noneMatch(
                 r -> "PENDING".equals(r.status()) || "RUNNING".equals(r.status()));
-        evals.updateRunCounters(runId, passed, failed);
         if (done) {
-            evals.updateRunStats(runId, "SUCCEEDED", results.size(), passed, failed, null);
+            evals.updateRunStats(run.id(), "SUCCEEDED", run.total(), passed, failed, null);
         }
     }
 
