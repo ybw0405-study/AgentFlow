@@ -3,6 +3,52 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [0.3.0] - 2026-11-19
+
+把上一版列在「已知限制」里的四条硬伤全部做掉：审计不再「MQ 挂掉只记一行 WARN」，
+引擎真的会消费 MQ，`EXPRESSION` 审批人在三处同文法可用，子图有了自己的画布。
+
+### 新增
+
+- **审计 outbox + relay**（`V007__audit_outbox.sql`）：审计事件与业务写同库同事务落
+  `audit_outbox`，`AuditOutboxRelay` 按 `min(5s×attempts, 60s)` 退避重投，**没有“放弃投递”**
+  这一态（`status` 只有 `PENDING` / `SENT`）——审计放弃就等于没留痕。连续失败达
+  `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS`（默认 3）次后切到 `direct:audit_event` 直写库；
+  `AF_AUDIT_SINK` 可选 `auto` / `mq` / `direct` 强制出口。新增
+  `GET /api/v1/admin/audit-outbox` 暴露积压水位（pending / retrying / 最老待投时长），
+  已发送行保留 7 天后清理。`RocketMqAuditPublisher` / `NoopAuditPublisher` 删除。
+- **`human_gate` 支持 `EXPRESSION` 审批人**：一份受限文法，三处同构——发布期引擎用
+  `ast` 白名单静态校验（拒函数调用、下标、未知属性），运行期控制面 `GateExpression`
+  逐候选求值，画布 `approver-expr.ts` 即时体检。属性限
+  `user.id/role/rank/platformAdmin` 与 `space.id`，支持比较、`in`/`not in`、`and/or/not`
+  与字符串/整数/布尔/null/列表字面量。空或非法一律 fail-closed（无人可批 + ERROR 日志）。
+- **引擎内置 RocketMQ 消费端**（`engine-api/app/messaging/`）：控制面裁决后向
+  `af-gate-decision` 广播，引擎与 HTTP 回调**并行**消费，重复裁决由既有幂等三态吸收。
+  按 5.x remoting 协议用标准库自行实现（不依赖需要 `librocketmq` 的 C++ 客户端）：
+  短轮询、不发心跳、每次重连先 `close()`。状态经 `GET /internal/mq/status` 暴露。
+- **子图画布**：`loop.body` / `parallel.branches` 可在画布上逐层进入编辑（顶部面包屑回退），
+  层内拖节点、连边、选中即配；子图内 `start` 置灰、最后一个 `end` 不可删；校验会下钻到
+  `loop_1.body#body_end` 这一级；抽屉里的 JSON 编辑保留为「高级」入口并与表单实时双向同步。
+- `start-dev.ps1` / `start-dev.sh` / `e2e` 流水线预建 `af-audit-event` 与 `af-gate-decision`
+  两个 topic（5.x 的 topic 要等首条消息才自动创建，否则消费端首轮拿到 `code=17`）。
+- 新增 e2e 用例：`test_mq_consumer_connects_to_broker`、
+  `test_approval_decision_is_consumed_from_mq`（先断言 `consumed` 增长，再断言
+  `duplicate >= 1`，即「真的从 MQ 收到并幂等吸收」）。
+
+### 变更
+
+- `AF_MQ_ENABLED=false` 的含义变了：不再是「审计只写进程日志」，而是「审计出口改走
+  `direct:audit_event` 直写库」，outbox 与重投照旧。README 的环境变量表与已知限制已同步。
+- 引擎新增 `AF_MQ_CONSUME` / `AF_MQ_GATE_TOPIC` / `AF_MQ_GATE_GROUP`；控制面新增
+  `AF_ROCKETMQ_GATE_TOPIC` / `AF_AUDIT_SINK` / `AF_AUDIT_RELAY_INTERVAL_MS` /
+  `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS`。
+
+### 测试
+
+- Java 193 项（新增 `GateExpressionTest` 9 项、`GateApprovers` 4 项、
+  `AuditOutboxRelayTest` 5 项）；引擎 284 项（新增表达式校验 6 项、remoting 编解码 9 项）；
+  前端 109 项（新增 `subgraph.spec.ts` 25 项、审批人表达式 4 项）；全栈 e2e 34 项。
+
 ## [0.2.0] - 2026-11-19
 
 把引擎早已支持、但画布够不着的节点能力放出来，同时修掉子图校验的两个作用域问题。

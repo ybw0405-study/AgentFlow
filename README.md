@@ -15,10 +15,12 @@ flowchart LR
     ENG -->|/internal/connectors 工具调用| GW
     ENG --> PG[(PostgreSQL event_log<br/>append-only)]
     ENG --> RD[(Redis 租约/预算/事件频道)]
-    WF --> MY[(MySQL 业务库)]
+    WF --> MY[(MySQL 业务库<br/>含 audit_outbox)]
     AUD --> MY
-    WF -->|af-audit-event| MQ[[RocketMQ]]
-    MQ --> AUD
+    WF -->|relay af-audit-event| MQ[[RocketMQ]]
+    WF -->|af-gate-decision| MQ
+    MQ -->|审计落库| AUD
+    MQ -.->|裁决消费（与 HTTP 回调并行）| ENG
     RD -->|pub/sub 事件流| WF
 ```
 
@@ -38,21 +40,23 @@ flowchart LR
 | JWT + refresh 轮换 + 租户隔离（跨租户 404）+ RBAC | ✅ P0 |
 | 健康检查（各服务 `/health`，依赖不可用返回 503） | ✅ P0 |
 | 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
-| 审计只追加（触发器 + 最小授权 + MQ） | ✅ P0 |
+| 审计只追加（触发器 + 最小授权 + outbox/relay，不可达时降级直写） | ✅ P0 |
 | mock LLM / mock 连接器（引擎侧离线演示与 CI，画布默认不产出） | ✅ P0 |
-| condition / loop / parallel / transform / subworkflow 节点（画布可直接配置，子图走 JSON） | ✅ P1 |
+| condition / loop / parallel / transform / subworkflow 节点（画布表单配置，子图有独立画布） | ✅ P1 |
 | 灰度发布、故障注入测试套件 | ✅ P1 |
 | 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | ✅ P2 |
 | connector-service：CRUD / AES-256-GCM 凭据 / OAuth2 / 出网沙箱 | ✅ P2 |
 | 成本中心：budget_ledger 投影累加、有效限额继承、预算对账 | ✅ P2 |
-| human_gate 人工审批：挂起/恢复、超时自动裁决、裁决幂等（V006） | ✅ P3 |
-| 审批中心：待办收件箱、通过/驳回、审批人通知、outbox 重投 | ✅ P3 |
+| human_gate 人工审批：挂起/恢复、超时自动裁决、裁决幂等；审批人 ROLE / USERS / EXPRESSION（V006） | ✅ P3 |
+| 审批中心：待办收件箱、通过/驳回、审批人通知、outbox 重投；裁决经 HTTP + MQ 双通道送达引擎 | ✅ P3 |
 | 评测集：数据集/用例、真实执行跑分、四种断言、轮询收口 | ✅ P3 |
 | A/B 对比：同数据集双版本、通过率→耗时→token 结论口径 | ✅ P3 |
 
 画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
 
 分支连线：选中从 `condition` / `human_gate` 出发的连线，浮条里会多出 `branch` 输入框，下拉给的是该节点的 case 名（审批节点固定 `approved` / `rejected`），也可直接填。同一节点的分支名不允许重复；分支名不在 cases / elseBranch 里时，校验会提示该分支永远走不到。
+
+子图画布：选中 `loop` / `parallel` 节点，在配置抽屉里点「在画布中编辑」进入该节点的 `body` / 某个 `branches` 分支——画布顶部出现面包屑，点根节点可退回整图。子图内是同一个编辑器：拖节点、连边、选中即配；不能放 `start`（外层已有起点），至少保留一个 `end`，删掉最后一个 `end` 会被拒绝并说明原因。子图里的配置仍写回同一份 DSL，退出/刷新都不丢；「高级」里的 JSON 与表单是同一份数据的两个视图。
 
 ## 快速开始（Windows）
 
@@ -184,9 +188,13 @@ git add docs/openapi/engine-api.json
 | `AF_INTERNAL_TOKEN` | dev-internal-token | 服务间内部令牌（/engine/** 与引擎入站） |
 | `AF_MYSQL_HOST/PORT/USER/PASSWORD` | 127.0.0.1:3306 root/root | 业务库 |
 | `AF_AUDIT_MYSQL_USER` | af_audit | 审计写入账号（仅 SELECT/INSERT audit_event） |
+| `AF_AUDIT_SINK` | auto | 审计出口：`auto`（`AF_MQ_ENABLED=true` 走 MQ，否则直写）/ `mq` / `direct` |
+| `AF_AUDIT_RELAY_INTERVAL_MS` / `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS` | 2000 / 3 | outbox 重投扫描间隔、连续失败多少次后降级直写（两者都不可达才记 `audit LOST`） |
 | `AF_PG_DSN` | postgresql://agentflow:agentflow@127.0.0.1:5433/agentflow_events | 事件库 |
 | `AF_REDIS_HOST/PORT` / `AF_REDIS_URL` | 127.0.0.1:6379 | 缓存/租约/预算/事件频道 |
-| `AF_MQ_ENABLED` / `AF_ROCKETMQ_NAMESRV` | true（本地，compose 已带 RocketMQ） / 127.0.0.1:9876 | 审计 MQ；false 时审计只写进程日志（每次 emit WARN），需要留痕的环境必须开启 |
+| `AF_MQ_ENABLED` / `AF_ROCKETMQ_NAMESRV` | true（本地，compose 已带 RocketMQ） / 127.0.0.1:9876 | 审计 MQ；false 时审计改走 `direct:audit_event` 直写库（outbox 仍在，只是出口不同） |
+| `AF_ROCKETMQ_GATE_TOPIC` | af-gate-decision | 裁决广播 topic（控制面发布，引擎消费；`start-dev` 与 CI 会预建） |
+| `AF_MQ_CONSUME` / `AF_MQ_GATE_TOPIC` / `AF_MQ_GATE_GROUP` | true / af-gate-decision / af-engine-gate-consumer | 引擎是否消费 MQ 裁决、消费的 topic、消费组名 |
 | `AF_DEFAULT_TOKEN_BUDGET` / `AF_DEFAULT_MAX_STEPS` / `AF_DEFAULT_DEADLINE_MS` | 50000 / 50 / 120000 | 租户政策上限（触发时钳制） |
 | `AF_AUTHORIZED_CONNECTORS` | mock.search,mock.echo,mock.flaky | 内置 mock 连接器（真实连接器由 connector-service 目录自动授权） |
 | `AF_CONNECTOR_SERVICE` | http://127.0.0.1:8085 | gateway → connector-service 路由目标 |
@@ -217,14 +225,14 @@ git add docs/openapi/engine-api.json
 
 ## 已知限制
 
-1. 审计经 MQ 异步落库；`AF_MQ_ENABLED=false` 时审计只写进程日志（每次 emit 一条 WARN），outbox + relay 仍未落地。需要留痕的环境必须开启 MQ（`start-dev` 与 `e2e` 流水线默认开启，broker 未 healthy 前不会拉起服务）。
+1. 审计走 outbox：事件与业务写同库同事务落 `audit_outbox`，relay 按 5s×attempts（上限 60s）退避重投，**不存在“放弃投递”**；`AF_MQ_ENABLED=false` 或 relay 连续失败达 `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS`（默认 3）次时，出口切到 `direct:audit_event` 直写库，审计照样留痕。积压水位见 `GET /api/v1/admin/audit-outbox`（平台 ADMIN），已发送行保留 7 天后清理。只有在 MQ 与业务库同时不可达时才会丢，且以 `audit LOST` 记 ERROR。
 2. 预算预占的崩溃泄漏窗口已由 checkpoint/恢复对账收敛（`BudgetLedger.reconcile`）；Redis 全部丢失时会从事件流重建。
 3. 沙箱做「域名白名单 + 解析期私网拦截」，未做 DNS 钉扎（rebinding 由生产 egress 代理兜底）。
-4. RocketMQ 的 Python 消费端未启用（引擎不消费 MQ）；审批回调走 HTTP + `gate_resolve_outbox` 重投（P3）。
+4. 引擎内置 RocketMQ 消费端（`engine-api/app/messaging/`，按 5.x remoting 协议用标准库自行实现，不依赖需要 librocketmq 的 C++ 客户端）：`AF_MQ_ENABLED` 与 `AF_MQ_CONSUME` 同为真时，与 HTTP 回调**并行**消费 `af-gate-decision`，重复裁决由引擎侧幂等吸收；HTTP 仍是主通道，`gate_resolve_outbox` 负责引擎不可达时的重投补偿。消费端只做短轮询（不发心跳、不挂起长轮询），状态见 `GET /internal/mq/status`。
 5. Java 侧 OpenAPI 生成物未入库（contract-drift 覆盖引擎侧）。
-6. `human_gate` 的审批人 `EXPRESSION` 类型 P3 未支持（ROLE / USERS 已支持）；子图（loop/parallel/subworkflow）内不允许 `human_gate`。
+6. `human_gate` 的 `EXPRESSION` 审批人只认受限子集：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`，比较 `== != < <= > >=`、`in` / `not in`、`and` / `or` / `not`，字面量支持字符串、整数、布尔、null 与列表；**不支持函数调用与下标**。三处同文法——发布期在引擎侧以 `ast` 白名单静态校验、运行期由控制面逐候选求值、画布编辑时即时体检；表达式为空或非法一律 fail-closed（无人可批，记 ERROR）。子图（loop/parallel/subworkflow）内不允许 `human_gate`。
 7. 评测与 A/B 用轮询收口（默认 3s），不是事件驱动；用例数上限 50/次。
-8. `loop.body` 与 `parallel.branches` 是子图，画布上以 JSON 编辑（其余节点已有表单）。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；子图内不允许出现 `human_gate`（挂起后无法原地续跑）。
+8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、必须保留至少一个 `end`，画布最多下钻 4 层；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。
 9. `retrieval` 只在 DSL 类型与前端枚举里占位，引擎未实现该执行器（阶段门会以 `DSL-NODE-001` 拒绝，不会静默降级）。
 
 ## 目录

@@ -1201,14 +1201,15 @@ AgentFlow/
    `ALREADY_TERMINAL`（执行已终态，`WF_STATE_001`）/ `BUSY`（拉租约失败，409
    `EXEC-GATE_BUSY-001`）。租约 owner 每次带随机后缀（`:gate:` / `:run:`），
    避免「挂起释放租约」删掉「裁决续跑」刚拿到的那把。
-6. **审批人展开**：`ROLE`/`EXPRESSION` 沿租户祖先链按角色阈值取成员（≥ADMIN 时并入平台
-   ADMIN）；`USERS` 用 `TenantHierarchyResolver` 过滤掉不可见成员；展开为空回退平台管理员。
+6. **审批人展开**：`ROLE` 沿租户祖先链按角色阈值取成员（≥ADMIN 时并入平台
+   ADMIN）；`USERS` 用 `TenantHierarchyResolver` 过滤掉不可见成员；`EXPRESSION` 逐候选求值
+   （见 §16.2）；展开为空回退平台管理员。
    快照在挂起瞬间冻结进 `gate_task.approvers`（JSON），后续成员变动不影响已发出的待办。
-   `EXPRESSION` P3 不支持（按 ROLE 之外的类型失败）。
-7. **裁决回调的 outbox**：控制器先 `POST /internal/executions/{id}/gates/{nodeKey}/resolve`
+7. **裁决回调的 outbox + 广播**：控制器先 `POST /internal/executions/{id}/gates/{nodeKey}/resolve`
    到引擎；引擎不可达（`AGT_UPSTREAM_001`）时写 `gate_resolve_outbox` 并返回 `DEFERRED`，
    `GateResolveRelay`（默认 5s）退避重投 `min(10s×n, 300s)`，20 次置 `FAILED`。
-   引擎侧 404/409 映射为 `WF_STATE_001`（状态冲突，不重投）。
+   引擎侧 404/409 映射为 `WF_STATE_001`（状态冲突，不重投）。另向 `af-gate-decision`
+   广播一条裁决消息供引擎并行消费（§16.3）。
 8. **通知幂等**：`notification.id` 由 `gate|executionId|nodeKey|userId` 派生确定性 UUID，
    投影重放不会给同一个人发第二条待办。
 9. **评测**：一次评测 = 对每个启用用例触发一次真实执行（幂等键 `eval:{runId}:{caseId}`），
@@ -1224,3 +1225,101 @@ AgentFlow/
     - `checkpoint_payload` 直接引用 `state.variables`，事件折叠时 `clear()` 把快照一起清空 →
       写完 checkpoint 变量即丢（`tests/unit/test_checkpoint.py`）。
     - `NodeSuspended` 不带 `attempt` → 节点索引写出幽灵 attempt=0 行（见第 3 条）。
+
+---
+
+## 16. 遗留四项收口（2026-11-19）
+
+上一轮把「能力已支持、画布够不着」的缺口补完了，但仍留下四处在验收口径上站不住的
+硬伤：审计靠 MQ 且 MQ 一挂就只剩进程日志、引擎只收 HTTP 回调、`EXPRESSION` 审批人在
+引擎侧被当成非法类型、子图只能手写 JSON。这一节记录四者的落地方式与取舍。
+
+### 16.1 审计改为 outbox + relay（`db/mysql/migration/V007`）
+
+原先 `AuditPublisher` 直接 `send` 到 RocketMQ，`AF_MQ_ENABLED=false` 时就退化成
+「每次 emit 一条 WARN」——等于没有留痕。现在改成与控制面其他写路径同源的
+transactional outbox：
+
+1. `OutboxAuditPublisher` 在**业务同库同事务**里 `INSERT audit_outbox`，不做任何网络调用；
+   写 outbox 本身失败时才尝试一次直达，两者都失败才 `log.error("audit LOST …")`。
+2. `AuditOutboxRelay`（默认 2s 一轮）取 `due` 批次投递：成功 `markSent`，失败
+   `markRetry(attempts+1, delay = min(5×attempts, 60))`。
+3. **审计不允许“放弃投递”**——这点与 `gate_resolve_outbox` 不同：后者 20 次置 `FAILED`
+   可以接受（执行本身另有事件真相），审计放弃了就真的没有记录。所以 `status` 只有
+   `PENDING` / `SENT`，重投次数没有上限，只有退避上限。
+4. 连续失败达 `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS`（默认 3）次后，出口切到
+   `direct:audit_event`（用只读 `af_audit` 账号直写库，`DuplicateKeyException` 视为已送达）；
+   `AF_AUDIT_SINK=direct` 可显式走这条，`mq` 可强制不许降级。降级后的消息仍会 `markSent`
+   关单，避免同一条事件在两条出口上反复横跳。
+5. `V007` 的 `audit_outbox` 与 `audit_event` 共用「只追加」纪律：relay 只做
+   `PENDING→SENT` 的状态迁移与 7 天后的物理清理，不改写载荷。
+6. 积压必须可见：`GET /api/v1/admin/audit-outbox`（平台 ADMIN）回 `sink / degradedSink /
+   pending / retrying / oldestPendingAt / oldestPendingAgeSeconds`。outbox 的前提是
+   「积压能被看见」，否则它只是把丢失变成静默延迟。
+
+`RocketMqAuditPublisher` / `NoopAuditPublisher` 随之删除——它们编码的是「要么发出去、
+要么只记一行日志」的旧假设。
+
+### 16.2 `EXPRESSION` 审批人：一份文法，三处实现
+
+表达式要有意义，必须在「发布」「运行」「编辑」三个时刻给出一致的判定，否则会出现
+「画布放行、发布拒绝」或「发布过了、运行时谁都不能批」。为此定了一个**受限子集**并三处同构：
+
+| 位置 | 实现 | 时机 |
+|---|---|---|
+| 引擎（Python） | `app/dsl/validate.py` 用 `ast.parse` + 白名单递归，拒函数调用/下标/未知属性 | 发布期（`DSL-GATE-EXPR` 类错误） |
+| 控制面（Java） | `gate/GateExpression`：手写词法+递归下降，`validate` / `evaluate` 两入口 | 运行期展开审批人 |
+| 画布（TS） | `dsl/approver-expr.ts`：`approverExpressionError()` 即时体检 | 编辑期 |
+
+文法：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`；
+比较 `== != < <= > >=`；成员 `in` / `not in`；布尔 `and` / `or` / `not`（支持括号）；
+字面量 字符串 / 整数 / 布尔 / `null` / 列表。**没有函数调用、没有下标、没有属性链**——
+`len(...)`、`.startswith(...)`、`users[0]` 一律在发布期被拒（`ast` 白名单里根本没有
+`Call` / `Subscript`），避免把「表达式」做成一个可执行为任意逻辑的沙箱逃逸面。
+
+求值不按角色粗筛：`GateApprovers.resolveByExpression` 对空间链上**全部成员**逐个判定，
+再单独过一遍平台管理员（他们未必出现在成员表里）。表达式为空或非法 → 打 ERROR 并返回
+空集，即 **fail-closed**：宁可「无人可批、超时按 `onTimeout` 收口」，也不放行。
+
+### 16.3 引擎真正消费 MQ（`engine-api/app/messaging/`）
+
+审批回调原本只有 HTTP 一条路，`gate_resolve_outbox` 负责补偿。现在加了第二条通道：
+控制面裁决成功后向 `af-gate-decision` 发一条
+`{executionId, nodeKey, decision, resolvedBy, comment, occurredAt}`（key =
+`executionId:nodeKey`），引擎侧 `GateDecisionConsumer` 并行消费，重复裁决由引擎既有的
+幂等三态吸收。
+
+不引官方 Python 客户端：`rocketmq` / `rocketmq-client-python` 都是 C++ 客户端的 ctypes
+绑定，要本机有 `librocketmq`，Windows 与精简 CI 装不上。于是按 5.x remoting 协议
+（帧 = `totalLen + headerLen + headerJson + body`，V1 消息定长头 88 字节 +
+`body/topic/props`，properties 用 `\x01` / `\x02` 分隔）用标准库自己实现，`remoting.py`
+只做编解码、`client.py` 做连接与拉取。踩过的三个坑，都留在代码注释里：
+
+1. **不发心跳**。5.x `ClientManageProcessor` 只从 body 解析 `consumerData`，放 `extFields`
+   会在注册循环里 NPE；而且心跳会**多回一帧**（`40` 紧跟 `0`），把一问一答的连接错位。
+2. **不挂起长轮询**。`_PULL_FLAG` 只留 `SUBSCRIPTION`、`suspendTimeoutMillis=0`——
+   5.x 的挂起时长由 broker 侧 `brokerSuspendMaxTimeMillis`（15s）决定，客户端传的值
+   被忽略，必然先踩到 socket 超时。改成短轮询 + 200ms 空闲间隔。
+3. **每次 `connect()` 先 `close()`**。半连接（地址已记、连接对象为 `None`）会让重连被
+   跳过，表现为「一直超时但看不出没连上」。
+
+偏移用 `GET_MAX_OFFSET`（只取新消息，不重放历史）；`PULL_OFFSET_MOVED` 接受 broker
+建议值；topic 尚未创建（`code=17`）降级为 INFO 并重试，同时在 `start-dev` / `e2e`
+流水线里预建 `af-audit-event` 与 `af-gate-decision`。消费状态见 `GET /internal/mq/status`
+（`consumed / applied / duplicate / invalid / failed / lastError`）。
+
+### 16.4 子图画布（`frontend/src/dsl/subgraph.ts` + `CanvasEditorView`）
+
+`loop.body` / `parallel.branches` 此前只能在抽屉里手写 JSON，等于把最容易写错的
+（层内 key 唯一性、必须有一个 `end`、不能有 `start`）交给用户。现在：
+
+1. **一份真源**：`rootDsl` 是整份 DSL，`path: SubgraphRef[]` 表示当前层
+   （`{nodeKey, branch?}`）。`readSubgraph` / `writeSubgraph` 都是不可变的，未命中
+   返回同一对象（避免 Vue 无谓的深层 diff）。`toDsl()` 把当前层经 `writeSubgraphPath`
+   合并回根，变量与 defaults 始终取根层——子图不拥有自己的变量表。
+2. **层内编辑**：子图内 `start` 置灰（外层已有起点，且 DSL 规定子图无 start）；
+   删除最后一个 `end` 会被 `subgraphRemovalError` 拒绝并说明原因；层内 key 只需层内唯一。
+3. **校验能下钻**：`validateGraph(nodes, edges, scope)` 递归 `validateNested`，问题 key
+   带层前缀（`loop_1.body#body_end`），画布与抽屉都能把错误挂回具体那一层。深度上限 4。
+4. **JSON 不删**：抽屉里的文本域改成「高级：直接编辑 …JSON」，无解析错误时从配置实时
+   序列化，和表单是同一份数据的两个视图。
