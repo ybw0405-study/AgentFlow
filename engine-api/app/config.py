@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     )
 
     gate_sweep_interval_s: int = 15  # human_gate 超时扫描间隔
+
+    # 裁决 MQ 通道（引擎主动拉取 af-gate-decision）。AF_MQ_ENABLED 与 Java 侧同名，
+    # 一个开关同时管生产与消费；mq_consume 是子开关，用于「只发不收」的灰度场景。
+    mq_enabled: bool = False
+    mq_consume: bool = True
+    mq_namesrv: str = "127.0.0.1:9876"
+    mq_gate_topic: str = "af-gate-decision"
+    mq_gate_group: str = "af-engine-gate-consumer"
+    mq_poll_timeout_ms: int = 3_000
+    mq_pull_batch: int = 32
     checkpoint_interval: int = 10  # 每 N 个事件写一次 CheckpointCreated
     lease_ttl_ms: int = 30_000  # 执行租约 TTL
     lease_renew_ms: int = 10_000  # 续约间隔

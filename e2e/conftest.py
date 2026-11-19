@@ -13,6 +13,10 @@ import httpx
 import pytest
 
 BASE_URL = os.environ.get("AF_E2E_BASE_URL", "http://127.0.0.1:8080")
+# 引擎内部端点（/internal/**）不经网关：探针类断言直接打 8000，带内部令牌
+ENGINE_URL = os.environ.get("AF_E2E_ENGINE_URL", "http://127.0.0.1:8000")
+INTERNAL_TOKEN = os.environ.get("AF_INTERNAL_TOKEN", "dev-internal-token")  # noqa: S105
+
 
 ADMIN_EMAIL = "admin@agentflow.dev"
 EDITOR_EMAIL = "editor@agentflow.dev"
@@ -113,3 +117,13 @@ def wait_terminal(client: httpx.Client, token: str, space: str,
 
 def new_idem() -> str:
     return uuid.uuid4().hex
+
+
+def engine_mq_status() -> dict | None:
+    """引擎的 MQ 消费端状态；引擎不可达或未开启时返回 None。"""
+    try:
+        resp = httpx.get(f"{ENGINE_URL}/internal/mq/status",
+                         headers={"X-Internal-Token": INTERNAL_TOKEN}, timeout=5.0)
+    except httpx.HTTPError:
+        return None
+    return resp.json() if resp.status_code == 200 else None

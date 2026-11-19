@@ -1,0 +1,202 @@
+"""裁决消息消费端：MQ → 引擎续跑。
+
+定位：**与控制面 HTTP 回调并行的第二条通道**。HTTP 是快路径（用户点完立刻生效），
+MQ 是冗余路径——引擎被网络策略隔离、控制面重启中、relay 还在退避时，消息仍留在
+broker 里，引擎自己拉得到。
+
+幂等：裁决在引擎侧幂等（节点已终态返回 ALREADY_RESOLVED），因此 HTTP 抢先处理过的
+消息到这里只会记一次 duplicate，不会重复推进状态机。
+
+线程模型：拉取是阻塞 IO，放独立线程；处理协程回到 FastAPI 的事件循环上执行，
+避免在 IO 线程里碰 asyncio 对象。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import threading
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+from .client import PullConsumer, RemotingError
+
+log = logging.getLogger("agentflow.mq")
+
+_VALID_DECISIONS = {"APPROVED", "REJECTED", "TIMEOUT"}
+
+
+def _is_route_missing(exc: BaseException) -> bool:
+    """broker 还没为这个 topic 建路由（autoCreateTopicEnable 下要等首条消息）。"""
+    text = str(exc)
+    return "route lookup failed" in text or "no broker route" in text or "code=17" in text
+
+
+class GateDecisionConsumer:
+    """消费 `af-gate-decision`：`{executionId, nodeKey, decision, resolvedBy, comment}`。"""
+
+    def __init__(
+        self,
+        dispatcher: Any,
+        *,
+        namesrv: str,
+        topic: str,
+        group: str,
+        poll_timeout_ms: int = 3_000,
+        batch: int = 32,
+        reconnect_delay_s: float = 2.0,
+        idle_interval_s: float = 0.2,
+    ) -> None:
+        self._dispatcher = dispatcher
+        self.namesrv = namesrv
+        self.topic = topic
+        self.group = group
+        self.reconnect_delay_s = reconnect_delay_s
+        self.idle_interval_s = idle_interval_s
+        self._consumer = PullConsumer(
+            namesrv, topic, group, poll_timeout_ms=poll_timeout_ms, batch=batch
+        )
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._connected = False
+        self._stats: dict[str, Any] = {
+            "consumed": 0,
+            "applied": 0,
+            "duplicate": 0,
+            "invalid": 0,
+            "failed": 0,
+            "lastError": None,
+            "lastConsumedAt": None,
+        }
+
+    # ---------- 生命周期 ----------
+
+    def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._thread = threading.Thread(target=self._run, name="gate-mq-consumer", daemon=True)
+        self._thread.start()
+        log.info(
+            "gate mq consumer started topic=%s group=%s namesrv=%s",
+            self.topic,
+            self.group,
+            self.namesrv,
+        )
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=10)
+        self._consumer.close()
+        log.info("gate mq consumer stopped")
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "enabled": True,
+            "namesrv": self.namesrv,
+            "topic": self.topic,
+            "group": self.group,
+            "connected": self._connected,
+            "offsets": self._consumer.offsets() if self._connected else {},
+            **self._stats,
+        }
+
+    # ---------- 拉取线程 ----------
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                if not self._connected:
+                    self._consumer.connect()
+                    self._connected = True
+                    log.info("gate mq consumer connected offsets=%s", self._consumer.offsets())
+                messages = self._consumer.poll()
+            except (RemotingError, OSError, ValueError) as exc:
+                self._connected = False
+                self._stats["lastError"] = str(exc)
+                if _is_route_missing(exc):
+                    # topic 要等第一条消息发出才会被自动创建：这是启动早期的正常状态
+                    log.info("gate mq topic %s not routed yet, retrying", self.topic)
+                else:
+                    log.warning("gate mq poll failed, will reconnect: %s", exc)
+                self._consumer.close()
+                self._stop.wait(self.reconnect_delay_s)
+                continue
+            for message in messages:
+                self._dispatch(message)
+            if not messages:
+                # 短轮询：空转时让出 CPU（一次审批一条消息，200ms 的延迟可忽略）
+                self._stop.wait(self.idle_interval_s)
+
+    def _dispatch(self, message: dict[str, Any]) -> None:
+        payload = self._decode(message)
+        if payload is None:
+            return
+        self._stats["consumed"] += 1
+        self._stats["lastConsumedAt"] = datetime.now(UTC).isoformat()
+        if self._loop is None:
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._handle(payload), self._loop)
+            future.result(timeout=30)
+        except Exception as exc:  # 消费线程不能因单条消息崩掉
+            self._stats["failed"] += 1
+            self._stats["lastError"] = str(exc)
+            log.warning("gate mq message handling failed keys=%s: %s", message.get("keys"), exc)
+
+    def _decode(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(message.get("body") or b"{}")
+        except ValueError:
+            self._stats["invalid"] += 1
+            self._stats["lastError"] = "payload is not json"
+            log.warning("gate mq message is not json, skipped")
+            return None
+        if not isinstance(payload, dict):
+            self._stats["invalid"] += 1
+            return None
+        decision = str(payload.get("decision", "")).upper()
+        if (
+            not payload.get("executionId")
+            or not payload.get("nodeKey")
+            or decision not in _VALID_DECISIONS
+        ):
+            self._stats["invalid"] += 1
+            self._stats["lastError"] = "payload missing fields"
+            log.warning("gate mq message missing fields, skipped: %s", payload)
+            return None
+        payload["decision"] = decision
+        return payload
+
+    # ---------- 处理 ----------
+
+    async def _handle(self, payload: dict[str, Any]) -> None:
+        execution_id = uuid.UUID(str(payload["executionId"]))
+        result = await self._dispatcher.resolve_gate(
+            execution_id,
+            str(payload["nodeKey"]),
+            str(payload["decision"]),
+            str(payload.get("resolvedBy") or ""),
+            payload.get("comment"),
+        )
+        status = str(result.get("status") or "")
+        if status == "RESOLVED":
+            self._stats["applied"] += 1
+            log.info(
+                "gate resolved from mq execution=%s node=%s decision=%s",
+                payload["executionId"],
+                payload["nodeKey"],
+                payload["decision"],
+            )
+        elif status == "ALREADY_RESOLVED":
+            self._stats["duplicate"] += 1
+        else:
+            self._stats["failed"] += 1
+            log.warning(
+                "gate mq resolve returned %s for %s/%s",
+                status,
+                payload["executionId"],
+                payload["nodeKey"],
+            )

@@ -355,7 +355,7 @@
   },
   "info": {
     "title": "agentflow-engine",
-    "version": "0.2.2"
+    "version": "0.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -841,6 +841,27 @@
           }
         },
         "summary": "Metrics"
+      }
+    },
+    "/internal/mq/status": {
+      "get": {
+        "description": "裁决 MQ 通道水位：连接状态、已消费/已应用/重复计数与最近错误。\n\n没有它就只能靠日志猜「MQ 到底有没有在工作」；e2e 也用它确认消费端真的连上了。",
+        "operationId": "mq_status_internal_mq_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mq Status Internal Mq Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mq Status"
       }
     }
   }

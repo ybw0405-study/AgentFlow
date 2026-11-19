@@ -88,6 +88,18 @@ async def resolve_gate(
     return result
 
 
+@router.get("/mq/status")
+async def mq_status(request: Request) -> dict[str, Any]:
+    """裁决 MQ 通道水位：连接状态、已消费/已应用/重复计数与最近错误。
+
+    没有它就只能靠日志猜「MQ 到底有没有在工作」；e2e 也用它确认消费端真的连上了。
+    """
+    consumer = getattr(request.app.state, "gate_consumer", None)
+    if consumer is None:
+        return {"enabled": False, "reason": "AF_MQ_ENABLED / AF_MQ_CONSUME 未开启"}
+    return consumer.status()
+
+
 @router.post("/executions/{execution_id}/cancel")
 async def cancel(execution_id: uuid.UUID, request: Request) -> dict[str, Any]:
     return await request.app.state.dispatcher.cancel(execution_id)

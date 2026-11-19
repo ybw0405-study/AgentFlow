@@ -28,7 +28,9 @@ class GateServiceTest {
     private final GateResolveOutboxMapper outbox = mock(GateResolveOutboxMapper.class);
     private final EngineGatewayClient engine = mock(EngineGatewayClient.class);
     private final AuditPublisher audit = mock(AuditPublisher.class);
-    private final GateService service = new GateService(gates, executions, outbox, engine, audit);
+    private final GateDecisionPublisher decisions = mock(GateDecisionPublisher.class);
+    private final GateService service = new GateService(gates, executions, outbox, engine, audit,
+            decisions);
 
     private static WorkflowExecutionMapper.ExecutionBrief brief() {
         return new WorkflowExecutionMapper.ExecutionBrief("exec-1", "space-a", "def-1", "v1");

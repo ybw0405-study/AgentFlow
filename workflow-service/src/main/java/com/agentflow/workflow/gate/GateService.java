@@ -41,16 +41,18 @@ public class GateService {
     private final GateResolveOutboxMapper outbox;
     private final EngineGatewayClient engine;
     private final AuditPublisher audit;
+    private final GateDecisionPublisher decisions;
     private final ObjectMapper json = new ObjectMapper();
 
     public GateService(GateTaskMapper gates, WorkflowExecutionMapper executions,
                        GateResolveOutboxMapper outbox, EngineGatewayClient engine,
-                       AuditPublisher audit) {
+                       AuditPublisher audit, GateDecisionPublisher decisions) {
         this.gates = gates;
         this.executions = executions;
         this.outbox = outbox;
         this.engine = engine;
         this.audit = audit;
+        this.decisions = decisions;
     }
 
     public List<Map<String, Object>> inbox(TenantInfo tenant, int limit) {
@@ -114,6 +116,9 @@ public class GateService {
             audit.publish(AuditMessage.of(tenant.tenantId(), executionId, tenant.userId(),
                     "GATE_RESOLVED", Map.of("nodeKey", nodeKey, "decision", normalized,
                             "branch", String.valueOf(result.getOrDefault("branch", "")))));
+            // HTTP 已经落地；再广播一条给引擎，正常情况下会被当成 duplicate 收敛，
+            // 但它同时验证了「MQ 通道活着」，也覆盖控制面后续不可达的情况。
+            decisions.publish(executionId, nodeKey, normalized, tenant.userId(), comment);
             return Map.of(
                     "status", "RESOLVED",
                     "branch", String.valueOf(result.getOrDefault("branch", "")),
@@ -123,6 +128,8 @@ public class GateService {
                 throw e;
             }
             enqueueResolve(gate, tenant, normalized, comment, e.getMessage());
+            // 引擎此刻不可达：outbox 会按退避重投 HTTP，MQ 这条给引擎一条自己来拉的近路
+            decisions.publish(executionId, nodeKey, normalized, tenant.userId(), comment);
             return Map.of("status", "DEFERRED", "deferred", true);
         }
     }

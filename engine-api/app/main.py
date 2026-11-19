@@ -30,6 +30,7 @@ from .events.log import EventLog
 from .events.publisher import EventPublisher
 from .events.store import EventStore
 from .governance.budget import BudgetLedger
+from .messaging import GateDecisionConsumer
 from .nodes import build_executors
 from .observability.logging import setup_logging
 from .observability.trace import current_trace_id, extract_trace_id
@@ -89,9 +90,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await dispatcher.recover_on_startup()  # D4：崩溃恢复扫描
         dispatcher.start_sweep()  # 周期兜底
         dispatcher.start_gate_sweeper()  # human_gate 超时自动裁决
+        # 裁决的 MQ 通道：与控制面 HTTP 回调并行，用于引擎「被隔离/控制面重启中」时仍能续跑
+        gate_consumer: GateDecisionConsumer | None = None
+        if settings.mq_enabled and settings.mq_consume:
+            gate_consumer = GateDecisionConsumer(
+                dispatcher,
+                namesrv=settings.mq_namesrv,
+                topic=settings.mq_gate_topic,
+                group=settings.mq_gate_group,
+                poll_timeout_ms=settings.mq_poll_timeout_ms,
+                batch=settings.mq_pull_batch,
+            )
+            gate_consumer.start()
+        app.state.gate_consumer = gate_consumer
         try:
             yield
         finally:
+            if gate_consumer is not None:
+                # stop() 会 join 拉取线程，放线程里做，避免阻塞事件循环的收尾
+                await asyncio.to_thread(gate_consumer.stop)
             if dispatcher._sweep_task is not None:
                 dispatcher._sweep_task.cancel()
             if dispatcher._gate_task is not None:
