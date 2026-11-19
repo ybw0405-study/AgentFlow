@@ -343,8 +343,11 @@ class Dispatcher:
         """超时扫描：按事件流里的 timeoutAt 自动裁决（TIMEOUT）。"""
         try:
             gates = await self._store.suspended_gates()
-        except Exception:
-            logger.exception("gate sweep scan failed")
+        except Exception as exc:
+            # 依赖抖动时每轮扫描都会失败：WARNING 只留一句话，堆栈降到 DEBUG，
+            # 否则 PG 断连一分钟就能刷出几十屏 traceback。
+            logger.warning("gate sweep scan failed: %s", exc)
+            logger.debug("gate sweep scan failed", exc_info=True)
             return 0
         now = datetime.now(UTC)
         handled = 0
@@ -370,8 +373,9 @@ class Dispatcher:
                 await asyncio.sleep(interval)
                 try:
                     await self.sweep_gates()
-                except Exception:
-                    logger.exception("gate sweeper failed")
+                except Exception as exc:
+                    logger.warning("gate sweeper failed: %s", exc)
+                    logger.debug("gate sweeper failed", exc_info=True)
 
         self._gate_task = asyncio.create_task(loop())
 
@@ -383,8 +387,9 @@ class Dispatcher:
                     for eid in await self._store.open_executions():
                         if eid not in self._tasks:
                             await self._recover_one(eid, attempts=1)
-                except Exception:
-                    logger.exception("recovery sweep failed")
+                except Exception as exc:
+                    logger.warning("recovery sweep failed: %s", exc)
+                    logger.debug("recovery sweep failed", exc_info=True)
 
         self._sweep_task = asyncio.create_task(loop())
 
