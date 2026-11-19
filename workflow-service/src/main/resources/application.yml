@@ -52,11 +52,21 @@ agentflow:
   eval:
     # 评测/AB 结果收口轮询间隔（用例执行落终态后才断言）
     poll-interval-ms: ${AF_EVAL_POLL_INTERVAL_MS:3000}
+  audit:
+    # 出口：auto（MQ 开则走 MQ，否则直写审计表）/ mq / direct
+    sink: ${AF_AUDIT_SINK:auto}
+    # outbox 重投节奏与降级阈值（连续失败 N 次后改直写，避免积压成黑洞）
+    relay-interval-ms: ${AF_AUDIT_RELAY_INTERVAL_MS:2000}
+    relay-initial-delay-ms: ${AF_AUDIT_RELAY_INITIAL_DELAY_MS:4000}
+    degrade-after-attempts: ${AF_AUDIT_DEGRADE_AFTER_ATTEMPTS:3}
+    purge-cron: "${AF_AUDIT_PURGE_CRON:0 30 4 * * *}"
   rocketmq:
     enabled: ${AF_MQ_ENABLED:false}
     namesrv: ${AF_ROCKETMQ_NAMESRV:127.0.0.1:9876}
     topic: af-audit-event
-    producer-group: af-workflow-audit-producer
+    # 裁决广播：引擎消费后自行续跑（与 HTTP 回调并行的第二条通道）
+    gate-topic: ${AF_ROCKETMQ_GATE_TOPIC:af-gate-decision}
+    producer-group: af-workflow-producer
 
 logging:
   pattern:
