@@ -103,10 +103,16 @@ public class AdminUsageController {
         return out;
     }
 
-    private static double ratio(long used, long limit) {
+    /**
+     * 用量占比，落在 [0,1]：超额后不再线性增长。
+     *
+     * <p>这个字段是给进度条与"是否接近上限"判断用的，超过 1 只会让调用方自己再夹一次；
+     * 真实超额情况看 tokensUsed 与 effectiveTokenLimit 两个原始字段。
+     */
+    static double ratio(long used, long limit) {
         if (limit <= 0 || limit == Long.MAX_VALUE || limit == Integer.MAX_VALUE) {
             return 0.0;
         }
-        return Math.round(used * 10_000.0 / limit) / 10_000.0;
+        return Math.min(1.0, Math.round(used * 10_000.0 / limit) / 10_000.0);
     }
 }
