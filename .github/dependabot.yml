@@ -1,48 +1,22 @@
 version: 2
 
-# 依赖升级单独成 PR，一周一次，避免开发期被噪声打断。
-# Python 依赖由 requirements.lock.txt 锁定，走手动升级（见 CONTRIBUTING「依赖升级」）。
+# 只自动提安全更新：版本升级由人工按 CONTRIBUTING「依赖升级」处理，
+# 避免大版本跳跃未经评估就进入主分支（open-pull-requests-limit: 0 仅关闭常规版本 PR）。
 updates:
   - package-ecosystem: maven
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
-    groups:
-      spring:
-        patterns:
-          - "org.springframework*"
-      test:
-        patterns:
-          - "org.junit*"
-          - "com.tngtech.archunit*"
+      interval: monthly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
-    groups:
-      vue:
-        patterns:
-          - "vue*"
-          - "@vue*"
-      tooling:
-        patterns:
-          - "vite*"
-          - "@vitejs*"
-          - "vitest*"
-          - "typescript*"
-          - "eslint*"
+      interval: monthly
+    open-pull-requests-limit: 0
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 0
