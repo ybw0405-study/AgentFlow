@@ -63,8 +63,9 @@ if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-t
 if ($null -eq $env:AF_JWT_SECRET) { $env:AF_JWT_SECRET = 'dev-only-secret-key-0123456789abcdef' }
 # 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
 if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
-# 本地全量 E2E 一轮会触发数十次执行；产品默认仍是 20 次/60s/用户
+# 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 if ($null -eq $env:AF_RATE_LIMIT_TRIGGER_MAX) { $env:AF_RATE_LIMIT_TRIGGER_MAX = '300' }
+if ($null -eq $env:AF_RATE_LIMIT_LOGIN_MAX) { $env:AF_RATE_LIMIT_LOGIN_MAX = '300' }
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
 # 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。
