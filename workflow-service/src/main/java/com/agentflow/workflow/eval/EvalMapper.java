@@ -111,11 +111,17 @@ public interface EvalMapper {
             + " WHERE run_id = #{runId} ORDER BY created_at")
     List<ResultRow> listResults(@Param("runId") String runId);
 
+    /**
+     * 未收口的用例结果：PENDING 与已被上一轮标记为 RUNNING 的都算。
+     * <p>只看 PENDING 会漏掉「轮询先于执行结束」的那一批：advance 把结果改成 RUNNING 后
+     * 它就不再被扫到，run 永远停在 RUNNING（P3 验收时实测复现）。
+     */
     @Select("SELECT id, run_id AS runId, case_id AS caseId, case_name AS caseName,"
             + " execution_id AS executionId, status, passed, actual_json AS actualJson,"
             + " latency_ms AS latencyMs, token_used AS tokenUsed,"
             + " error_message AS errorMessage FROM eval_case_result"
-            + " WHERE run_id = #{runId} AND status = 'PENDING' AND execution_id IS NOT NULL")
+            + " WHERE run_id = #{runId} AND status IN ('PENDING', 'RUNNING')"
+            + " AND execution_id IS NOT NULL")
     List<ResultRow> openResults(@Param("runId") String runId);
 
     @Update("UPDATE eval_case_result SET status = #{status}, passed = #{passed},"
