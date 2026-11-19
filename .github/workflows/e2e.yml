@@ -49,6 +49,10 @@ jobs:
         run: |
           docker compose -f ops/docker-compose.infra.yml up -d \
             mysql postgres redis rocketmq-namesrv rocketmq-broker
+          # broker 必须等到 healthy：服务启动时会连 namesrv 建 producer，
+          # broker 没起来审计消息就发不出去（业务侧只记日志不阻断）。
+          timeout 240 bash -c \
+            'until [ "$(docker inspect -f "{{.State.Health.Status}}" agentflow-rmq-broker 2>/dev/null)" = healthy ]; do sleep 2; done'
           timeout 180 bash -c \
             'until [ "$(docker inspect -f "{{.State.Health.Status}}" agentflow-mysql)" = healthy ]; do sleep 2; done'
 
@@ -73,6 +77,10 @@ jobs:
           AF_COOKIE_SECURE: "false"
           AF_RATE_LIMIT_TRIGGER_MAX: "300"
           AF_RATE_LIMIT_LOGIN_MAX: "300"
+          # 审计链路（workflow → RocketMQ → audit）必须真跑：关掉时 workflow-service
+          # 用 NoopAuditPublisher，灰度/发布类审计事件不会落库，e2e 会误判为通过。
+          AF_MQ_ENABLED: "true"
+          AF_ROCKETMQ_NAMESRV: 127.0.0.1:9876
         run: |
           mkdir -p logs
           cd engine-api

@@ -8,11 +8,14 @@ mkdir -p "$LOGS"
 echo '==> [1/5] 基础设施'
 docker compose -f "$ROOT/ops/docker-compose.infra.yml" up -d
 
-echo '==> [2/5] 等待迁移/授权'
-for i in $(seq 1 60); do
-  code="$(docker inspect -f '{{.State.ExitCode}}' agentflow-grants 2>/dev/null || echo pending)"
-  [ "$code" = "0" ] && break
-  sleep 3
+echo '==> [2/5] 等待 MySQL / RocketMQ 就绪、迁移与授权'
+for c in agentflow-mysql agentflow-rmq-broker; do
+  for i in $(seq 1 60); do
+    state="$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo pending)"
+    [ "$state" = "healthy" ] && break
+    sleep 3
+  done
+  [ "$state" = "healthy" ] || { echo "$c 未在 3 分钟内 healthy" >&2; exit 1; }
 done
 docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow < "$ROOT/scripts/seed-demo.sql" || true
 
@@ -26,6 +29,10 @@ export AF_COOKIE_SECURE="${AF_COOKIE_SECURE:-false}"
 # 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 export AF_RATE_LIMIT_TRIGGER_MAX="${AF_RATE_LIMIT_TRIGGER_MAX:-300}"
 export AF_RATE_LIMIT_LOGIN_MAX="${AF_RATE_LIMIT_LOGIN_MAX:-300}"
+# compose 已经把 RocketMQ 起起来了，本地默认走真实审计链路（workflow → MQ → audit）。
+# 关着的话 workflow-service 用 NoopAuditPublisher，审计表里根本不会有对应事件。
+export AF_MQ_ENABLED="${AF_MQ_ENABLED:-true}"
+export AF_ROCKETMQ_NAMESRV="${AF_ROCKETMQ_NAMESRV:-127.0.0.1:9876}"
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
 # 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。

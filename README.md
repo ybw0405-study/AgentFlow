@@ -186,7 +186,7 @@ git add docs/openapi/engine-api.json
 | `AF_AUDIT_MYSQL_USER` | af_audit | 审计写入账号（仅 SELECT/INSERT audit_event） |
 | `AF_PG_DSN` | postgresql://agentflow:agentflow@127.0.0.1:5433/agentflow_events | 事件库 |
 | `AF_REDIS_HOST/PORT` / `AF_REDIS_URL` | 127.0.0.1:6379 | 缓存/租约/预算/事件频道 |
-| `AF_MQ_ENABLED` / `AF_ROCKETMQ_NAMESRV` | false / 127.0.0.1:9876 | 审计 MQ；false 时审计只写进程日志（每次 emit WARN），需要留痕的环境必须开启 |
+| `AF_MQ_ENABLED` / `AF_ROCKETMQ_NAMESRV` | true（本地，compose 已带 RocketMQ） / 127.0.0.1:9876 | 审计 MQ；false 时审计只写进程日志（每次 emit WARN），需要留痕的环境必须开启 |
 | `AF_DEFAULT_TOKEN_BUDGET` / `AF_DEFAULT_MAX_STEPS` / `AF_DEFAULT_DEADLINE_MS` | 50000 / 50 / 120000 | 租户政策上限（触发时钳制） |
 | `AF_AUTHORIZED_CONNECTORS` | mock.search,mock.echo,mock.flaky | 内置 mock 连接器（真实连接器由 connector-service 目录自动授权） |
 | `AF_CONNECTOR_SERVICE` | http://127.0.0.1:8085 | gateway → connector-service 路由目标 |
@@ -217,7 +217,7 @@ git add docs/openapi/engine-api.json
 
 ## 已知限制
 
-1. 审计经 MQ 异步落库；`AF_MQ_ENABLED=false` 时审计只写进程日志（每次 emit 一条 WARN），outbox + relay 仍未落地。需要留痕的环境必须开启 MQ。
+1. 审计经 MQ 异步落库；`AF_MQ_ENABLED=false` 时审计只写进程日志（每次 emit 一条 WARN），outbox + relay 仍未落地。需要留痕的环境必须开启 MQ（`start-dev` 与 `e2e` 流水线默认开启，broker 未 healthy 前不会拉起服务）。
 2. 预算预占的崩溃泄漏窗口已由 checkpoint/恢复对账收敛（`BudgetLedger.reconcile`）；Redis 全部丢失时会从事件流重建。
 3. 沙箱做「域名白名单 + 解析期私网拦截」，未做 DNS 钉扎（rebinding 由生产 egress 代理兜底）。
 4. RocketMQ 的 Python 消费端未启用（引擎不消费 MQ）；审批回调走 HTTP + `gate_resolve_outbox` 重投（P3）。

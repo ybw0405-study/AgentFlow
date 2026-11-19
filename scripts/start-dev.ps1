@@ -18,16 +18,23 @@ Write-Host '==> [1/5] 基础设施 (docker compose)'
 docker compose -f (Join-Path $root 'ops/docker-compose.infra.yml') up -d
 if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed — 请先启动 Docker Desktop' }
 
-Write-Host '==> [2/5] 等待 MySQL 就绪并落地迁移/授权'
+Write-Host '==> [2/5] 等待 MySQL / RocketMQ 就绪并落地迁移/授权'
 # 不依赖 flyway/grants 容器的退出码：grants 容器在部分机器上因卷挂载路径
 # 解析偏差会拿不到 SQL 而 Exit(1)，死等它的退出码会导致脚本卡住。
-# 改为等 MySQL 健康检查通过，再从宿主机主动重放授权 SQL（幂等）。
-$deadline = (Get-Date).AddMinutes(3)
-do {
-  Start-Sleep -Seconds 3
-  $health = docker inspect -f '{{.State.Health.Status}}' agentflow-mysql 2>$null
-} until ($health -eq 'healthy' -or (Get-Date) -ge $deadline)
-if ($health -ne 'healthy') { throw 'MySQL 未在 3 分钟内就绪；docker compose logs mysql 查看' }
+# 改为等健康检查通过，再从宿主机主动重放授权 SQL（幂等）。
+function Wait-Healthy([string] $container, [int] $timeoutSec = 180) {
+  $limit = (Get-Date).AddSeconds($timeoutSec)
+  do {
+    Start-Sleep -Seconds 3
+    $state = docker inspect -f '{{.State.Health.Status}}' $container 2>$null
+  } until ($state -eq 'healthy' -or (Get-Date) -ge $limit)
+  return $state -eq 'healthy'
+}
+# broker 必须一起等：workflow-service 启动时会连 namesrv 建 producer，
+# broker 还没起来的话审计消息发不出去（业务侧只记日志，本地就丢审计）。
+foreach ($c in @('agentflow-mysql', 'agentflow-rmq-broker')) {
+  if (-not (Wait-Healthy $c)) { throw "$c 未在 3 分钟内 healthy；docker compose logs 查看" }
+}
 
 Write-Host '==> [2.5/5] 授权 + 种子数据（幂等）'
 # 管道必须按 UTF-8 发送字节给 mysql（PS5.1 默认 ASCII 会毁掉中文），并显式声明 utf8mb4
@@ -66,6 +73,10 @@ if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
 # 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 if ($null -eq $env:AF_RATE_LIMIT_TRIGGER_MAX) { $env:AF_RATE_LIMIT_TRIGGER_MAX = '300' }
 if ($null -eq $env:AF_RATE_LIMIT_LOGIN_MAX) { $env:AF_RATE_LIMIT_LOGIN_MAX = '300' }
+# compose 已经把 RocketMQ 起起来了，本地默认走真实审计链路（workflow → MQ → audit）。
+# 关着的话 workflow-service 用 NoopAuditPublisher，审计表里根本不会有对应事件。
+if ($null -eq $env:AF_MQ_ENABLED) { $env:AF_MQ_ENABLED = 'true' }
+if ($null -eq $env:AF_ROCKETMQ_NAMESRV) { $env:AF_ROCKETMQ_NAMESRV = '127.0.0.1:9876' }
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
 # 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。

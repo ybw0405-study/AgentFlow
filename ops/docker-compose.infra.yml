@@ -114,6 +114,16 @@ services:
       - "echo 'brokerIP1: 127.0.0.1' > /tmp/broker.conf && echo 'autoCreateTopicEnable: true' >> /tmp/broker.conf && sh mqbroker -n rocketmq-namesrv:9876 -c /tmp/broker.conf"
     volumes:
       - rmq-broker:/home/rocketmq/logs
+    # 没有健康检查就没人等它：服务连上去才发现 broker 还在启动，
+    # 审计发布直接失败（业务侧只记日志不阻断），本地就丢审计。
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "bash -c '(echo > /dev/tcp/127.0.0.1/10911) 2>/dev/null || exit 1'"
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
 
 volumes:
   mysql-data:
