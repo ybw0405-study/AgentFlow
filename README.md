@@ -31,7 +31,7 @@ flowchart LR
 | 能力 | 状态 |
 |---|---|
 | 工作流 CRUD / 草稿 / 版本冻结（不可变+checksum）/ 发布 / 回滚 | ✅ P0 |
-| 画布编辑器（Vue Flow，4 节点，DSL 双向，自动保存，校验内联） | ✅ P0 |
+| 画布编辑器（Vue Flow，9 类节点、分支连线、DSL 双向、自动保存、校验内联） | ✅ P0 |
 | 执行引擎（拓扑调度、并行上限、重试、超时、取消、checkpoint） | ✅ P0 |
 | 事件溯源 + 崩溃恢复（execution_spec 自足 + 启动/周期扫描） | ✅ P0 提前实现 |
 | SSE 实时节点状态 + 事件追平 | ✅ P0 |
@@ -40,7 +40,7 @@ flowchart LR
 | 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
 | 审计只追加（触发器 + 最小授权 + MQ） | ✅ P0 |
 | mock LLM / mock 连接器（引擎侧离线演示与 CI，画布默认不产出） | ✅ P0 |
-| condition / loop / parallel / transform / subworkflow 节点 | ✅ P1 |
+| condition / loop / parallel / transform / subworkflow 节点（画布可直接配置，子图走 JSON） | ✅ P1 |
 | 灰度发布、故障注入测试套件 | ✅ P1 |
 | 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | ✅ P2 |
 | connector-service：CRUD / AES-256-GCM 凭据 / OAuth2 / 出网沙箱 | ✅ P2 |
@@ -51,6 +51,8 @@ flowchart LR
 | A/B 对比：同数据集双版本、通过率→耗时→token 结论口径 | ✅ P3 |
 
 画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
+
+分支连线：选中从 `condition` / `human_gate` 出发的连线，浮条里会多出 `branch` 输入框，下拉给的是该节点的 case 名（审批节点固定 `approved` / `rejected`），也可直接填。同一节点的分支名不允许重复；分支名不在 cases / elseBranch 里时，校验会提示该分支永远走不到。
 
 ## 快速开始（Windows）
 
@@ -148,15 +150,18 @@ Windows 上运行中的 jar 是独占打开的，不先停就会在 `spring-boot
 | engine-api :8000 | `GET /internal/health` | 进程存活 |
 | engine-api :8000 | `GET /internal/metrics` | Prometheus 文本（需内部令牌） |
 
-返回 200 为 `UP`，503 为 `DEGRADED`（至少一个依赖不可用，不应继续接流量）。生产守护开启时不返回依赖明细，只给 `unavailable`，避免把内部拓扑暴露给未认证调用方。
+返回 200 为 `UP`，503 为 `DEGRADED`（至少一个依赖不可用，不应继续接流量）。这些端点不需要凭据——它们在 `/api/v1/**` 之外，不经过网关的认证、限流与熔断过滤器，可直接配成 docker-compose healthcheck 或 k8s 的 liveness / readiness probe。
+
+生产守护开启时不返回依赖明细，只给 `unavailable`，避免把内部拓扑暴露给未认证调用方。
 
 ## 工程门禁
 
 ```powershell
 ./scripts/verify-all.ps1      # 本地三端全量：mvn verify / ruff+pytest / tsc+eslint+vitest+build
+pytest                        # 全栈验收（仓库根目录，需先 scripts/start-dev.* 起服务）
 ```
 
-CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）。
+CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）、`e2e`（起真基础设施与服务，跑 `e2e/` 全栈验收，失败时上传各服务日志）。
 
 提交规范、迁移与依赖升级流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
 
@@ -219,7 +224,7 @@ git add docs/openapi/engine-api.json
 5. Java 侧 OpenAPI 生成物未入库（contract-drift 覆盖引擎侧）。
 6. `human_gate` 的审批人 `EXPRESSION` 类型 P3 未支持（ROLE / USERS 已支持）；子图（loop/parallel/subworkflow）内不允许 `human_gate`。
 7. 评测与 A/B 用轮询收口（默认 3s），不是事件驱动；用例数上限 50/次。
-8. 画布节点面板目前只暴露 `start / llm / tool / end` 四类；`condition / loop / parallel / transform / subworkflow / human_gate` 需在 DSL 面板里编辑（引擎与校验已全量支持）。
+8. `loop.body` 与 `parallel.branches` 是子图，画布上以 JSON 编辑（其余节点已有表单）。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；子图内不允许出现 `human_gate`（挂起后无法原地续跑）。
 9. `retrieval` 只在 DSL 类型与前端枚举里占位，引擎未实现该执行器（阶段门会以 `DSL-NODE-001` 拒绝，不会静默降级）。
 
 ## 目录

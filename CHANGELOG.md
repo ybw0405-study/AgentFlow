@@ -3,6 +3,44 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [0.2.0] - 2026-11-19
+
+把引擎早已支持、但画布够不着的节点能力放出来，同时修掉子图校验的两个作用域问题。
+
+### 新增
+
+- 画布节点面板由 4 类扩到 9 类：`condition` / `transform` / `subworkflow` / `loop` /
+  `parallel` / `human_gate` 都能直接拖入，并各有配置表单（条件 case 列表、映射行编辑、
+  审批人规则与超时动作、子工作流版本策略等）。`retrieval` 仍不提供——引擎没有它的执行器。
+- 分支连线可在画布上编辑：选中从 `condition` / `human_gate` 出发的连线，浮条出现 `branch`
+  输入框，候选来自该节点的 case 名（审批节点固定 `approved` / `rejected`）；同一节点分支
+  名重复会被拒绝，避免一条分支同时点亮两个下游。
+- `loop.body` / `parallel.branches` 提供 JSON 编辑区，解析失败时保留输入但不写回草稿。
+- 新增 `e2e` 流水线：起真基础设施与五个服务，跑 `e2e/` 32 个全栈验收用例，失败时上传日志。
+  其中新增一组画布节点用例（`condition` 分支路由、`loop` 迭代 + `collect`、`parallel` 汇合）
+  与运维探针用例（`/health` 无凭据可访问且如实反映依赖）。
+
+### 修复
+
+- 子图作用域：`loop.body` 里写 `vars.item` 会被判成「未声明变量」，带数据引用的 loop
+  因此**根本发布不了**；`parallel` 分支内引用子图内节点也同样被判未知。校验改为按子图
+  作用域递归：外层变量 + 迭代变量可见，节点引用可以是子图内上游或外层上游。
+- 子图内的 `branch` 边此前完全不校验，写错分支名要等运行期才炸；现在与顶层同规则。
+- `transform.mappings[].target` 与 `loop.collect.into` 是变量**定义**，此前被当成引用，
+  导致「先算一个临时变量」必须先在工作流变量里声明一遍；现在它们对下游直接可见
+  （兄弟分支仍不可见，与运行期一致）。
+- 分支工作流会丢掉最终产出：收口取的是「定义里的第一个 `end`」，当两条分支各有自己的
+  `end` 时，被 SKIPPED 的那个会顶上来，`ExecutionCompleted.result` 恒为空对象，
+  执行详情页只能看到空结果。改为只收真正 `SUCCEEDED` 的 `end`（子图内同样修正）。
+- 用量占比 `tokenUtilization` 会超过 1（累计用量超过限额后线性增长），进度条量程溢出；
+  改为夹在 `[0,1]`，真实超额看 `tokensUsed` / `effectiveTokenLimit` 两个原始字段。
+- `start-dev.ps1` 的就绪探测每次都误报「未在 120s 内就绪」：Windows PowerShell 5.1 的
+  `Invoke-WebRequest` 默认走 IE DOM 解析，非交互模式下一律抛错，探测永远不成立。补
+  `-UseBasicParsing`，并打印实际就绪耗时（实测约 17s）。
+- 依赖断连时 gate 扫描每 15s 打一屏 traceback，降为单行 WARNING，堆栈落到 DEBUG。
+- 仓库根目录补 `pytest.ini`：根下 `pytest` 即全栈 e2e 套件，同时消掉 pytest-asyncio
+  的 loop scope 弃用告警（此前只有 `engine-api/` 下有配置）。
+
 ## [0.1.1] - 2026-11-19
 
 ### 修复
