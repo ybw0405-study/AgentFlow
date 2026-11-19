@@ -41,10 +41,19 @@ PY="$ROOT/engine-api/.venv/Scripts/python.exe"
 (cd "$ROOT/engine-api" && nohup "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
   > "$LOGS/engine.out.log" 2> "$LOGS/engine.err.log" & echo $! > "$LOGS/engine.pid")
 
+# jar 名带版本号，按目录解析，免得每次升版本都要改脚本
+resolve_jar() {
+  local name="$1" found
+  found="$(ls -t "$ROOT/$name/target/$name-"*.jar 2>/dev/null | grep -v '\.original$' | head -1)"
+  [ -n "$found" ] || { echo "未找到 $name 的可执行 jar；先跑 mvn package" >&2; return 1; }
+  echo "$found"
+}
+
 for svc in workflow-service:8084 agent-gateway:8080 audit-service:8086 connector-service:8085; do
   name="${svc%%:*}"
+  jar="$(resolve_jar "$name")" || exit 1
   echo "==> [4/5] $name"
-  (cd "$ROOT" && nohup java -jar "$name/target/$name-0.1.0.jar" \
+  (cd "$ROOT" && nohup java -jar "$jar" \
     > "$LOGS/$name.out.log" 2> "$LOGS/$name.err.log" & echo $! > "$LOGS/$name.pid")
 done
 

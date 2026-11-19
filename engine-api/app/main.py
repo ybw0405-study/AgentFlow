@@ -17,6 +17,7 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from pydantic import ValidationError
 
+from . import __version__
 from .api.internal import router as internal_router
 from .api.problems import problem
 from .commands.providers.mock_llm import MockLLMProvider
@@ -104,7 +105,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await store.close()
             await redis.aclose()
 
-    app = FastAPI(title="agentflow-engine", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(
+        title="agentflow-engine",
+        version=__version__,
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
 
     @app.middleware("http")
     async def guard(request: Request, call_next):

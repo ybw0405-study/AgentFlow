@@ -18,7 +18,7 @@ $root = (Resolve-Path (Split-Path -Parent $PSScriptRoot)).Path
 function Test-OwnedByRepo([string]$cmd) {
   if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
   if ($cmd.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
-  # 本仓库的 Java 服务是用相对路径 -jar <module>/target/xxx-0.1.0.jar 起的，命令行不含仓库根，
+  # 本仓库的 Java 服务是 -jar <module>/target/<name>-<version>.jar 起的，命令行不含仓库根，
   # 所以把相对路径按仓库根解析，只有解析得到真实文件才算自己的。
   $m = [regex]::Match($cmd, '-jar\s+"?([^"\s]+\.jar)')
   if (-not $m.Success) { return $false }

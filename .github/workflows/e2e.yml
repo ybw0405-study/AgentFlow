@@ -80,7 +80,8 @@ jobs:
             > ../logs/engine.log 2>&1 &
           cd ..
           for svc in workflow-service agent-gateway audit-service connector-service; do
-            nohup java -jar "$svc/target/$svc-0.1.0.jar" > "logs/$svc.log" 2>&1 &
+            jar="$(ls -t "$svc"/target/"$svc"-*.jar | grep -v '\.original$' | head -1)"
+            nohup java -jar "$jar" > "logs/$svc.log" 2>&1 &
           done
           # 三件事都要成立才算就绪：引擎活着、网关（连带 Redis 探活）返回 UP、
           # 且网关能真正转发到 workflow-service（登录接口返回业务 4xx 而不是 5xx/连接失败）。

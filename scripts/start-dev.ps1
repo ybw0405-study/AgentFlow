@@ -83,16 +83,29 @@ Start-Process -FilePath $enginePy -WorkingDirectory $engineDir `
   -RedirectStandardOutput (Join-Path $logs 'engine.out.log') `
   -RedirectStandardError (Join-Path $logs 'engine.err.log') -WindowStyle Hidden
 
+# jar 名带版本号（spring-boot repackage 产出 <name>-<version>.jar），这里按目录解析，
+# 免得每次升版本都要回来改脚本。
+function Resolve-ServiceJar([string] $service) {
+  $dir = Join-Path $root "$service/target"
+  $jar = Get-ChildItem -Path $dir -Filter "$service-*.jar" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notlike '*.original' } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+  if (-not $jar) { throw "未找到 $service 的可执行 jar（$dir）；先跑 mvn package" }
+  return $jar.FullName
+}
+
 $javaServices = @(
-  @{ Name = 'workflow-service'; Jar = 'workflow-service/target/workflow-service-0.1.0.jar'; Port = 8084 },
-  @{ Name = 'agent-gateway';    Jar = 'agent-gateway/target/agent-gateway-0.1.0.jar';       Port = 8080 },
-  @{ Name = 'audit-service';    Jar = 'audit-service/target/audit-service-0.1.0.jar';       Port = 8086 },
-  @{ Name = 'connector-service'; Jar = 'connector-service/target/connector-service-0.1.0.jar'; Port = 8085 }
+  @{ Name = 'workflow-service'; Port = 8084 },
+  @{ Name = 'agent-gateway'; Port = 8080 },
+  @{ Name = 'audit-service'; Port = 8086 },
+  @{ Name = 'connector-service'; Port = 8085 }
 )
 foreach ($svc in $javaServices) {
+  $jar = Resolve-ServiceJar $svc.Name
   Write-Host ("==> [4/5] 启动 {0} :{1}" -f $svc.Name, $svc.Port)
   Start-Process -FilePath 'java' -WorkingDirectory $root `
-    -ArgumentList '-jar', $svc.Jar `
+    -ArgumentList '-jar', $jar `
     -RedirectStandardOutput (Join-Path $logs ($svc.Name + '.out.log')) `
     -RedirectStandardError (Join-Path $logs ($svc.Name + '.err.log')) -WindowStyle Hidden
 }
