@@ -39,6 +39,17 @@
   `-UseBasicParsing`，并打印实际就绪耗时（实测约 17s）。
 - 依赖断连时 gate 扫描每 15s 打一屏 traceback，降为单行 WARNING，堆栈落到 DEBUG。
 
+## [0.2.2] - 2026-11-19
+
+### 修复
+
+- 评测运行会「假完成」：`createRun` 先写 `eval_run` 行、再逐条写用例结果，
+  轮询正好落在中间时 `recount` 看到 0 条结果就判定全部收口，把 run 标成
+  `SUCCEEDED` 并把 `total` 改写成 0——前端显示 0/0 通过，用例其实还在跑
+  （CI 上实测复现）。现在结果条数不足 `run.total()` 时不再收口，收口时
+  `total` 以 `run.total()` 为准；e2e 的等待逻辑也只认 `SUCCEEDED` / `FAILED` /
+  `CANCELLED` 三种终态。
+
 ## [0.2.1] - 2026-11-19
 
 0.2.0 首次在 GitHub 上跑全栈验收时暴露的问题：审计链路在本地与 CI 都是关的，
