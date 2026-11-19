@@ -55,6 +55,12 @@ jobs:
             'until [ "$(docker inspect -f "{{.State.Health.Status}}" agentflow-rmq-broker 2>/dev/null)" = healthy ]; do sleep 2; done'
           timeout 180 bash -c \
             'until [ "$(docker inspect -f "{{.State.Health.Status}}" agentflow-mysql)" = healthy ]; do sleep 2; done'
+          # 预建 topic：autoCreateTopicEnable 只在首条消息时建 topic；
+          # 消费端在此之前查路由会拿到 17（No topic route info）
+          for t in af-audit-event af-gate-decision; do
+            docker exec agentflow-rmq-broker sh -c \
+              "sh mqadmin updateTopic -n 127.0.0.1:9876 -c DefaultCluster -t $t" >/dev/null 2>&1 || true
+          done
 
       - name: 迁移 + 最小授权 + 种子
         run: |

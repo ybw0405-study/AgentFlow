@@ -30,7 +30,7 @@ export AF_COOKIE_SECURE="${AF_COOKIE_SECURE:-false}"
 export AF_RATE_LIMIT_TRIGGER_MAX="${AF_RATE_LIMIT_TRIGGER_MAX:-300}"
 export AF_RATE_LIMIT_LOGIN_MAX="${AF_RATE_LIMIT_LOGIN_MAX:-300}"
 # compose 已经把 RocketMQ 起起来了，本地默认走真实审计链路（workflow → MQ → audit）。
-# 关着的话 workflow-service 用 NoopAuditPublisher，审计表里根本不会有对应事件。
+# 关着的话审计只走直写、不再经 MQ 扇出；生产必须开启。
 export AF_MQ_ENABLED="${AF_MQ_ENABLED:-true}"
 export AF_ROCKETMQ_NAMESRV="${AF_ROCKETMQ_NAMESRV:-127.0.0.1:9876}"
 
@@ -41,6 +41,13 @@ if [ -z "${AF_LLM_API_KEY:-}" ] && [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   export AF_LLM_API_KEY="$DEEPSEEK_API_KEY"
   export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-flash}"
 fi
+
+echo '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'
+# autoCreateTopicEnable 只在「第一次发送」时建 topic；消费端在消息到来前查路由会拿到 17。
+for t in af-audit-event af-gate-decision; do
+  docker exec agentflow-rmq-broker sh -c \
+    "sh mqadmin updateTopic -n 127.0.0.1:9876 -c DefaultCluster -t $t" >/dev/null 2>&1 || true
+done
 
 echo '==> [4/5] engine-api :8000'
 PY="$ROOT/engine-api/.venv/Scripts/python.exe"

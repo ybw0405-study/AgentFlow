@@ -86,6 +86,13 @@ if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
     if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-flash' }
 }
 
+Write-Host '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'
+# autoCreateTopicEnable 只在「第一次发送」时建 topic；消费端在消息到来前查路由会拿到 17。
+# 运维上本来就该预建 topic，这里幂等执行（重复创建只报 already exists，无副作用）。
+foreach ($t in @('af-audit-event', 'af-gate-decision')) {
+  docker exec agentflow-rmq-broker sh -c "sh mqadmin updateTopic -n 127.0.0.1:9876 -c DefaultCluster -t $t" *> $null
+}
+
 Write-Host '==> [4/5] 启动 engine-api :8000'
 $engineDir = Join-Path $root 'engine-api'
 $enginePy = Join-Path $engineDir '.venv/Scripts/python.exe'
