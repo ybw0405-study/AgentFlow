@@ -38,10 +38,20 @@
   `Invoke-WebRequest` 默认走 IE DOM 解析，非交互模式下一律抛错，探测永远不成立。补
   `-UseBasicParsing`，并打印实际就绪耗时（实测约 17s）。
 - 依赖断连时 gate 扫描每 15s 打一屏 traceback，降为单行 WARNING，堆栈落到 DEBUG。
+
+## [0.2.1] - 2026-11-19
+
+0.2.0 首次在 GitHub 上跑全栈验收时暴露的问题：审计链路在本地与 CI 都是关的，
+而验收用例靠历史数据蒙过去了。
+
+### 修复
+
 - 本地与 CI 都没开 `AF_MQ_ENABLED`，`workflow-service` 走 `NoopAuditPublisher`：
-  灰度、发布、执行触发这些审计事件一条都没落库，而 e2e 靠历史遗留数据"通过"了。
-  现在 `start-dev` 与 `e2e` 流水线默认开启 MQ，并等 RocketMQ broker healthy
-  才拉起服务（compose 里 broker 此前没有健康检查）。
+  灰度、发布、执行触发这些审计事件一条都没落库。现在 `start-dev` 与 `e2e` 流水线
+  默认开启 MQ，并等 RocketMQ broker healthy 才拉起服务（compose 里 broker 此前
+  没有健康检查，服务连上去才发现它还在启动）。
+- 灰度审计断言只按事件类型过滤，审计表是跨轮次累积的，MQ 断链也能「通过」；
+  改为按本轮工作流的 `definitionId` 命中载荷。
 - 审计查询的 `payload_redacted AS payloadRedacted` 与 `AuditRow.payloadJson` 名不对号，
   接口返回的 `payloadJson` 恒为 `null`，前端审计详情看不到载荷；别名改为与 DTO 一致。
 - 仓库根目录补 `pytest.ini`：根下 `pytest` 即全栈 e2e 套件，同时消掉 pytest-asyncio
