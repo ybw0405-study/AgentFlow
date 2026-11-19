@@ -9,12 +9,13 @@ import { workflowApi, executionApi, llmApi, connectorApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
-import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge } from '@/dsl/graph-ops'
+import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge, setEdgeBranch } from '@/dsl/graph-ops'
 import type { CanvasEdge } from '@/dsl/graph-ops'
 import type { FlowGraph, FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
+import { branchOptions } from '@/dsl/types'
 import type { WorkflowDefinitionDto, LlmConnectionConfig } from '@/types/api'
 import NodePalette from '@/components/canvas/NodePalette.vue'
 import ConfigDrawer from '@/components/canvas/ConfigDrawer.vue'
@@ -85,6 +86,37 @@ const selectedEdgeLabel = computed<string | null>(() => {
   const e = edges.value.find((x) => x.id === selectedEdgeId.value)
   return e ? `${e.source} → ${e.target}` : null
 })
+
+/** 选中连线的源节点：只有分支节点才允许给它挂 branch。 */
+const selectedEdgeSource = computed(() => {
+  const e = edges.value.find((x) => x.id === selectedEdgeId.value)
+  if (!e) return null
+  const n = nodes.value.find((x) => x.id === e.source)
+  if (!n) return null
+  return { type: n.data.nodeType, config: (n.data.config ?? {}) as Record<string, unknown> }
+})
+
+const edgeBranchOptions = computed<string[]>(() =>
+  selectedEdgeSource.value ? branchOptions(selectedEdgeSource.value) : [],
+)
+
+const selectedEdgeBranch = computed<string>(() => {
+  const e = edges.value.find((x) => x.id === selectedEdgeId.value)
+  return typeof e?.label === 'string' ? e.label : ''
+})
+
+function setSelectedEdgeBranch(value: string): void {
+  const current = edges.value.find((e) => e.id === selectedEdgeId.value)
+  if (!current) return
+  const next = setEdgeBranch(edges.value, current.id, value)
+  if (!next) {
+    notice.value = `该分支名已被另一条连线占用：${value || '（默认）'}`
+    return
+  }
+  const moved = next.find((e) => e.source === current.source && e.target === current.target)
+  edges.value = next
+  selectedEdgeId.value = moved?.id ?? null
+}
 
 const hasStart = computed(() => nodes.value.some((n) => n.data.nodeType === 'start'))
 
@@ -535,6 +567,24 @@ onUnmounted(() => {
           class="af-selection"
         >
           <span class="mono af-dim">{{ selectedEdgeId ? `连线 ${selectedEdgeLabel}` : `节点 ${selectedKey}` }}</span>
+          <template v-if="selectedEdgeId && edgeBranchOptions.length">
+            <span class="af-faint">branch</span>
+            <input
+              class="af-input mono af-selection__branch"
+              list="af-edge-branches"
+              :value="selectedEdgeBranch"
+              placeholder="（无）"
+              :title="`可选：${edgeBranchOptions.join(' / ')}`"
+              @input="setSelectedEdgeBranch(($event.target as HTMLInputElement).value)"
+            >
+            <datalist id="af-edge-branches">
+              <option
+                v-for="b in edgeBranchOptions"
+                :key="b"
+                :value="b"
+              />
+            </datalist>
+          </template>
           <button
             class="af-btn af-btn--sm af-btn--danger"
             @click="removeSelected"
@@ -639,6 +689,12 @@ onUnmounted(() => {
   border-radius: var(--af-radius);
   font-size: 12px;
   z-index: 5;
+}
+
+.af-selection__branch {
+  width: 120px;
+  padding: 2px 6px;
+  font-size: 11.5px;
 }
 
 .af-flow .vue-flow__controls {

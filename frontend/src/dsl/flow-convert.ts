@@ -80,6 +80,7 @@ export function edgeId(e: { from: string; to: string; branch?: string }): string
 
 /** 新建节点的初始配置。
  *
+ * 原则：默认值必须能直接通过引擎校验，不制造"刚拖出来就报红"的节点。
  * llm 默认接真实 provider：模型名取引擎给出的默认值，拿不到就留空由校验提示，
  * 不再写死 mock-* 占位名——那会让节点看起来能跑、实际走的是服务端默认模型。
  */
@@ -100,6 +101,49 @@ export function newNodeConfig(
       }
     case 'tool':
       return { connectorId: 'mock.search', operation: 'search', paramsMapping: {} }
+    case 'condition':
+      // when 用字面量 True：空工作流里没有变量可引用，先给一个能发布的起点
+      return { cases: [{ name: 'yes', when: 'True' }], elseBranch: 'default' }
+    case 'transform':
+      return { mappings: [{ target: 'vars.summary', template: '' }] }
+    case 'human_gate':
+      return {
+        approvers: { type: 'ROLE', role: 'ADMIN' },
+        promptTemplate: '请确认是否继续',
+        timeoutMs: 86_400_000,
+        onTimeout: { action: 'REJECT' },
+      }
+    case 'subworkflow':
+      return {
+        definitionId: '',
+        versionPolicy: 'LATEST_PUBLISHED',
+        inputMapping: {},
+        outputMapping: {},
+      }
+    case 'loop':
+      // body 是一张独立子图：子图内成员用 itemVar/indexVar，无需额外声明变量
+      return {
+        itemsExpression: '[]',
+        itemVar: 'item',
+        indexVar: 'index',
+        maxIterations: 100,
+        concurrency: 1,
+        body: {
+          nodes: [
+            { key: 'body_end', type: 'end', config: { resultMapping: { value: '{{ vars.item }}' } } },
+          ],
+          edges: [],
+        },
+      }
+    case 'parallel':
+      return {
+        branches: {
+          a: { nodes: [{ key: 'a_end', type: 'end', config: { resultMapping: { value: 'a' } } }], edges: [] },
+          b: { nodes: [{ key: 'b_end', type: 'end', config: { resultMapping: { value: 'b' } } }], edges: [] },
+        },
+        join: 'all',
+        maxConcurrency: 4,
+      }
     case 'end':
       return { resultMapping: { answer: '{{ vars.question }}' } }
     default:

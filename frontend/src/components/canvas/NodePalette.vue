@@ -40,7 +40,8 @@ function titleFor(meta: { type: NodeType; description: string }): string {
       class="af-faint"
       style="font-size: 11px; margin-top: 12px; line-height: 1.6"
     >
-      P0 支持 start / llm / tool / end。<br>其余节点类型在 P1 开放。
+      选中节点在右侧配置；condition / human_gate 的出边分支在画布底部设置。
+      <br>retrieval 引擎尚未实现执行器，暂不提供。
     </div>
   </aside>
 </template>

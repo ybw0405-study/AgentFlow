@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { DslNode } from '@/dsl/types'
 
 defineOptions({ name: 'ConfigDrawer' })
@@ -106,12 +106,12 @@ function setTimeoutMs(value: string): void {
 }
 
 // paramsMapping / resultMapping 行编辑
-function mappingEntries(key: 'paramsMapping' | 'resultMapping'): [string, string][] {
+function mappingEntries(key: string): [string, string][] {
   return Object.entries(cfg<Record<string, string>>(key, {}))
 }
 
 function setMappingEntry(
-  key: 'paramsMapping' | 'resultMapping',
+  key: string,
   index: number,
   field: 'k' | 'v',
   value: string,
@@ -123,16 +123,128 @@ function setMappingEntry(
   setCfg(key, Object.fromEntries(entries.filter(([k]) => k)))
 }
 
-function addMappingEntry(key: 'paramsMapping' | 'resultMapping'): void {
+function addMappingEntry(key: string): void {
   const entries = mappingEntries(key)
   entries.push([`key${entries.length + 1}`, ''])
   setCfg(key, Object.fromEntries(entries))
 }
 
-function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: number): void {
+function removeMappingEntry(key: string, index: number): void {
   const entries = mappingEntries(key)
   entries.splice(index, 1)
   setCfg(key, Object.fromEntries(entries))
+}
+
+// ---------- condition ----------
+interface ConditionCase {
+  name: string
+  when: string
+}
+
+const cases = computed<ConditionCase[]>(() => {
+  const raw = cfg<ConditionCase[]>('cases', [])
+  return Array.isArray(raw) ? raw : []
+})
+
+function setCase(index: number, field: keyof ConditionCase, value: string): void {
+  const next = cases.value.map((c, i) => (i === index ? { ...c, [field]: value } : c))
+  setCfg('cases', next)
+}
+
+function addCase(): void {
+  setCfg('cases', [...cases.value, { name: `case${cases.value.length + 1}`, when: 'True' }])
+}
+
+function removeCase(index: number): void {
+  setCfg('cases', cases.value.filter((_, i) => i !== index))
+}
+
+// ---------- transform ----------
+interface TransformMapping {
+  target: string
+  template: string
+}
+
+const mappings = computed<TransformMapping[]>(() => {
+  const raw = cfg<TransformMapping[]>('mappings', [])
+  return Array.isArray(raw) ? raw : []
+})
+
+function setMapping(index: number, field: keyof TransformMapping, value: string): void {
+  const next = mappings.value.map((m, i) => (i === index ? { ...m, [field]: value } : m))
+  setCfg('mappings', next)
+}
+
+function addMapping(): void {
+  setCfg('mappings', [...mappings.value, { target: 'vars.', template: '' }])
+}
+
+function removeMapping(index: number): void {
+  setCfg('mappings', mappings.value.filter((_, i) => i !== index))
+}
+
+// ---------- human_gate ----------
+interface Approvers {
+  type: 'ROLE' | 'USERS' | 'EXPRESSION'
+  role?: string
+  userIds?: string[]
+  expression?: string
+}
+
+const approvers = computed<Approvers>(
+  () => cfg<Approvers>('approvers', { type: 'ROLE', role: 'ADMIN' }) ?? { type: 'ROLE' },
+)
+
+function patchApprovers(patch: Partial<Approvers>): void {
+  setCfg('approvers', { ...approvers.value, ...patch })
+}
+
+const approverUsers = computed(() => (approvers.value.userIds ?? []).join(', '))
+
+function setApproverUsers(raw: string): void {
+  const ids = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  patchApprovers({ userIds: ids })
+}
+
+const onTimeout = computed(
+  () => cfg<{ action: string; defaultBranch?: string }>('onTimeout', { action: 'REJECT' }),
+)
+
+function patchTimeout(patch: { action?: string; defaultBranch?: string }): void {
+  setCfg('onTimeout', { ...onTimeout.value, ...patch })
+}
+
+// ---------- 子图 JSON 编辑（loop.body / parallel.branches） ----------
+const jsonDraft = ref<Record<string, string>>({})
+const jsonErrors = ref<Record<string, string>>({})
+
+watch(
+  () => props.node?.key,
+  () => {
+    jsonDraft.value = {}
+    jsonErrors.value = {}
+  },
+)
+
+function jsonText(key: 'body' | 'branches'): string {
+  const draft = jsonDraft.value[key]
+  if (draft !== undefined) return draft
+  return JSON.stringify(cfg<unknown>(key, null) ?? {}, null, 2)
+}
+
+function setJson(key: 'body' | 'branches', raw: string): void {
+  jsonDraft.value = { ...jsonDraft.value, [key]: raw }
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    jsonErrors.value = { ...jsonErrors.value, [key]: '' }
+    setCfg(key, parsed)
+  } catch (e) {
+    // 解析失败时保留用户输入，但不写回配置，避免把坏 JSON 存进草稿
+    jsonErrors.value = { ...jsonErrors.value, [key]: (e as Error).message }
+  }
 }
 </script>
 
@@ -392,6 +504,379 @@ function removeMappingEntry(key: 'paramsMapping' | 'resultMapping', index: numbe
       >
         + 映射
       </button>
+    </template>
+
+    <template v-else-if="node.type === 'condition'">
+      <label class="af-label">cases（命中即走同名出边）</label>
+      <div
+        v-for="(c, i) in cases"
+        :key="i"
+        style="display: flex; gap: 6px; margin-bottom: 4px"
+      >
+        <input
+          class="af-input mono"
+          :value="c.name"
+          placeholder="case 名"
+          @input="setCase(i, 'name', ($event.target as HTMLInputElement).value)"
+        >
+        <input
+          class="af-input mono"
+          :value="c.when"
+          placeholder="表达式，如 vars.n > 3"
+          @input="setCase(i, 'when', ($event.target as HTMLInputElement).value)"
+        >
+        <button
+          class="af-btn af-btn--sm"
+          title="删除该 case"
+          @click="removeCase(i)"
+        >
+          ×
+        </button>
+      </div>
+      <button
+        class="af-btn af-btn--sm"
+        @click="addCase()"
+      >
+        + case
+      </button>
+      <label class="af-label">elseBranch</label>
+      <input
+        class="af-input mono"
+        :value="cfg('elseBranch', 'default')"
+        @input="setCfg('elseBranch', ($event.target as HTMLInputElement).value)"
+      >
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        when 由受限表达式求值（可用 vars.* / nodes.*，无 import / eval）。出边属于哪条分支，在画布底部选中连线后设置。
+      </p>
+    </template>
+
+    <template v-else-if="node.type === 'transform'">
+      <label class="af-label">mappings（target 写回 vars.*）</label>
+      <div
+        v-for="(m, i) in mappings"
+        :key="i"
+        style="display: flex; gap: 6px; margin-bottom: 4px"
+      >
+        <input
+          class="af-input mono"
+          :value="m.target"
+          placeholder="vars.summary"
+          @input="setMapping(i, 'target', ($event.target as HTMLInputElement).value)"
+        >
+        <input
+          class="af-input mono"
+          :value="m.template"
+          placeholder="{{ vars.x }}"
+          @input="setMapping(i, 'template', ($event.target as HTMLInputElement).value)"
+        >
+        <button
+          class="af-btn af-btn--sm"
+          title="删除该映射"
+          @click="removeMapping(i)"
+        >
+          ×
+        </button>
+      </div>
+      <button
+        class="af-btn af-btn--sm"
+        @click="addMapping()"
+      >
+        + 映射
+      </button>
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        target 是变量定义，不必先在工作流变量里声明；template 走 Jinja2 沙箱。
+      </p>
+    </template>
+
+    <template v-else-if="node.type === 'human_gate'">
+      <label class="af-label">审批人规则</label>
+      <select
+        class="af-select"
+        :value="approvers.type"
+        @change="patchApprovers({ type: ($event.target as HTMLSelectElement).value as Approvers['type'] })"
+      >
+        <option value="ROLE">
+          按角色
+        </option>
+        <option value="USERS">
+          按用户
+        </option>
+      </select>
+      <template v-if="approvers.type === 'ROLE'">
+        <label class="af-label">角色</label>
+        <select
+          class="af-select"
+          :value="approvers.role ?? 'ADMIN'"
+          @change="patchApprovers({ role: ($event.target as HTMLSelectElement).value })"
+        >
+          <option value="OWNER">
+            OWNER
+          </option>
+          <option value="ADMIN">
+            ADMIN
+          </option>
+          <option value="EDITOR">
+            EDITOR
+          </option>
+          <option value="VIEWER">
+            VIEWER
+          </option>
+        </select>
+      </template>
+      <template v-else-if="approvers.type === 'USERS'">
+        <label class="af-label">用户 id（逗号分隔）</label>
+        <input
+          class="af-input mono"
+          :value="approverUsers"
+          placeholder="u-editor, u-admin"
+          @input="setApproverUsers(($event.target as HTMLInputElement).value)"
+        >
+      </template>
+      <label class="af-label">提示词</label>
+      <textarea
+        class="af-textarea"
+        rows="4"
+        :value="cfg('promptTemplate', '')"
+        @input="setCfg('promptTemplate', ($event.target as HTMLTextAreaElement).value)"
+      />
+      <label class="af-label">超时（毫秒，最短 60000）</label>
+      <input
+        class="af-input mono"
+        type="number"
+        :value="cfg('timeoutMs', 86400000)"
+        @input="setCfg('timeoutMs', Number(($event.target as HTMLInputElement).value))"
+      >
+      <label class="af-label">超时动作</label>
+      <select
+        class="af-select"
+        :value="onTimeout.action"
+        @change="patchTimeout({ action: ($event.target as HTMLSelectElement).value })"
+      >
+        <option value="REJECT">
+          自动驳回
+        </option>
+        <option value="DEFAULT_BRANCH">
+          走默认分支
+        </option>
+      </select>
+      <template v-if="onTimeout.action === 'DEFAULT_BRANCH'">
+        <label class="af-label">默认分支名</label>
+        <input
+          class="af-input mono"
+          :value="onTimeout.defaultBranch ?? ''"
+          placeholder="approved"
+          @input="patchTimeout({ defaultBranch: ($event.target as HTMLInputElement).value })"
+        >
+      </template>
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        审批人快照在发起时冻结；出边只能连 approved / rejected 两条分支。审批节点不能放进 loop / parallel 子图。
+      </p>
+    </template>
+
+    <template v-else-if="node.type === 'subworkflow'">
+      <label class="af-label">definitionId</label>
+      <input
+        class="af-input mono"
+        :value="cfg('definitionId', '')"
+        placeholder="被调用工作流的 id"
+        @input="setCfg('definitionId', ($event.target as HTMLInputElement).value)"
+      >
+      <label class="af-label">版本策略</label>
+      <select
+        class="af-select"
+        :value="cfg('versionPolicy', 'LATEST_PUBLISHED')"
+        @change="setCfg('versionPolicy', ($event.target as HTMLSelectElement).value)"
+      >
+        <option value="LATEST_PUBLISHED">
+          LATEST_PUBLISHED（跟随最新发布）
+        </option>
+        <option value="FIXED">
+          FIXED（锁定版本）
+        </option>
+      </select>
+      <template v-if="cfg<string>('versionPolicy', 'LATEST_PUBLISHED') === 'FIXED'">
+        <label class="af-label">versionId</label>
+        <input
+          class="af-input mono"
+          :value="cfg('versionId', '')"
+          @input="setCfg('versionId', ($event.target as HTMLInputElement).value)"
+        >
+      </template>
+      <label class="af-label">inputMapping</label>
+      <div
+        v-for="([k, v], i) in mappingEntries('inputMapping')"
+        :key="`in-${i}`"
+        style="display: flex; gap: 6px; margin-bottom: 4px"
+      >
+        <input
+          class="af-input mono"
+          :value="k"
+          placeholder="目标变量"
+          @input="setMappingEntry('inputMapping', i, 'k', ($event.target as HTMLInputElement).value)"
+        >
+        <input
+          class="af-input mono"
+          :value="v"
+          placeholder="{{ vars.x }}"
+          @input="setMappingEntry('inputMapping', i, 'v', ($event.target as HTMLInputElement).value)"
+        >
+        <button
+          class="af-btn af-btn--sm"
+          @click="removeMappingEntry('inputMapping', i)"
+        >
+          ×
+        </button>
+      </div>
+      <button
+        class="af-btn af-btn--sm"
+        @click="addMappingEntry('inputMapping')"
+      >
+        + 入参
+      </button>
+      <label class="af-label">outputMapping</label>
+      <div
+        v-for="([k, v], i) in mappingEntries('outputMapping')"
+        :key="`out-${i}`"
+        style="display: flex; gap: 6px; margin-bottom: 4px"
+      >
+        <input
+          class="af-input mono"
+          :value="k"
+          placeholder="输出名"
+          @input="setMappingEntry('outputMapping', i, 'k', ($event.target as HTMLInputElement).value)"
+        >
+        <input
+          class="af-input mono"
+          :value="v"
+          placeholder="{{ nodes.sub.output.x }}"
+          @input="setMappingEntry('outputMapping', i, 'v', ($event.target as HTMLInputElement).value)"
+        >
+        <button
+          class="af-btn af-btn--sm"
+          @click="removeMappingEntry('outputMapping', i)"
+        >
+          ×
+        </button>
+      </div>
+      <button
+        class="af-btn af-btn--sm"
+        @click="addMappingEntry('outputMapping')"
+      >
+        + 出参
+      </button>
+    </template>
+
+    <template v-else-if="node.type === 'loop'">
+      <label class="af-label">itemsExpression</label>
+      <input
+        class="af-input mono"
+        :value="cfg('itemsExpression', '[]')"
+        placeholder="vars.items"
+        @input="setCfg('itemsExpression', ($event.target as HTMLInputElement).value)"
+      >
+      <label class="af-label">itemVar / indexVar</label>
+      <div style="display: flex; gap: 6px">
+        <input
+          class="af-input mono"
+          :value="cfg('itemVar', 'item')"
+          @input="setCfg('itemVar', ($event.target as HTMLInputElement).value)"
+        >
+        <input
+          class="af-input mono"
+          :value="cfg('indexVar', 'index')"
+          @input="setCfg('indexVar', ($event.target as HTMLInputElement).value)"
+        >
+      </div>
+      <label class="af-label">maxIterations / concurrency</label>
+      <div style="display: flex; gap: 6px">
+        <input
+          class="af-input mono"
+          type="number"
+          min="1"
+          max="1000"
+          :value="cfg('maxIterations', 100)"
+          @input="setCfg('maxIterations', Number(($event.target as HTMLInputElement).value))"
+        >
+        <input
+          class="af-input mono"
+          type="number"
+          min="1"
+          max="16"
+          :value="cfg('concurrency', 1)"
+          @input="setCfg('concurrency', Number(($event.target as HTMLInputElement).value))"
+        >
+      </div>
+      <label class="af-label">body 子图（JSON）</label>
+      <textarea
+        class="af-textarea mono"
+        rows="10"
+        spellcheck="false"
+        :value="jsonText('body')"
+        @input="setJson('body', ($event.target as HTMLTextAreaElement).value)"
+      />
+      <p
+        v-if="jsonErrors.body"
+        class="af-accent"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        JSON 未生效：{{ jsonErrors.body }}
+      </p>
+      <p
+        v-else
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        子图内可直接用 {{ `vars.${cfg('itemVar', 'item')}` }} / {{ `vars.${cfg('indexVar', 'index')}` }}，不必声明。
+      </p>
+    </template>
+
+    <template v-else-if="node.type === 'parallel'">
+      <label class="af-label">join</label>
+      <select
+        class="af-select"
+        :value="cfg('join', 'all')"
+        @change="setCfg('join', ($event.target as HTMLSelectElement).value)"
+      >
+        <option value="all">
+          all（全部分支成功）
+        </option>
+        <option value="first_success">
+          first_success（首个成功即返回）
+        </option>
+      </select>
+      <label class="af-label">maxConcurrency</label>
+      <input
+        class="af-input mono"
+        type="number"
+        min="1"
+        max="16"
+        :value="cfg('maxConcurrency', 4)"
+        @input="setCfg('maxConcurrency', Number(($event.target as HTMLInputElement).value))"
+      >
+      <label class="af-label">branches 子图（JSON，至少两个）</label>
+      <textarea
+        class="af-textarea mono"
+        rows="12"
+        spellcheck="false"
+        :value="jsonText('branches')"
+        @input="setJson('branches', ($event.target as HTMLTextAreaElement).value)"
+      />
+      <p
+        v-if="jsonErrors.branches"
+        class="af-accent"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        JSON 未生效：{{ jsonErrors.branches }}
+      </p>
     </template>
 
     <template v-else>
