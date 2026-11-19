@@ -4,8 +4,9 @@
 MQ 是冗余路径——引擎被网络策略隔离、控制面重启中、relay 还在退避时，消息仍留在
 broker 里，引擎自己拉得到。
 
-幂等：裁决在引擎侧幂等（节点已终态返回 ALREADY_RESOLVED），因此 HTTP 抢先处理过的
-消息到这里只会记一次 duplicate，不会重复推进状态机。
+幂等：裁决在引擎侧幂等，所以这条通道对「HTTP 已经处理过」是安全的。消费结果分三类：
+`applied`（本通道真的推进了状态机）、`duplicate`（节点已裁决）、`stale`（执行已收口，
+消息迟到）。后两类都是常态而非故障——HTTP 是快路径，MQ 大多时候只是在重复劳动。
 
 线程模型：拉取是阻塞 IO，放独立线程；处理协程回到 FastAPI 的事件循环上执行，
 避免在 IO 线程里碰 asyncio 对象。
@@ -26,6 +27,11 @@ from .client import PullConsumer, RemotingError
 log = logging.getLogger("agentflow.mq")
 
 _VALID_DECISIONS = {"APPROVED", "REJECTED", "TIMEOUT"}
+
+# 迟到的裁决：执行已收口 / 该节点已不在挂起态。丢掉即可，不是故障。
+_STALE_STATUSES = {"NOT_SUSPENDED"}
+# 消息本身对不上：执行不存在、decision 非法。属于不该出现的消息。
+_INVALID_STATUSES = {"NOT_FOUND", "INVALID_DECISION"}
 
 
 def _is_route_missing(exc: BaseException) -> bool:
@@ -48,6 +54,8 @@ class GateDecisionConsumer:
         batch: int = 32,
         reconnect_delay_s: float = 2.0,
         idle_interval_s: float = 0.2,
+        busy_retries: int = 3,
+        busy_retry_delay_s: float = 0.3,
     ) -> None:
         self._dispatcher = dispatcher
         self.namesrv = namesrv
@@ -55,6 +63,8 @@ class GateDecisionConsumer:
         self.group = group
         self.reconnect_delay_s = reconnect_delay_s
         self.idle_interval_s = idle_interval_s
+        self._busy_retries = max(0, busy_retries)
+        self._busy_retry_delay_s = max(0.0, busy_retry_delay_s)
         self._consumer = PullConsumer(
             namesrv, topic, group, poll_timeout_ms=poll_timeout_ms, batch=batch
         )
@@ -66,6 +76,7 @@ class GateDecisionConsumer:
             "consumed": 0,
             "applied": 0,
             "duplicate": 0,
+            "stale": 0,
             "invalid": 0,
             "failed": 0,
             "lastError": None,
@@ -174,13 +185,20 @@ class GateDecisionConsumer:
 
     async def _handle(self, payload: dict[str, Any]) -> None:
         execution_id = uuid.UUID(str(payload["executionId"]))
-        result = await self._dispatcher.resolve_gate(
-            execution_id,
-            str(payload["nodeKey"]),
-            str(payload["decision"]),
-            str(payload.get("resolvedBy") or ""),
-            payload.get("comment"),
-        )
+        # BUSY = 租约被别处占着（通常正是 HTTP 快路径在续跑）。等一拍重试，
+        # 那一侧收口后本消息会落到 ALREADY_RESOLVED，正好记成 duplicate。
+        for attempt in range(self._busy_retries + 1):
+            result = await self._dispatcher.resolve_gate(
+                execution_id,
+                str(payload["nodeKey"]),
+                str(payload["decision"]),
+                str(payload.get("resolvedBy") or ""),
+                payload.get("comment"),
+            )
+            if str(result.get("status") or "") != "BUSY" or attempt == self._busy_retries:
+                break
+            await asyncio.sleep(self._busy_retry_delay_s)
+
         status = str(result.get("status") or "")
         if status == "RESOLVED":
             self._stats["applied"] += 1
@@ -192,8 +210,30 @@ class GateDecisionConsumer:
             )
         elif status == "ALREADY_RESOLVED":
             self._stats["duplicate"] += 1
+        elif status == "ALREADY_TERMINAL":
+            # 执行已经收口（HTTP 抢先续跑、或超时扫描先收口）：这条消息是迟到的，
+            # 丢掉即可。**不算失败**——MQ 通道的常态就是「HTTP 已经处理过」。
+            self._stats["stale"] += 1
+        elif status in _STALE_STATUSES:
+            self._stats["stale"] += 1
+            log.info(
+                "gate mq message is stale (%s) for %s/%s",
+                status,
+                payload["executionId"],
+                payload["nodeKey"],
+            )
+        elif status in _INVALID_STATUSES:
+            self._stats["invalid"] += 1
+            log.warning(
+                "gate mq message is not acceptable (%s) for %s/%s",
+                status,
+                payload["executionId"],
+                payload["nodeKey"],
+            )
         else:
+            # BUSY 重试耗尽 / 引擎侧抛错：记失败并留下状态，便于排查
             self._stats["failed"] += 1
+            self._stats["lastError"] = f"resolve_gate returned {status or 'UNKNOWN'}"
             log.warning(
                 "gate mq resolve returned %s for %s/%s",
                 status,

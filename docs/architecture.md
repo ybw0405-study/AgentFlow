@@ -1306,7 +1306,10 @@ transactional outbox：
 偏移用 `GET_MAX_OFFSET`（只取新消息，不重放历史）；`PULL_OFFSET_MOVED` 接受 broker
 建议值；topic 尚未创建（`code=17`）降级为 INFO 并重试，同时在 `start-dev` / `e2e`
 流水线里预建 `af-audit-event` 与 `af-gate-decision`。消费状态见 `GET /internal/mq/status`
-（`consumed / applied / duplicate / invalid / failed / lastError`）。
+（`consumed / applied / duplicate / stale / invalid / failed / lastError`）。三类非故障
+结果要分清：`applied` 是本通道真的推进了状态机，`duplicate` 是节点已裁决，`stale` 是执行
+已收口、消息迟到。HTTP 是快路径，MQ 大多数时候在后两者里，把它们算成 `failed` 只会让
+告警长期变红并掩盖真故障。`BUSY`（租约被 HTTP 侧占着）会先本地重试 3 次再计数。
 
 ### 16.4 子图画布（`frontend/src/dsl/subgraph.ts` + `CanvasEditorView`）
 
