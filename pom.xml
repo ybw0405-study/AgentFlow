@@ -34,7 +34,7 @@
         <mysql.version>9.7.0</mysql.version>
         <archunit.version>1.3.2</archunit.version>
         <!-- 10.x 为 Java 11 基线；14.x 要求 Java 21，与本项目 Java 17 不兼容 -->
-        <checkstyle.version>10.26.1</checkstyle.version>
+        <checkstyle.version>14.4.0</checkstyle.version>
     </properties>
 
     <dependencyManagement>
