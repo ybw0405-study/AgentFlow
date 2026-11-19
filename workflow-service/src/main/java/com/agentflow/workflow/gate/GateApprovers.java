@@ -21,7 +21,9 @@ import org.springframework.stereotype.Component;
  *       额外并入平台管理员（运维兜底通道）。</li>
  *   <li>USERS：显式名单，但只保留在该空间可见范围内有成员关系的人，
  *       避免把审批权投递给无关租户的用户。</li>
- *   <li>EXPRESSION：P3 不做用户属性表达式求值（引擎侧编译期已拒绝）。</li>
+ *   <li>EXPRESSION：对「空间链上的成员 + 平台管理员」逐个求值，命中者进审批人快照
+ *       （文法见 {@link GateExpression}）。不先按角色粗筛是有意为之——表达式本身
+ *       就在描述角色之外的条件（点名、排除、组合条件）。</li>
  * </ul>
  *
  * <p>结果为空时的处置：fail-closed —— 不再静默把审批权扩大到全体平台管理员
@@ -41,7 +43,6 @@ public class GateApprovers {
         this.resolver = new TenantHierarchyResolver(port);
     }
 
-    @SuppressWarnings("unchecked")
     public List<String> resolve(String spaceId, Map<String, Object> rule) {
         String type = String.valueOf(rule.getOrDefault("type", "ROLE"));
         List<String> chain = resolver.chainOf(spaceId).stream()
@@ -62,10 +63,10 @@ public class GateApprovers {
                     }
                 }
             }
+        } else if ("EXPRESSION".equals(type)) {
+            resolveByExpression(spaceId, chain, rule, approvers);
         } else {
-            String required = "EXPRESSION".equals(type)
-                    ? "ADMIN"
-                    : String.valueOf(rule.getOrDefault("role", "ADMIN"));
+            String required = String.valueOf(rule.getOrDefault("role", "ADMIN"));
             int requiredRank = TenantHierarchyResolver.rank(required);
             for (String tenantId : chain) {
                 for (TenantMapper.MemberRow member : tenants.listMembers(tenantId)) {
@@ -85,6 +86,46 @@ public class GateApprovers {
                     spaceId, rule);
         }
         return List.copyOf(approvers);
+    }
+
+    private void resolveByExpression(String spaceId, List<String> chain,
+                                     Map<String, Object> rule, Set<String> approvers) {
+        String expression = rule.get("expression") == null
+                ? "" : String.valueOf(rule.get("expression")).trim();
+        if (expression.isEmpty()) {
+            log.error("gate approver EXPRESSION without expression, space={} rule={}",
+                    spaceId, rule);
+            return;
+        }
+        try {
+            GateExpression.validate(expression);
+        } catch (IllegalArgumentException e) {
+            log.error("gate approver expression invalid, space={} expr={} ({})",
+                    spaceId, expression, e.getMessage());
+            return;
+        }
+
+        Set<String> platformAdmins = new LinkedHashSet<>(tenants.listPlatformAdmins());
+        for (String tenantId : chain) {
+            for (TenantMapper.MemberRow member : tenants.listMembers(tenantId)) {
+                if (matches(expression, spaceId, member.userId(), member.role(),
+                        platformAdmins.contains(member.userId()))) {
+                    approvers.add(member.userId());
+                }
+            }
+        }
+        // 平台管理员未必在空间成员表里：单独过一遍，保证「值班人」类规则不会静默落空
+        for (String adminId : platformAdmins) {
+            if (matches(expression, spaceId, adminId, "ADMIN", true)) {
+                approvers.add(adminId);
+            }
+        }
+    }
+
+    private boolean matches(String expression, String spaceId, String userId, String role,
+                            boolean platformAdmin) {
+        return GateExpression.evaluate(expression, userId, role,
+                TenantHierarchyResolver.rank(role), platformAdmin, spaceId);
     }
 
     private boolean isMemberOfAny(List<String> tenantIds, String userId) {

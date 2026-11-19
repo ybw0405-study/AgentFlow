@@ -73,6 +73,41 @@ class GateApproversTest {
     }
 
     @Test
+    void expressionRuleEvaluatesPerCandidateUser() {
+        List<String> result = approvers.resolve("space-a", Map.of(
+                "type", "EXPRESSION", "expression", "user.rank >= 3"));
+        assertEquals(List.of("u-admin", "u-org", "u-platform"), result);
+    }
+
+    @Test
+    void expressionRuleCanNameSpecificUser() {
+        List<String> result = approvers.resolve("space-a", Map.of(
+                "type", "EXPRESSION", "expression", "user.id in [\"u-editor\"]"));
+        assertEquals(List.of("u-editor"), result);
+    }
+
+    @Test
+    void expressionRuleCanTargetPlatformAdminsOnly() {
+        List<String> result = approvers.resolve("space-a", Map.of(
+                "type", "EXPRESSION", "expression", "user.platformAdmin"));
+        assertEquals(List.of("u-platform"), result);
+    }
+
+    @Test
+    void invalidExpressionFailsClosed() {
+        // 文法错必须在求值前挡住：静默按「解析不出人」处理会让人以为规则生效了
+        List<String> result = approvers.resolve("space-a", Map.of(
+                "type", "EXPRESSION", "expression", "user.level >= 2"));
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void expressionWithoutBodyFailsClosed() {
+        List<String> result = approvers.resolve("space-a", Map.of("type", "EXPRESSION"));
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
     void roleAdminStillIncludesPlatformAdminsExplicitly() {
         // ROLE+ADMIN 是设计上显式的运维兜底通道，不属于 fail-open，须保留
         when(tenants.listMembers("space-a")).thenReturn(List.of(

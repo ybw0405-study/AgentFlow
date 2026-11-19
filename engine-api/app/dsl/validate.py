@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -160,6 +161,14 @@ def validate_dsl(raw: dict[str, Any], settings: Settings) -> ValidationResult:
                 )
             )
 
+    # 4.2) EXPRESSION 审批人：文法必须在发布期判定。
+    #      运行期由控制面按候选用户求值（user/space 属性来自租户体系，引擎侧拿不到），
+    #      所以这里只做「能否被 GateExpression 解析」的静态校验；放过去的下场是
+    #      「发布成功 → 挂起后审批人快照为空 → 审批永远卡住」，属于最难排查的一类。
+    for n in dsl.nodes:
+        if n.type == "human_gate" and n.config.approvers.type == "EXPRESSION":
+            errors.extend(_approver_expression_errors(n))
+
     # 5) start/end 数量
     starts = [n.key for n in dsl.nodes if n.type == "start"]
     ends = [n.key for n in dsl.nodes if n.type == "end"]
@@ -218,9 +227,98 @@ def _nested_nodes(dsl: WorkflowDsl) -> list[tuple[str, Any]]:
     return out
 
 
+# ---- EXPRESSION 审批人：与 Java 侧 GateExpression 保持同一文法子集 ----
+# 两边必须一致：发布期在引擎校验（这里），运行期在控制面求值（用户属性在租户库里）。
+# 只允许能静态判定的最小集合，避免「发布通过、审批人解析为空」这种死锁。
+_APPROVER_SCOPES: dict[str, set[str]] = {
+    "user": {"id", "role", "rank", "platformAdmin"},
+    "space": {"id"},
+}
+_COMPARE_OPS = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)
+
+
+def _expr_problem(node: ast.AST) -> str | None:
+    """返回第一个不符合子集的原因；None 表示合法。"""
+    if isinstance(node, ast.BoolOp):
+        if not isinstance(node.op, (ast.And, ast.Or)):
+            return "only 'and' / 'or' are supported"
+        for value in node.values:
+            problem = _expr_problem(value)
+            if problem:
+                return problem
+        return None
+    if isinstance(node, ast.UnaryOp):
+        if not isinstance(node.op, ast.Not):
+            return "only 'not' is supported as a unary operator"
+        return _expr_problem(node.operand)
+    if isinstance(node, ast.Compare):
+        for op in node.ops:
+            if not isinstance(op, _COMPARE_OPS):
+                return f"comparison '{type(op).__name__}' is not supported"
+        problem = _expr_problem(node.left)
+        if problem:
+            return problem
+        for comparator in node.comparators:
+            problem = _expr_problem(comparator)
+            if problem:
+                return problem
+        return None
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str | int | bool) or node.value is None:
+            return None
+        return "only string / integer / boolean / null literals are allowed"
+    if isinstance(node, ast.List):
+        for item in node.elts:
+            problem = _expr_problem(item)
+            if problem:
+                return problem
+        return None
+    if isinstance(node, ast.Attribute):
+        base = node.value
+        if not isinstance(base, ast.Name) or base.id not in _APPROVER_SCOPES:
+            return "attribute base must be 'user' or 'space'"
+        allowed = _APPROVER_SCOPES[base.id]
+        if node.attr not in allowed:
+            return f"unknown attribute {base.id}.{node.attr} (allowed: {sorted(allowed)})"
+        return None
+    return f"syntax '{type(node).__name__}' is not supported"
+
+
+def _approver_expression_errors(node: Any) -> list[DslError]:
+    """EXPRESSION 审批人必须能在发布期解析成受支持的小语言。"""
+    expression = (node.config.approvers.expression or "").strip()
+    if not expression:
+        return [
+            DslError(
+                code=DSL_VALIDATION,
+                node_key=node.key,
+                message="human_gate approvers.expression is required when type is EXPRESSION",
+            )
+        ]
+    try:
+        parsed = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        return [
+            DslError(
+                code=DSL_VALIDATION,
+                node_key=node.key,
+                message=f"approvers.expression is not parseable: {exc.msg}",
+            )
+        ]
+    problem = _expr_problem(parsed.body)
+    if problem:
+        return [
+            DslError(
+                code=DSL_VALIDATION,
+                node_key=node.key,
+                message=f"approvers.expression not supported: {problem}",
+            )
+        ]
+    return []
+
+
 def _reference_errors(dsl: WorkflowDsl, nodes: dict[str, Any]) -> list[DslError]:
     """变量/节点引用检查（作用域感知）。
-
     loop.body 与 parallel.branches 是独立子图：子图内可见「外层已声明变量 + 自己的迭代变量」，
     节点引用既可以是子图内的上游节点，也可以是外层节点的上游。按顶层作用域一刀切会把合法子图
     判成未声明——在 loop 里写 `vars.item` 会直接发布不了。这里递归下钻，按各自作用域判。

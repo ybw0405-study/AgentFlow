@@ -347,3 +347,81 @@ def test_written_variable_not_visible_on_sibling_branch(settings, demo_dsl):
     assert not result.ok
     assert DSL_REF in _codes(result)
     assert any("tmp_sum" in e.message for e in result.errors)
+
+
+def _gate_dsl(approvers: dict) -> dict:
+    """start → human_gate →(approved) end / (rejected) end 的最小审批工作流。"""
+    return {
+        "dslVersion": "1.0",
+        "variables": {},
+        "defaults": {"timeoutMs": 5000, "maxParallelism": 2},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "approve",
+                "type": "human_gate",
+                "config": {
+                    "approvers": approvers,
+                    "promptTemplate": "请确认",
+                    "timeoutMs": 86_400_000,
+                    "onTimeout": {"action": "REJECT"},
+                },
+            },
+            {"key": "ok_end", "type": "end", "config": {"resultMapping": {"ok": "yes"}}},
+            {"key": "no_end", "type": "end", "config": {"resultMapping": {"ok": "no"}}},
+        ],
+        "edges": [
+            {"from": "start", "to": "approve"},
+            {"from": "approve", "to": "ok_end", "branch": "approved"},
+            {"from": "approve", "to": "no_end", "branch": "rejected"},
+        ],
+    }
+
+
+def test_expression_approver_accepts_supported_subset(settings):
+    """发布期放行合法表达式：属性、比较、in、and/or/not、列表字面量。"""
+    dsl = _gate_dsl(
+        {
+            "type": "EXPRESSION",
+            "expression": 'user.rank >= 2 and user.id in ["u-1", "u-2"] or user.platformAdmin',
+        }
+    )
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_expression_approver_rejects_unknown_attribute(settings):
+    """写错属性名必须发布期挡住：运行期只会「解析出空审批人」把审批卡死。"""
+    dsl = _gate_dsl({"type": "EXPRESSION", "expression": "user.level >= 2"})
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert DSL_VALIDATION in _codes(result)
+    assert any("user.level" in e.message for e in result.errors)
+
+
+def test_expression_approver_rejects_python_only_syntax(settings):
+    """函数调用 / 下标 / f-string 都不在子集内（Java 侧无法求值）。"""
+    for expr in ("len(user.id) > 3", 'user.id.startswith("u")', "user.id[0] == 'u'"):
+        dsl = _gate_dsl({"type": "EXPRESSION", "expression": expr})
+        result = validate_dsl(dsl, settings)
+        assert not result.ok, expr
+
+
+def test_expression_approver_requires_expression(settings):
+    dsl = _gate_dsl({"type": "EXPRESSION"})
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert any("expression is required" in e.message for e in result.errors)
+
+
+def test_expression_approver_syntax_error(settings):
+    dsl = _gate_dsl({"type": "EXPRESSION", "expression": "user.rank >>"})
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert any("not parseable" in e.message for e in result.errors)
+
+
+def test_role_approver_untouched_by_expression_rules(settings):
+    dsl = _gate_dsl({"type": "ROLE", "role": "ADMIN"})
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
