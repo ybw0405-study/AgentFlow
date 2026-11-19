@@ -250,9 +250,16 @@ class Scheduler:
                 if fatal is not None:
                     raise fatal
 
-            end_key = next(k for k, n in dag.nodes.items() if n.type == "end")
-            end_rt = state.nodes.get(end_key)
-            result = (end_rt.output or {}).get("result", {}) if end_rt else {}
+            # 收口只认真正跑成功的 end：分支工作流里 end 可以有多个，
+            # 取「定义里的第一个」会把结果永远钉在被 SKIPPED 的那个上（返回空对象）。
+            result: dict[str, Any] = {}
+            for end_key in dag.end_keys():
+                rt = state.nodes.get(end_key)
+                if rt is None or rt.status != "SUCCEEDED":
+                    continue
+                produced = (rt.output or {}).get("result")
+                if isinstance(produced, dict):
+                    result.update(produced)
             await self._emit(
                 execution_id,
                 state,

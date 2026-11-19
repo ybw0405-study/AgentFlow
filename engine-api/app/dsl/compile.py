@@ -17,6 +17,10 @@ class Dag:
     def start_key(self) -> str:
         return next(k for k, n in self.nodes.items() if n.type == "start")
 
+    def end_keys(self) -> list[str]:
+        """全部 end 节点（DSL 声明顺序）。分支场景下 end 可以有多个，收口要挑真正跑到的那个。"""
+        return [k for k, n in self.nodes.items() if n.type == "end"]
+
     def dependencies_of(self, key: str) -> list[str]:
         return [e.from_ for e in self.in_edges.get(key, [])]
 

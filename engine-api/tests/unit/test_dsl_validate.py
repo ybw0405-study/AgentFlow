@@ -106,3 +106,244 @@ def test_schema_level_error(settings):
     result = validate_dsl({"dslVersion": "2.0", "nodes": []}, settings)
     assert not result.ok
     assert DSL_VALIDATION in _codes(result)
+
+
+# ---------- 子图作用域（loop / parallel） ----------
+
+
+def _loop_dsl(*, body_nodes, body_edges=None, items="vars.tags"):
+    """最小 loop 工作流：start → loop_1 → end。"""
+    return {
+        "dslVersion": "1.0",
+        "variables": {"tags": {"type": "array", "required": True}},
+        "defaults": {"timeoutMs": 30000, "maxParallelism": 4},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "loop_1",
+                "type": "loop",
+                "config": {
+                    "itemsExpression": items,
+                    "itemVar": "item",
+                    "indexVar": "index",
+                    "maxIterations": 10,
+                    "body": {"nodes": body_nodes, "edges": body_edges or []},
+                },
+            },
+            {
+                "key": "end",
+                "type": "end",
+                "config": {"resultMapping": {"n": "{{ nodes.loop_1.output.count }}"}},
+            },
+        ],
+        "edges": [{"from": "start", "to": "loop_1"}, {"from": "loop_1", "to": "end"}],
+    }
+
+
+def test_loop_body_can_reference_iteration_variable(settings):
+    """子图内的 vars.item / vars.index 属于该 loop 的局部作用域，不应判未声明。"""
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"pair": "{{ vars.index }}-{{ vars.item }}"}},
+            }
+        ]
+    )
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_loop_body_unknown_variable_still_rejected(settings):
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"v": "{{ vars.nope }}"}},
+            }
+        ]
+    )
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert any("vars.nope" in e.message for e in result.errors)
+
+
+def test_loop_body_can_reference_sibling_upstream_node(settings):
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_mid",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.upper", "template": "{{ vars.item }}"}]},
+            },
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"v": "{{ nodes.body_mid.output.upper }}"}},
+            },
+        ],
+        body_edges=[{"from": "body_mid", "to": "body_end"}],
+    )
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_loop_body_rejects_downstream_node_reference(settings):
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_up",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.x", "template": "{{ vars.item }}"}]},
+            },
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"v": "{{ nodes.body_up.output.x }}"}},
+            },
+        ]
+    )  # 没有 body_up → body_end 的边：引用非上游
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert any("body_up" in e.message for e in result.errors)
+
+
+def test_loop_body_can_reference_outer_upstream_node(settings):
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"v": "{{ nodes.loop_1.output.count }}"}},
+            }
+        ]
+    )
+    # 引用 loop 自身不算上游，必须报错
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+
+
+def test_nested_branch_edge_rules_apply_inside_loop(settings):
+    """子图内的 branch 边也要校验：transform 不是分支节点。"""
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_mid",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.x", "template": "{{ vars.item }}"}]},
+            },
+            {"key": "body_end", "type": "end", "config": {"resultMapping": {"v": "1"}}},
+        ],
+        body_edges=[{"from": "body_mid", "to": "body_end", "branch": "yes"}],
+    )
+    result = validate_dsl(dsl, settings)
+    assert DSL_BRANCH in _codes(result)
+
+
+def test_transform_target_is_definition_not_reference(settings, demo_dsl):
+    """把结果写进一个新变量不该要求先在 variables 里声明。"""
+    dsl = copy.deepcopy(demo_dsl)
+    dsl["nodes"].insert(
+        1,
+        {
+            "key": "prep",
+            "type": "transform",
+            "config": {"mappings": [{"target": "vars.tmp_sum", "template": "{{ vars.question }}"}]},
+        },
+    )
+    dsl["edges"] = (
+        [{"from": "start", "to": "prep"}]
+        + [e for e in dsl["edges"] if not (e["from"] == "start" and e["to"] == "draft")]
+        + [{"from": "prep", "to": "draft"}]
+    )
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_loop_collect_into_is_definition_not_reference(settings):
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"v": "{{ vars.item }}"}},
+            }
+        ]
+    )
+    dsl["nodes"][1]["config"]["collect"] = {"into": "collected", "item": "v"}
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_parallel_branch_scoped_variables(settings):
+    """parallel 各分支共享外层变量；分支内引用未声明变量仍然报错。"""
+    branch = {
+        "nodes": [
+            {"key": "b_end", "type": "end", "config": {"resultMapping": {"v": "{{ vars.tags }}"}}}
+        ],
+        "edges": [],
+    }
+    dsl = {
+        "dslVersion": "1.0",
+        "variables": {"tags": {"type": "array", "required": True}},
+        "defaults": {"timeoutMs": 30000, "maxParallelism": 4},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "fan",
+                "type": "parallel",
+                "config": {"branches": {"a": branch, "b": branch}, "join": "all"},
+            },
+            {
+                "key": "end",
+                "type": "end",
+                "config": {"resultMapping": {"n": "{{ nodes.fan.output.count }}"}},
+            },
+        ],
+        "edges": [{"from": "start", "to": "fan"}, {"from": "fan", "to": "end"}],
+    }
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_written_variable_visible_downstream(settings, demo_dsl):
+    """transform 写入的变量在它的下游可直接引用（不必先声明）。"""
+    dsl = copy.deepcopy(demo_dsl)
+    dsl["nodes"].insert(
+        1,
+        {
+            "key": "prep",
+            "type": "transform",
+            "config": {"mappings": [{"target": "vars.tmp_sum", "template": "{{ vars.question }}"}]},
+        },
+    )
+    dsl["nodes"][-1]["config"]["resultMapping"]["brief"] = "{{ vars.tmp_sum }}"
+    dsl["edges"] = (
+        [{"from": "start", "to": "prep"}]
+        + [e for e in dsl["edges"] if not (e["from"] == "start" and e["to"] == "draft")]
+        + [{"from": "prep", "to": "draft"}]
+    )
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_written_variable_not_visible_on_sibling_branch(settings, demo_dsl):
+    """写入型变量只对下游可见：兄弟分支引用它仍视为未声明（否则运行期必炸）。"""
+    dsl = copy.deepcopy(demo_dsl)
+    dsl["nodes"].insert(
+        1,
+        {
+            "key": "prep",
+            "type": "transform",
+            "config": {"mappings": [{"target": "vars.tmp_sum", "template": "{{ vars.question }}"}]},
+        },
+    )
+    dsl["nodes"][-1]["config"]["resultMapping"]["brief"] = "{{ vars.tmp_sum }}"
+    # prep 与 draft 都是 start 的下游，prep 的写入对 draft 不可见
+    dsl["edges"] = [{"from": "start", "to": "prep"}, *list(dsl["edges"])]
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert DSL_REF in _codes(result)
+    assert any("tmp_sum" in e.message for e in result.errors)

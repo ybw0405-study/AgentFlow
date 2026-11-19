@@ -113,3 +113,57 @@ async def test_condition_else_branch(settings, fake_redis, mem_store):
     assert statuses.get("yes") == "SKIPPED", statuses
     assert statuses.get("skipped_tail") == "SUCCEEDED", statuses
     assert statuses.get("end") == "SUCCEEDED", statuses
+
+
+def _two_end_dsl(score: int) -> dict:
+    """两条分支各自收口到自己的 end：最终结果必须取「真正跑到的那个」。"""
+    return {
+        "dslVersion": "1.0",
+        "variables": {"score": {"type": "integer", "required": True}},
+        "defaults": {"timeoutMs": 5000, "maxParallelism": 4},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "gate",
+                "type": "condition",
+                "config": {
+                    "cases": [{"name": "high", "when": "vars.score >= 60"}],
+                    "elseBranch": "low",
+                },
+            },
+            # 定义顺序刻意让 fail_end 在前：取「第一个 end」的实现会在这里翻车
+            {"key": "fail_end", "type": "end", "config": {"resultMapping": {"grade": "FAIL"}}},
+            {"key": "pass_end", "type": "end", "config": {"resultMapping": {"grade": "PASS"}}},
+        ],
+        "edges": [
+            {"from": "start", "to": "gate"},
+            {"from": "gate", "to": "pass_end", "branch": "high"},
+            {"from": "gate", "to": "fail_end", "branch": "low"},
+        ],
+    }
+
+
+async def test_final_result_comes_from_executed_end(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    req = ExecuteRequest.model_validate(
+        make_execute_request(_two_end_dsl(80), initialVariables={"score": 80})
+    )
+    await dispatcher.submit(req)
+    assert await wait_terminal(mem_store, req.execution_id) == "SUCCEEDED"
+
+    events = await mem_store.read_all(req.execution_id)
+    completed = next(e for e in events if e.event_type == "ExecutionCompleted")
+    assert completed.payload["result"] == {"grade": "PASS"}
+
+
+async def test_final_result_else_branch_end(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    req = ExecuteRequest.model_validate(
+        make_execute_request(_two_end_dsl(10), initialVariables={"score": 10})
+    )
+    await dispatcher.submit(req)
+    assert await wait_terminal(mem_store, req.execution_id) == "SUCCEEDED"
+
+    events = await mem_store.read_all(req.execution_id)
+    completed = next(e for e in events if e.event_type == "ExecutionCompleted")
+    assert completed.payload["result"] == {"grade": "FAIL"}

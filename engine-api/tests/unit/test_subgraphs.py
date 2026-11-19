@@ -193,3 +193,76 @@ async def test_parallel_first_success(settings, fake_redis, mem_store):
         if e.event_type == "NodeCompleted" and e.node_key == "par"
     )
     assert out["branch"] in ("left", "right"), out
+
+
+def _loop_body_with_two_ends() -> dict:
+    """loop body 内按分支收口到两个 end：每轮取值必须来自实际执行的 end。"""
+    return {
+        "dslVersion": "1.0",
+        "variables": {"tags": {"type": "array", "required": True}},
+        "defaults": {"timeoutMs": 5000, "maxParallelism": 4},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "loop",
+                "type": "loop",
+                "config": {
+                    "itemsExpression": "vars.tags",
+                    "itemVar": "tag",
+                    "indexVar": "i",
+                    "maxIterations": 10,
+                    "concurrency": 1,
+                    "body": {
+                        "nodes": [
+                            {
+                                "key": "gate",
+                                "type": "condition",
+                                "config": {
+                                    "cases": [{"name": "has", "when": "vars.tag"}],
+                                    "elseBranch": "none",
+                                },
+                            },
+                            # 定义顺序让 no_end 在前，验证不会取到未执行的 end
+                            {
+                                "key": "no_end",
+                                "type": "end",
+                                "config": {"resultMapping": {"value": "EMPTY"}},
+                            },
+                            {
+                                "key": "yes_end",
+                                "type": "end",
+                                "config": {"resultMapping": {"value": "{{ vars.tag }}"}},
+                            },
+                        ],
+                        "edges": [
+                            {"from": "gate", "to": "yes_end", "branch": "has"},
+                            {"from": "gate", "to": "no_end", "branch": "none"},
+                        ],
+                    },
+                    "collect": {"into": "collected", "item": "value"},
+                },
+            },
+            {
+                "key": "end",
+                "type": "end",
+                "config": {"resultMapping": {"n": "{{ nodes.loop.output.count }}"}},
+            },
+        ],
+        "edges": [{"from": "start", "to": "loop"}, {"from": "loop", "to": "end"}],
+    }
+
+
+async def test_loop_body_result_uses_executed_end(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    req = ExecuteRequest.model_validate(
+        make_execute_request(_loop_body_with_two_ends(), initialVariables={"tags": ["a", "b"]})
+    )
+    await dispatcher.submit(req)
+    assert await wait_terminal(mem_store, req.execution_id) == "SUCCEEDED"
+
+    events = await mem_store.read_all(req.execution_id)
+    completed = next(e for e in events if e.event_type == "ExecutionCompleted")
+    assert completed.payload["result"] == {"n": "2"}
+
+    loop_done = next(e for e in events if e.event_type == "NodeCompleted" and e.node_key == "loop")
+    assert loop_done.payload["output"]["collected"] == ["a", "b"]

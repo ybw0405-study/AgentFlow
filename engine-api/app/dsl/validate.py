@@ -199,35 +199,7 @@ def validate_dsl(raw: dict[str, Any], settings: Settings) -> ValidationResult:
 
     # 8) 变量/节点引用
     if not any(e.code in (DSL_REF, DSL_CYCLE) for e in errors):
-        ancestors = _ancestor_sets(nodes, dsl)
-        for n in dsl.nodes:
-            for text in _collect_strings(n.config.canonical_dump()):
-                for var in _VAR_REF.findall(text):
-                    if var not in dsl.variables:
-                        errors.append(
-                            DslError(
-                                code=DSL_REF,
-                                node_key=n.key,
-                                message=f"undefined variable 'vars.{var}'",
-                            )
-                        )
-                for ref in _NODE_REF.findall(text):
-                    if ref not in nodes:
-                        errors.append(
-                            DslError(
-                                code=DSL_REF,
-                                node_key=n.key,
-                                message=f"reference to unknown node '{ref}'",
-                            )
-                        )
-                    elif ref == n.key or ref not in ancestors.get(n.key, set()):
-                        errors.append(
-                            DslError(
-                                code=DSL_REF,
-                                node_key=n.key,
-                                message=f"node '{ref}' is not an upstream ancestor of '{n.key}'",
-                            )
-                        )
+        errors.extend(_reference_errors(dsl, nodes))
 
     if errors:
         return ValidationResult(ok=False, errors=errors)
@@ -244,6 +216,251 @@ def _nested_nodes(dsl: WorkflowDsl) -> list[tuple[str, Any]]:
             for name, branch in node.config.branches.items():
                 out.extend((f"{node.key}.{name}", n) for n in branch.nodes)
     return out
+
+
+def _reference_errors(dsl: WorkflowDsl, nodes: dict[str, Any]) -> list[DslError]:
+    """变量/节点引用检查（作用域感知）。
+
+    loop.body 与 parallel.branches 是独立子图：子图内可见「外层已声明变量 + 自己的迭代变量」，
+    节点引用既可以是子图内的上游节点，也可以是外层节点的上游。按顶层作用域一刀切会把合法子图
+    判成未声明——在 loop 里写 `vars.item` 会直接发布不了。这里递归下钻，按各自作用域判。
+    """
+    errors = _graph_ref_errors(
+        nodes,
+        list(dsl.edges),
+        declared=set(dsl.variables),
+        extra_vars=set(),
+        outer_nodes=set(),
+        outer_ancestors=set(),
+    )
+    seen: set[tuple[str, str | None, str]] = set()
+    unique: list[DslError] = []
+    for err in errors:
+        marker = (err.code, err.node_key, err.message)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique.append(err)
+    return unique
+
+
+def _written_vars(node: Any) -> set[str]:
+    """节点运行期会写入的变量名（transform 的 target、loop 的 collect.into）。"""
+    out: set[str] = set()
+    if node.type == "transform":
+        out.update(m.target.removeprefix("vars.") for m in node.config.mappings)
+    elif node.type == "loop" and node.config.collect is not None:
+        out.add(node.config.collect.into)
+    return out
+
+
+def _visible_vars(
+    declared: set[str],
+    ancestors: dict[str, set[str]],
+    written: dict[str, set[str]],
+    key: str,
+) -> set[str]:
+    """本节点可见变量 = 声明变量 + 上游节点写入的变量。"""
+    extra: set[str] = set()
+    for anc in ancestors.get(key, set()):
+        extra |= written.get(anc, set())
+    return declared | extra
+
+
+def _graph_ref_errors(
+    graph_nodes: dict[str, Any],
+    graph_edges: list[Any],
+    *,
+    declared: set[str],
+    extra_vars: set[str],
+    outer_nodes: set[str],
+    outer_ancestors: set[str],
+) -> list[DslError]:
+    errors: list[DslError] = []
+    ancestors = _ancestors_of(graph_nodes, graph_edges)
+    written = {k: _written_vars(n) for k, n in graph_nodes.items()}
+    for key, node in graph_nodes.items():
+        cfg = node.config.canonical_dump()
+        children: list[tuple[Any, set[str]]] = []
+        if node.type == "loop":
+            cfg.pop("body", None)
+            extra = {node.config.item_var, node.config.index_var}
+            children.append((node.config.body, extra))
+        elif node.type == "parallel":
+            cfg.pop("branches", None)
+            children.extend((branch, set()) for branch in node.config.branches.values())
+
+        cfg = _strip_destinations(node.type, cfg)
+        visible = _visible_vars(declared, ancestors, written, key)
+
+        for text in _collect_strings(cfg):
+            errors.extend(
+                _scan_text(
+                    key,
+                    text,
+                    local_nodes=graph_nodes,
+                    local_ancestors=ancestors,
+                    declared=visible,
+                    extra_vars=extra_vars,
+                    outer_nodes=outer_nodes,
+                    outer_ancestors=outer_ancestors,
+                )
+            )
+
+        for sub, extra in children:
+            sub_nodes = {n.key: n for n in sub.nodes}
+            sub_edges = list(sub.edges)
+            errors.extend(_nested_edge_errors(sub_nodes, sub_edges))
+            errors.extend(
+                _graph_ref_errors(
+                    sub_nodes,
+                    sub_edges,
+                    declared=visible,
+                    extra_vars=extra_vars | extra,
+                    outer_nodes=outer_nodes | set(graph_nodes),
+                    outer_ancestors=outer_ancestors | ancestors.get(key, set()),
+                )
+            )
+    return errors
+
+
+def _strip_destinations(node_type: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """去掉「写入型」字段再做引用检查。
+
+    transform 的 `mappings[].target`（vars.x）与 loop 的 `collect.into` 是变量定义而不是引用：
+    把它们当引用会让"先算一个临时变量"必须先在工作流变量里声明一遍，纯属自找麻烦。
+    """
+    if node_type == "transform":
+        mappings = cfg.get("mappings")
+        if isinstance(mappings, list):
+            cfg["mappings"] = [
+                {"template": (m or {}).get("template", "")} if isinstance(m, dict) else m
+                for m in mappings
+            ]
+    elif node_type == "loop":
+        collect = cfg.get("collect")
+        if isinstance(collect, dict):
+            cfg["collect"] = {k: v for k, v in collect.items() if k != "into"}
+    return cfg
+
+
+def _scan_text(
+    key: str,
+    text: str,
+    *,
+    local_nodes: dict[str, Any],
+    local_ancestors: dict[str, set[str]],
+    declared: set[str],
+    extra_vars: set[str],
+    outer_nodes: set[str],
+    outer_ancestors: set[str],
+) -> list[DslError]:
+    errors: list[DslError] = []
+    for var in _VAR_REF.findall(text):
+        if var not in declared and var not in extra_vars:
+            errors.append(
+                DslError(code=DSL_REF, node_key=key, message=f"undefined variable 'vars.{var}'")
+            )
+    for ref in _NODE_REF.findall(text):
+        if ref in local_nodes:
+            if ref == key or ref not in local_ancestors.get(key, set()):
+                errors.append(
+                    DslError(
+                        code=DSL_REF,
+                        node_key=key,
+                        message=f"node '{ref}' is not an upstream ancestor of '{key}'",
+                    )
+                )
+        elif ref in outer_ancestors:
+            continue
+        elif ref in outer_nodes:
+            errors.append(
+                DslError(
+                    code=DSL_REF,
+                    node_key=key,
+                    message=f"node '{ref}' is not an upstream ancestor of '{key}'",
+                )
+            )
+        else:
+            errors.append(
+                DslError(code=DSL_REF, node_key=key, message=f"reference to unknown node '{ref}'")
+            )
+    return errors
+
+
+def _nested_edge_errors(graph_nodes: dict[str, Any], edges: list[Any]) -> list[DslError]:
+    """子图内的边规则：端点存在、branch 只能从分支节点出发、start 不得有入边。
+
+    顶层边在 validate_dsl 主体里已查过；子图的边此前完全没查，条件节点放进 loop 后
+    写错 branch 会一路跑到运行期才炸。
+    """
+    errors: list[DslError] = []
+    for e in edges:
+        if e.from_ not in graph_nodes:
+            errors.append(
+                DslError(
+                    code=DSL_REF,
+                    message=f"edge from unknown node '{e.from_}'",
+                    node_key=e.from_,
+                )
+            )
+        if e.to not in graph_nodes:
+            errors.append(
+                DslError(code=DSL_REF, message=f"edge to unknown node '{e.to}'", node_key=e.to)
+            )
+        src = graph_nodes.get(e.from_)
+        if e.branch is not None and src is not None and src.type not in _BRANCH_NODE_TYPES:
+            errors.append(
+                DslError(
+                    code=DSL_BRANCH,
+                    node_key=e.from_,
+                    message=f"branch edge from non-branch node '{e.from_}'",
+                )
+            )
+        if (
+            e.branch is not None
+            and src is not None
+            and src.type == "human_gate"
+            and e.branch not in ("approved", "rejected")
+        ):
+            errors.append(
+                DslError(
+                    code=DSL_BRANCH,
+                    node_key=e.from_,
+                    message=f"human_gate branch must be 'approved' or 'rejected', got '{e.branch}'",
+                )
+            )
+        dst = graph_nodes.get(e.to)
+        if dst is not None and dst.type == "start":
+            errors.append(
+                DslError(
+                    code=DSL_VALIDATION,
+                    node_key=e.to,
+                    message="start node must not have incoming edges",
+                )
+            )
+    return errors
+
+
+def _ancestors_of(graph_nodes: dict[str, Any], edges: list[Any]) -> dict[str, set[str]]:
+    """任意图上的祖先集合（拓扑序传播）。"""
+    in_edges: dict[str, list[str]] = {k: [] for k in graph_nodes}
+    out_edges: dict[str, list[str]] = {k: [] for k in graph_nodes}
+    for e in edges:
+        if e.from_ in graph_nodes and e.to in graph_nodes:
+            in_edges[e.to].append(e.from_)
+            out_edges[e.from_].append(e.to)
+    in_degree = {k: len(v) for k, v in in_edges.items()}
+    queue = [k for k, d in in_degree.items() if d == 0]
+    ancestors: dict[str, set[str]] = {k: set() for k in graph_nodes}
+    while queue:
+        cur = queue.pop()
+        for nxt in out_edges[cur]:
+            ancestors[nxt] |= ancestors[cur] | {cur}
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+    return ancestors
 
 
 def _find_cycle(nodes: dict[str, Any], dsl: WorkflowDsl) -> set[str]:
@@ -280,24 +497,3 @@ def _reachable_from(start: str, dsl: WorkflowDsl) -> set[str]:
         seen.add(cur)
         stack.extend(out.get(cur, []))
     return seen
-
-
-def _ancestor_sets(nodes: dict[str, Any], dsl: WorkflowDsl) -> dict[str, set[str]]:
-    """每个节点的全部上游祖先（拓扑序传播）。"""
-    in_edges: dict[str, list[str]] = {k: [] for k in nodes}
-    out_edges: dict[str, list[str]] = {k: [] for k in nodes}
-    for e in dsl.edges:
-        if e.from_ in nodes and e.to in nodes:
-            in_edges[e.to].append(e.from_)
-            out_edges[e.from_].append(e.to)
-    in_degree = {k: len(v) for k, v in in_edges.items()}
-    queue = [k for k, d in in_degree.items() if d == 0]
-    ancestors: dict[str, set[str]] = {k: set() for k in nodes}
-    while queue:
-        cur = queue.pop()
-        for nxt in out_edges[cur]:
-            ancestors[nxt] |= ancestors[cur] | {cur}
-            in_degree[nxt] -= 1
-            if in_degree[nxt] == 0:
-                queue.append(nxt)
-    return ancestors

@@ -153,20 +153,30 @@ class SubgraphRunner:
             # 子图内 transform 对局部变量的写回，同步进 local_vars 供后续层引用
             local_vars.update({k: v for k, v in local_outputs.items() if k in local_vars})
 
-        end_key = next((k for k, n in dag.nodes.items() if n.type == "end"), None)
-        if end_key is not None:
-            nr = self._state.nodes.get(end_key)
-            out = (nr.output or {}) if nr is not None and nr.status == "SUCCEEDED" else {}
-            return out.get("result", out)
+        # 只收成功的 end：子图内也可能有多个 end（分支各自收口），
+        # 取第一个定义会把没跑到的那个当成结果。
         merged: dict[str, Any] = {}
+        found_end = False
+        for end_key in dag.end_keys():
+            nr = self._state.nodes.get(end_key)
+            if nr is None or nr.status != "SUCCEEDED":
+                continue
+            found_end = True
+            out = nr.output or {}
+            produced = out.get("result", out)
+            if isinstance(produced, dict):
+                merged.update(produced)
+        if found_end:
+            return merged
+        tail: dict[str, Any] = {}
         for layer in reversed(dag.layers):
             for k in layer:
                 nr = self._state.nodes.get(k)
                 if nr is not None and nr.status == "SUCCEEDED" and nr.output:
-                    merged.update(nr.output)
-            if merged:
+                    tail.update(nr.output)
+            if tail:
                 break
-        return merged
+        return tail
 
     def with_depth(self, depth: int) -> SubgraphRunner:
         return SubgraphRunner(self._runner, self._state, self._ctx, self._dsl, depth=depth)
