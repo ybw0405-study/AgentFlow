@@ -12,7 +12,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -74,7 +76,28 @@ public class ExecutionController {
         if (exec == null) {
             throw new BusinessException(ErrorCode.WF_NOT_FOUND_001, "resource not found");
         }
-        return ApiResponse.ok(Map.of("execution", exec, "nodes", nodes.listByExecution(id)));
+        Map<String, Object> body = new HashMap<>();
+        body.put("execution", exec);
+        body.put("nodes", nodes.listByExecution(id));
+        body.put("result", finalResult(id, exec.status()));
+        return ApiResponse.ok(body);
+    }
+
+    /**
+     * 终态执行的最终产出（end 节点 resultMapping 的结果）。
+     *
+     * <p>结果只存在事件流里，投影表没有这一列；引擎不可达时返回 null 而不是让整个详情接口失败——
+     * 详情页的主体（状态、节点树）不该被附加信息拖垮。
+     */
+    private Object finalResult(String executionId, String status) {
+        if (!Set.of("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT").contains(status)) {
+            return null;
+        }
+        try {
+            return engine.executionState(executionId).get("result");
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     @GetMapping("/api/v1/executions")

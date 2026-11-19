@@ -61,6 +61,10 @@ def test_full_lifecycle(client, editor_token, admin_token):
     assert set(nodes) == {"start", "draft", "enrich", "final", "end"}
     assert all(n["status"] == "SUCCEEDED" for n in nodes.values())
 
+    # 6.1 详情接口要带回最终产出（end 的 resultMapping），否则页面只能让人逐个点节点看
+    assert detail["result"], detail
+    assert "answer" in detail["result"]
+
     # 7. 事件流可追溯
     resp = client.get(f"/api/v1/executions/{execution_id}/events", headers=hdrs)
     assert resp.status_code == 200

@@ -120,6 +120,8 @@ export interface NodeExecutionDto {
 export interface ExecutionDetail {
   execution: ExecutionDto
   nodes: NodeExecutionDto[]
+  /** 终态执行的最终产出（引擎事件流里的 end 结果）；未终结或引擎不可达时为 null。 */
+  result?: unknown
 }
 
 export interface EngineEvent {

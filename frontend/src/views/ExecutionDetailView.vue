@@ -35,6 +35,16 @@ const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT'])
 
 const nodes = computed<NodeExecutionDto[]>(() => detail.value?.nodes ?? [])
 
+/** 右栏「结果」：终态看最终产出，运行中/失败给对应的说明。 */
+const resultText = computed<string>(() => {
+  const d = detail.value
+  if (!d) return ''
+  if (d.execution.errorCode) return `执行失败：${d.execution.errorCode}`
+  if (d.result === null || d.result === undefined) return '见节点输出（选择左侧节点）'
+  if (typeof d.result === 'string') return d.result
+  return JSON.stringify(d.result, null, 2)
+})
+
 function statusClass(s: string): string {
   return {
     RUNNING: 'af-status--running',
@@ -255,11 +265,7 @@ onUnmounted(() => {
           <pre
             class="mono af-dim"
             style="white-space: pre-wrap; font-size: 11.5px"
-          >{{
-            detail.execution.errorCode
-              ? `执行失败：${detail.execution.errorCode}`
-              : '见节点输出（选择左侧节点）'
-          }}</pre>
+          >{{ resultText }}</pre>
         </div>
       </div>
     </div>
