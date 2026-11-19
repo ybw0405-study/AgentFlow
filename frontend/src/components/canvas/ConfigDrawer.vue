@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { approverExpressionError } from '@/dsl/approver-expr'
+import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslNode } from '@/dsl/types'
 
 defineOptions({ name: 'ConfigDrawer' })
@@ -27,11 +29,22 @@ const emit = defineEmits<{
   update: [node: DslNode]
   close: []
   remove: [key: string]
+  'edit-subgraph': [ref: SubgraphRef]
 }>()
 
-const nodeIssues = computed(() =>
-  props.node ? props.issues.filter((i) => i.nodeKey === props.node?.key) : [],
-)
+/**
+ * 只显示与当前节点相关的问题。
+ * 子图内的问题 key 形如 `loop_1.body#body_end` / `loop_1#body`，
+ * 用「key 前缀」匹配，让 loop / parallel 节点也能看到自己子图里的错。
+ */
+const nodeIssues = computed(() => {
+  if (!props.node) return []
+  const key = props.node.key
+  return props.issues.filter((i) => {
+    const k = i.nodeKey ?? ''
+    return k === key || k.startsWith(`${key}.`) || k.startsWith(`${key}#`)
+  })
+})
 
 function cfg<T>(key: string, fallback: T): T {
   const c = props.node?.config as Record<string, unknown> | undefined
@@ -201,6 +214,13 @@ function patchApprovers(patch: Partial<Approvers>): void {
 
 const approverUsers = computed(() => (approvers.value.userIds ?? []).join(', '))
 
+/** 表达式即时体检：与引擎/控制面同一套文法子集，避免「发布才知道写错」。 */
+const approverExpressionProblem = computed(() =>
+  approvers.value.type === 'EXPRESSION'
+    ? approverExpressionError(approvers.value.expression ?? '')
+    : null,
+)
+
 function setApproverUsers(raw: string): void {
   const ids = raw
     .split(',')
@@ -217,7 +237,7 @@ function patchTimeout(patch: { action?: string; defaultBranch?: string }): void 
   setCfg('onTimeout', { ...onTimeout.value, ...patch })
 }
 
-// ---------- 子图 JSON 编辑（loop.body / parallel.branches） ----------
+// ---------- 子图：画布入口 + 高级 JSON 编辑（loop.body / parallel.branches） ----------
 const jsonDraft = ref<Record<string, string>>({})
 const jsonErrors = ref<Record<string, string>>({})
 
@@ -229,9 +249,12 @@ watch(
   },
 )
 
+/**
+ * 有解析错误时显示用户输入的原文（否则没法继续修），
+ * 没有错误时始终从配置序列化——这样从子画布改完回来，文本域自然是最新的。
+ */
 function jsonText(key: 'body' | 'branches'): string {
-  const draft = jsonDraft.value[key]
-  if (draft !== undefined) return draft
+  if (jsonErrors.value[key]) return jsonDraft.value[key] ?? ''
   return JSON.stringify(cfg<unknown>(key, null) ?? {}, null, 2)
 }
 
@@ -245,6 +268,23 @@ function setJson(key: 'body' | 'branches', raw: string): void {
     // 解析失败时保留用户输入，但不写回配置，避免把坏 JSON 存进草稿
     jsonErrors.value = { ...jsonErrors.value, [key]: (e as Error).message }
   }
+}
+
+/** parallel 的每个分支都是独立子图，按钮要按分支逐个给。 */
+const parallelBranches = computed<string[]>(() => {
+  const raw = cfg<Record<string, unknown>>('branches', {})
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
+  return Object.keys(raw)
+})
+
+function editBranch(branch: string): void {
+  if (!props.node) return
+  emit('edit-subgraph', { nodeKey: props.node.key, branch })
+}
+
+function editBody(): void {
+  if (!props.node) return
+  emit('edit-subgraph', { nodeKey: props.node.key })
 }
 </script>
 
@@ -607,6 +647,9 @@ function setJson(key: 'body' | 'branches', raw: string): void {
         <option value="USERS">
           按用户
         </option>
+        <option value="EXPRESSION">
+          按表达式
+        </option>
       </select>
       <template v-if="approvers.type === 'ROLE'">
         <label class="af-label">角色</label>
@@ -637,6 +680,33 @@ function setJson(key: 'body' | 'branches', raw: string): void {
           placeholder="u-editor, u-admin"
           @input="setApproverUsers(($event.target as HTMLInputElement).value)"
         >
+      </template>
+      <template v-else-if="approvers.type === 'EXPRESSION'">
+        <label class="af-label">审批人表达式</label>
+        <textarea
+          class="af-textarea mono"
+          rows="3"
+          :value="approvers.expression ?? ''"
+          placeholder="user.rank >= 3 and user.id != &quot;u-1&quot;"
+          @input="patchApprovers({ expression: ($event.target as HTMLTextAreaElement).value })"
+        />
+        <p
+          class="af-faint"
+          style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+        >
+          挂起瞬间按「空间成员 + 平台管理员」逐个求值，命中者进入审批人快照。
+          可用：<code>user.id</code> <code>user.role</code> <code>user.rank</code>
+          <code>user.platformAdmin</code> <code>space.id</code>，支持比较、
+          <code>in</code>、<code>and/or/not</code> 与列表字面量（不支持函数调用）。
+          资源名填错会在发布时被引擎拒绝。
+        </p>
+        <p
+          v-if="approverExpressionProblem"
+          class="af-danger"
+          style="font-size: 11px; margin: 4px 0 0"
+        >
+          {{ approverExpressionProblem }}
+        </p>
       </template>
       <label class="af-label">提示词</label>
       <textarea
@@ -815,7 +885,26 @@ function setJson(key: 'body' | 'branches', raw: string): void {
           @input="setCfg('concurrency', Number(($event.target as HTMLInputElement).value))"
         >
       </div>
-      <label class="af-label">body 子图（JSON）</label>
+      <label class="af-label">body 子图</label>
+      <div class="af-subgraph-row">
+        <span
+          class="af-faint"
+          style="font-size: 11px"
+        >循环体（无 start，必须有一个 end）</span>
+        <button
+          class="af-btn af-btn--sm af-btn--primary"
+          @click="editBody"
+        >
+          在画布中编辑
+        </button>
+      </div>
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 8px"
+      >
+        子图内可直接用 {{ `vars.${cfg('itemVar', 'item')}` }} / {{ `vars.${cfg('indexVar', 'index')}` }}，不必声明。
+      </p>
+      <label class="af-label">高级：直接编辑 body JSON</label>
       <textarea
         class="af-textarea mono"
         rows="10"
@@ -835,7 +924,7 @@ function setJson(key: 'body' | 'branches', raw: string): void {
         class="af-faint"
         style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
       >
-        子图内可直接用 {{ `vars.${cfg('itemVar', 'item')}` }} / {{ `vars.${cfg('indexVar', 'index')}` }}，不必声明。
+        与子画布双向同步；解析失败时不会写回，草稿保持上一份有效值。
       </p>
     </template>
 
@@ -862,7 +951,28 @@ function setJson(key: 'body' | 'branches', raw: string): void {
         :value="cfg('maxConcurrency', 4)"
         @input="setCfg('maxConcurrency', Number(($event.target as HTMLInputElement).value))"
       >
-      <label class="af-label">branches 子图（JSON，至少两个）</label>
+      <label class="af-label">branches 子图</label>
+      <div
+        v-for="b in parallelBranches"
+        :key="b"
+        class="af-subgraph-row"
+      >
+        <span class="mono af-dim">{{ b }}</span>
+        <button
+          class="af-btn af-btn--sm af-btn--primary"
+          @click="editBranch(b)"
+        >
+          在画布中编辑
+        </button>
+      </div>
+      <p
+        v-if="!parallelBranches.length"
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        还没有分支。并行节点至少需要两个分支，可在下方 JSON 里补上。
+      </p>
+      <label class="af-label">高级：直接编辑 branches JSON</label>
       <textarea
         class="af-textarea mono"
         rows="12"
@@ -876,6 +986,13 @@ function setJson(key: 'body' | 'branches', raw: string): void {
         style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
       >
         JSON 未生效：{{ jsonErrors.branches }}
+      </p>
+      <p
+        v-else
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
+      >
+        每个分支一张独立子图（无 start，必须有一个 end）；与子画布双向同步。
       </p>
     </template>
 
@@ -923,5 +1040,17 @@ function setJson(key: 'body' | 'branches', raw: string): void {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.af-subgraph-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
 }
 </style>

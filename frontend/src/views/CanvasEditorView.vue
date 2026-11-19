@@ -11,9 +11,15 @@ import { errorText } from '@/api/errors'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
 import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge, setEdgeBranch } from '@/dsl/graph-ops'
 import type { CanvasEdge } from '@/dsl/graph-ops'
-import type { FlowGraph, FlowNodeLike } from '@/dsl/flow-convert'
+import type { FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
+import {
+  readSubgraphPath,
+  subgraphRemovalError,
+  writeSubgraphPath,
+} from '@/dsl/subgraph'
+import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
 import { branchOptions } from '@/dsl/types'
 import type { WorkflowDefinitionDto, LlmConnectionConfig } from '@/types/api'
@@ -50,8 +56,32 @@ const runDialog = ref(false)
 const runVariablesText = ref('{}')
 const busy = ref(false)
 
-function toDsl(): WorkflowDsl {
+/** 根层 DSL：唯一真源。画布上正在编辑的可能是它内部的某一层子图。 */
+const rootDsl = ref<WorkflowDsl | null>(null)
+/** 当前画布所在位置；空数组表示根层，每项是相对上一层的子图引用。 */
+const path = ref<SubgraphRef[]>([])
+const inSubgraph = computed(() => path.value.length > 0)
+
+/** 当前画布这一层对应的 DSL（不含子图写回）。 */
+function layerDsl(): WorkflowDsl {
   return flowToDsl({ nodes: nodes.value, edges: edges.value }, variables.value, defaults.value)
+}
+
+/**
+ * 把「画布当前层」合并回整份 DSL。
+ * 子图编辑时只替换当前层的 nodes/edges，外层内容与根层变量原样保留，
+ * 这样自动保存 / 版本对比拿到的始终是完整 DSL，而不是一张局部图。
+ */
+function toDsl(): WorkflowDsl {
+  const layer = layerDsl()
+  const base = rootDsl.value
+  if (!base || !path.value.length) return layer
+  const written = writeSubgraphPath(base, path.value, {
+    nodes: layer.nodes,
+    edges: layer.edges,
+  })
+  // 变量与 defaults 只在根层维护（变量面板始终编辑根层），子图内也要同步过去
+  return { ...written, variables: variables.value, defaults: defaults.value }
 }
 
 // Vue Flow 深层泛型与 vue-tsc 的相性差：状态侧用结构化 like-types，模板边界一次性断言
@@ -180,23 +210,94 @@ async function load(): Promise<void> {
 }
 
 function applyDsl(dsl: WorkflowDsl): void {
-  const graph: FlowGraph = dslToFlow(dsl)
-  nodes.value = graph.nodes
-  edges.value = graph.edges
-  variables.value = dsl.variables ?? {}
-  defaults.value = dsl.defaults ?? {}
-  selectedKey.value = null
-  selectedEdgeId.value = null
-  issues.value = validateDslLocal(dsl)
+  rootDsl.value = dsl
+  path.value = []
+  loadLayer()
   lastSavedJson = JSON.stringify(toDsl())
 }
 
+/** 从 rootDsl 重新装载当前层；路径失效（例如 JSON 里删掉了 body）时退回根层。 */
+function loadLayer(): void {
+  const base = rootDsl.value
+  if (!base) return
+  const graph = path.value.length
+    ? readSubgraphPath(base, path.value)
+    : { nodes: base.nodes, edges: base.edges }
+  if (!graph) {
+    path.value = []
+    notice.value = '子图已不存在，已回到工作流根层'
+    loadLayer()
+    return
+  }
+  const flow = dslToFlow({ ...base, nodes: graph.nodes, edges: graph.edges })
+  nodes.value = flow.nodes
+  edges.value = flow.edges
+  variables.value = base.variables ?? {}
+  defaults.value = base.defaults ?? {}
+  selectedKey.value = null
+  selectedEdgeId.value = null
+  issues.value = validateDslLocal(toDsl())
+}
+
+interface Crumb {
+  label: string
+  /** 点击后保留的路径长度；等于当前长度即当前层。 */
+  level: number
+}
+
+const crumbs = computed<Crumb[]>(() => {
+  // 一层一个可点项：`loop_1.body` / `parallel_1.a`。节点 key 单独成项会让人以为
+  // 「点 loop_1 能看节点本身」，但子图和节点的编辑面不是同一个，索性合成一项。
+  const out: Crumb[] = [{ label: '工作流', level: 0 }]
+  path.value.forEach((ref, i) => {
+    out.push({
+      label: ref.branch ? `${ref.nodeKey}.${ref.branch}` : `${ref.nodeKey}.body`,
+      level: i + 1,
+    })
+  })
+  return out
+})
+
+/** 进入子图：先把当前层写回根 DSL，再切换画布内容。 */
+function enterSubgraph(ref: SubgraphRef): void {
+  rootDsl.value = toDsl()
+  const nextPath = [...path.value, ref]
+  if (!readSubgraphPath(rootDsl.value, nextPath)) {
+    notice.value = `子图 ${ref.nodeKey}${ref.branch ? `.${ref.branch}` : '.body'} 不可编辑（结构缺失）`
+    return
+  }
+  path.value = nextPath
+  sourceMode.value = false
+  loadLayer()
+}
+
+/** 面包屑回上层：level 是目标路径长度。 */
+function exitTo(level: number): void {
+  if (level >= path.value.length) return
+  rootDsl.value = toDsl()
+  path.value = path.value.slice(0, level)
+  loadLayer()
+}
+
+/** 当前层的可读标题，用于提示与空态文案。 */
+const layerTitle = computed<string>(() => {
+  if (!path.value.length) return '工作流根层'
+  return path.value
+    .map((ref) => (ref.branch ? `${ref.nodeKey}.${ref.branch}` : `${ref.nodeKey}.body`))
+    .join(' > ')
+})
+
 let keyCounter = 0
 function addNode(type: NodeType): void {
+  if (type === 'start' && inSubgraph.value) {
+    notice.value = '子图内不能创建 start 节点：进入子图就是它的入口'
+    return
+  }
   if (type === 'start' && hasStart.value) {
     notice.value = 'start 节点只能有一个，请先删除多余的 start 再添加'
     return
   }
+  // key 只需在本层唯一：不同子图里出现同名节点是合法的，不必和外层一起判重
   let key = `${type}_${++keyCounter}`
   while (nodes.value.some((n) => n.id === key)) key = `${type}_${++keyCounter}`
   const offset = nodes.value.length * 30
@@ -279,6 +380,24 @@ function updateNode(updated: DslNode): void {
 }
 
 function removeNode(key: string): void {
+  if (inSubgraph.value) {
+    // 子图没有 start 兜底，删掉最后一个 end 就再也收不了尾：明确拒绝并说明怎么绕
+    const reason = subgraphRemovalError(
+      {
+        nodes: nodes.value.map((n) => ({
+          key: n.id,
+          type: n.data.nodeType,
+          config: n.data.config ?? {},
+        })),
+        edges: [],
+      },
+      key,
+    )
+    if (reason) {
+      notice.value = reason
+      return
+    }
+  }
   const next = removeNodeOp(nodes.value, edges.value, key)
   nodes.value = next.nodes
   edges.value = next.edges
@@ -523,6 +642,39 @@ onUnmounted(() => {
     </div>
 
     <div
+      v-if="inSubgraph"
+      class="af-breadcrumb"
+    >
+      <template
+        v-for="(crumb, i) in crumbs"
+        :key="`${crumb.label}-${crumb.level}`"
+      >
+        <span
+          v-if="i"
+          class="af-faint"
+        >›</span>
+        <button
+          class="af-btn af-btn--sm"
+          :class="{ 'af-btn--primary': crumb.level === path.length }"
+          :disabled="crumb.level === path.length"
+          :title="crumb.level === path.length ? '当前所在层' : '回到这一层'"
+          @click="exitTo(crumb.level)"
+        >
+          {{ crumb.label }}
+        </button>
+      </template>
+      <span
+        class="af-faint"
+        style="font-size: 11px"
+      >子图：没有 start，需保留至少一个 end</span>
+      <div class="af-spacer" />
+      <span
+        class="mono af-faint"
+        style="font-size: 11px"
+      >{{ layerTitle }}</span>
+    </div>
+
+    <div
       v-if="error"
       class="af-error-box"
       style="margin: 8px 12px 0"
@@ -540,6 +692,7 @@ onUnmounted(() => {
     <div style="flex: 1; display: flex; min-height: 0; position: relative">
       <NodePalette
         :start-taken="hasStart"
+        :in-subgraph="inSubgraph"
         @add="addNode"
       />
       <div style="flex: 1; position: relative">
@@ -608,6 +761,7 @@ onUnmounted(() => {
         @update="updateNode"
         @close="clearSelection"
         @remove="removeNode"
+        @edit-subgraph="enterSubgraph"
       />
     </div>
 
@@ -656,6 +810,16 @@ onUnmounted(() => {
 </template>
 
 <style>
+.af-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--af-panel);
+  border-bottom: 1px solid var(--af-border);
+  flex: none;
+}
+
 .af-flow {
   background: var(--af-bg);
 }

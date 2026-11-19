@@ -204,3 +204,56 @@ describe('变量写入与引用', () => {
     expect(issues.some((i) => i.message.includes('vars.nope'))).toBe(true)
   })
 })
+
+describe('审批人表达式', () => {
+  const gate = (approvers: Record<string, unknown>): WorkflowDsl =>
+    dsl(
+      [
+        { key: 'start', type: 'start', config: {} },
+        {
+          key: 'approve',
+          type: 'human_gate',
+          config: {
+            approvers,
+            promptTemplate: '请确认',
+            timeoutMs: 86_400_000,
+            onTimeout: { action: 'REJECT' },
+          },
+        },
+        { key: 'ok', type: 'end', config: { resultMapping: { ok: 'yes' } } },
+        { key: 'no', type: 'end', config: { resultMapping: { ok: 'no' } } },
+      ],
+      [
+        { from: 'start', to: 'approve' },
+        { from: 'approve', to: 'ok', branch: 'approved' },
+        { from: 'approve', to: 'no', branch: 'rejected' },
+      ],
+    )
+
+  it('支持子集内的表达式不报错', () => {
+    const issues = validateDslLocal(
+      gate({
+        type: 'EXPRESSION',
+        expression: 'user.rank >= 3 and user.id in ["u-1", "u-2"]',
+      }),
+    )
+    expect(issues.filter((i) => (i.message ?? '').includes('表达式'))).toHaveLength(0)
+  })
+
+  it('属性名写错当场提示', () => {
+    const issues = validateDslLocal(gate({ type: 'EXPRESSION', expression: 'user.level >= 2' }))
+    expect(issues.some((i) => i.message.includes('user.level'))).toBe(true)
+  })
+
+  it('函数调用不在子集内', () => {
+    const issues = validateDslLocal(
+      gate({ type: 'EXPRESSION', expression: 'len(user.id) > 3' }),
+    )
+    expect(issues.some((i) => i.message.includes('表达式'))).toBe(true)
+  })
+
+  it('没填表达式要提示', () => {
+    const issues = validateDslLocal(gate({ type: 'EXPRESSION' }))
+    expect(issues.some((i) => i.message.includes('请填写审批人表达式'))).toBe(true)
+  })
+})

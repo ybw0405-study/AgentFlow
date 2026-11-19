@@ -4,16 +4,21 @@ import type { NodeType } from '@/dsl/types'
 
 defineOptions({ name: 'NodePalette' })
 
-const props = defineProps<{ startTaken: boolean }>()
+const props = defineProps<{ startTaken: boolean; inSubgraph?: boolean }>()
 
 const emit = defineEmits<{ add: [type: NodeType] }>()
 
 function disabled(type: NodeType): boolean {
-  return type === 'start' && props.startTaken
+  // 子图由上层节点进入，没有 start 的位置；这里直接禁用，避免建出必被引擎拒绝的节点
+  if (type === 'start') return props.inSubgraph === true || props.startTaken
+  return false
 }
 
 function titleFor(meta: { type: NodeType; description: string }): string {
-  return disabled(meta.type) ? '已存在 start 节点：一个工作流只能有一个' : meta.description
+  if (!disabled(meta.type)) return meta.description
+  return props.inSubgraph === true
+    ? '子图内不能有 start 节点：入口由上层节点决定'
+    : '已存在 start 节点：一个工作流只能有一个'
 }
 </script>
 
@@ -40,8 +45,13 @@ function titleFor(meta: { type: NodeType; description: string }): string {
       class="af-faint"
       style="font-size: 11px; margin-top: 12px; line-height: 1.6"
     >
-      选中节点在右侧配置；condition / human_gate 的出边分支在画布底部设置。
-      <br>retrieval 引擎尚未实现执行器，暂不提供。
+      <template v-if="inSubgraph">
+        当前在子图内：入口由上层节点决定，没有 start；必须保留至少一个 end。
+      </template>
+      <template v-else>
+        选中节点在右侧配置；condition / human_gate 的出边分支在画布底部设置。
+        <br>retrieval 引擎尚未实现执行器，暂不提供。
+      </template>
     </div>
   </aside>
 </template>
