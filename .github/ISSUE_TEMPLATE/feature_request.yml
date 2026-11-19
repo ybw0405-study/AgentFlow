@@ -1,0 +1,27 @@
+name: 需求 / 改进
+description: 新能力、体验改进或技术债清理
+labels: [enhancement]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 谁在什么情况下遇到什么问题，不要只写「希望支持 X」
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望行为
+      description: 接口、DSL、界面上的期望表现；有替代方案也一并说明
+    validations:
+      required: true
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: 影响面
+      options:
+        - label: 涉及对外契约（`/api/v1` 或 DSL），需要同步 OpenAPI / 架构文档
+        - label: 涉及数据库迁移（只能追加新版本号）
+        - label: 涉及执行引擎语义（重放、预算、租约、审批）
+        - label: 仅前端或文档改动

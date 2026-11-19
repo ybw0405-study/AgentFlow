@@ -1,0 +1,61 @@
+name: Bug 报告
+description: 功能异常、构建失败或行为与文档不一致
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        安全漏洞请勿在此提交，按 [SECURITY.md](../blob/main/SECURITY.md) 的私下渠道上报。
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象
+      description: 实际发生了什么，贴关键报错或截图（注意隐去密钥、token、手机号）
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 用 editor@agentflow.dev 登录
+        2. 打开工作流 demo，触发执行
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响模块
+      multiple: true
+      options:
+        - agent-gateway
+        - workflow-service
+        - audit-service
+        - connector-service
+        - engine-api
+        - frontend
+        - scripts / ops
+        - 文档 / 契约
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: OS、JDK / Node / Python 版本、是否 WSL2、`git rev-parse --short HEAD`
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前自查
+      options:
+        - label: 已运行 `./scripts/verify-all.ps1`（或对应端的门禁）并附上结果
+        - label: 日志与截图中已隐去密钥、token 与个人数据
