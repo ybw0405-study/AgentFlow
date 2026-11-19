@@ -3,6 +3,22 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [0.3.1] - 2026-11-19
+
+0.3.0 首次在 GitHub 上跑全栈验收时暴露的问题：把 MQ 通道的正常形态当成了故障。
+
+### 修复
+
+- 引擎的裁决消费端把「迟到的裁决」计成失败：HTTP 快路径先续跑并收口后，MQ 这条消息
+  到达时 `resolve_gate` 返回 `ALREADY_TERMINAL`，旧分类归入 `failed` 并打 WARNING。
+  结果是告警长期变红、真故障被淹，e2e 里 `duplicate` 为 0 直接导致断言失败。现在按
+  三种非故障出口计数：`applied`（本通道推进了状态机）/ `duplicate`（节点已裁决）/
+  `stale`（执行已收口或节点不在挂起态）；`NOT_FOUND`、`INVALID_DECISION` 归 `invalid`；
+  只有 `BUSY` 重试耗尽与真实异常才算 `failed`。
+- `BUSY` 先本地重试 3 次再计数：租约通常正被 HTTP 侧持有，等一拍就会落成 `duplicate`。
+- e2e 的 MQ 用例不再锚定 HTTP 与 MQ 的先后（`必须 duplicate` 是随机翻车的写法），
+  改为断言「消费到了 + 有账可查（applied/duplicate/stale 有增量）+ invalid/failed 不增长」。
+
 ## [0.3.0] - 2026-11-19
 
 把上一版列在「已知限制」里的四条硬伤全部做掉：审计不再「MQ 挂掉只记一行 WARN」，
