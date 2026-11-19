@@ -16,6 +16,7 @@ from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
 from ..errors import ExpressionError
+from .safeexpr import wrap_context
 
 # 与事件 payload 上限（256KB）对齐：渲染结果本就是节点输出的来源
 MAX_RENDERED_CHARS = 256 * 1024
@@ -24,8 +25,11 @@ _env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
 
 
 def render_template(template: str, context: dict[str, Any]) -> str:
+    # 上下文包一层 _Scope：Jinja 的 `a.b` 先走 getattr，原生 dict 的 items/keys/values
+    # 会命中文档方法而不是变量值（nodes.x.output.items[0] 直接渲染失败）。
+    scoped = {k: wrap_context(v) for k, v in context.items()}
     try:
-        rendered = _env.from_string(template).render(**context)
+        rendered = _env.from_string(template).render(**scoped)
     except Exception as exc:
         raise ExpressionError(f"template render failed: {exc}") from exc
     if len(rendered) > MAX_RENDERED_CHARS:

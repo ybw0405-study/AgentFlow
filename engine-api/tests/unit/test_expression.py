@@ -56,3 +56,40 @@ def test_template_undefined_is_error():
 def test_template_sandbox_blocks_internals():
     with pytest.raises(ExpressionError):
         render_template("{{ vars.__class__.__mro__ }}", {"vars": {}})
+
+
+def test_dict_key_named_like_dict_method():
+    """vars.items / vars.keys 必须取到变量值，而不是 dict 自带方法。"""
+    names = {"vars": {"items": ["a", "b"], "keys": "k", "values": 3, "get": "g"}}
+    assert evaluate("vars.items", names) == ["a", "b"]
+    assert evaluate("len(vars.items)", names) == 2
+    assert evaluate("vars.keys == 'k'", names) is True
+    assert evaluate("vars.values + 1", names) == 4
+    assert evaluate("vars.get", names) == "g"
+
+
+def test_nested_dict_key_named_like_dict_method():
+    names = {"nodes": {"n1": {"output": {"items": [{"value": "x"}]}}}}
+    assert evaluate("nodes.n1.output.items[0].value", names) == "x"
+
+
+def test_to_json_and_json_get_accept_scoped_dicts():
+    names = {"vars": {"items": [1, 2]}}
+    assert evaluate("to_json(vars)", names) == '{"items": [1, 2]}'
+    assert evaluate("json_get(vars, '$.items[1]')", names) == 2
+
+
+def test_template_renders_dict_key_named_like_dict_method():
+    """模板里 nodes.x.output.items[0] 也要取到值，而不是 dict.items 方法。"""
+    ctx = {
+        "vars": {"items": ["a", "b"]},
+        "nodes": {"loop_1": {"output": {"items": [{"value": "0:a"}], "count": 1}}},
+    }
+    assert render_template("{{ vars.items[0] }}", ctx) == "a"
+    assert render_template("{{ nodes.loop_1.output.items[0].value }}", ctx) == "0:a"
+    assert render_template("{{ nodes.loop_1.output.count }}", ctx) == "1"
+
+
+def test_template_iterates_scoped_list():
+    ctx = {"vars": {"items": ["a", "b"]}}
+    assert render_template("{% for i in vars.items %}{{ i }}{% endfor %}", ctx) == "ab"

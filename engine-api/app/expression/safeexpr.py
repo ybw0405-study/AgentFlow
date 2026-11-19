@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from simpleeval import EvalWithCompoundTypes
@@ -70,15 +71,72 @@ ALLOWED_FUNCTIONS: dict[str, Any] = {
     "min": min,
     "max": max,
     "round": round,
-    "json_get": _json_get,
-    "to_json": lambda v: json.dumps(v, ensure_ascii=False),
+    "json_get": lambda obj, path: _json_get(unwrap_value(obj), path),
+    "to_json": lambda v: json.dumps(unwrap_value(v), ensure_ascii=False),
 }
 
 
+class _Scope:
+    """dict 的属性视图：让 `vars.items` 取到变量的值而不是 `dict.items` 方法。
+
+    simpleeval 解析 `a.b` 走 getattr；如果 a 是原生 dict，`items` / `keys` / `values` /
+    `get` 这类名字会命中 dict 自带方法，表达式静默取到方法对象：
+    变量叫 items 时 loop 直接报 "items_expression must evaluate to a list"，
+    condition 则把一个方法当成真值。这里用一个没有这些属性的包装对象避开同名冲突。
+    """
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        object.__setattr__(self, "_data", data)
+
+    def __getattr__(self, name: str) -> Any:
+        data = object.__getattribute__(self, "_data")
+        if name in data:
+            return wrap_context(data[name])
+        raise AttributeError(name)
+
+    def __getitem__(self, key: str) -> Any:
+        return wrap_context(self._data[key])
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._data
+
+    def __iter__(self) -> Any:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __bool__(self) -> bool:
+        return bool(self._data)
+
+    def __repr__(self) -> str:
+        return repr(self._data)
+
+
+def wrap_context(value: Any) -> Any:
+    """把 dict 递归包成 _Scope，供表达式与模板共用。"""
+    if isinstance(value, Mapping):
+        return _Scope(value)
+    if isinstance(value, list):
+        return [wrap_context(v) for v in value]
+    return value
+
+
+def unwrap_value(value: Any) -> Any:
+    if isinstance(value, _Scope):
+        return object.__getattribute__(value, "_data")
+    if isinstance(value, list):
+        return [unwrap_value(v) for v in value]
+    return value
+
+
 def evaluate(expression: str, names: dict[str, Any]) -> Any:
-    evaluator = EvalWithCompoundTypes(names=names, functions=dict(ALLOWED_FUNCTIONS))
+    scoped = {k: wrap_context(v) for k, v in names.items()}
+    evaluator = EvalWithCompoundTypes(names=scoped, functions=dict(ALLOWED_FUNCTIONS))
     try:
-        return evaluator.eval(expression)
+        return unwrap_value(evaluator.eval(expression))
     except ExpressionError:
         raise
     except Exception as exc:  # simpleeval 各类拒绝统一归一
