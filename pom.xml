@@ -25,7 +25,7 @@
         <spring-boot.version>3.5.16</spring-boot.version>
         <!-- 与 Boot 3.5 官方配套的 release train（2023.0.x 仅支持到 Boot 3.3） -->
         <spring-cloud.version>2025.0.3</spring-cloud.version>
-        <rocketmq.version>5.3.4</rocketmq.version>
+        <rocketmq.version>5.5.1</rocketmq.version>
         <mybatis.version>3.0.5</mybatis.version>
         <jjwt.version>0.12.7</jjwt.version>
         <!-- 必须与 Boot 3.5 BOM 的 flyway.version 一致，否则 flyway-core 与 flyway-mysql 错配 -->
