@@ -22,9 +22,9 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Boot 3.x 最终稳定线；3.3.x 已 EOL，升 3.5 重获安全补丁且保持 Java 17 兼容 -->
-        <spring-boot.version>3.5.16</spring-boot.version>
+        <spring-boot.version>4.1.2</spring-boot.version>
         <!-- 与 Boot 3.5 官方配套的 release train（2023.0.x 仅支持到 Boot 3.3） -->
-        <spring-cloud.version>2025.0.3</spring-cloud.version>
+        <spring-cloud.version>2025.1.4</spring-cloud.version>
         <rocketmq.version>5.3.4</rocketmq.version>
         <mybatis.version>3.0.5</mybatis.version>
         <jjwt.version>0.12.7</jjwt.version>
