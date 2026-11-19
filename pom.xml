@@ -27,7 +27,7 @@
         <spring-cloud.version>2025.0.3</spring-cloud.version>
         <rocketmq.version>5.3.4</rocketmq.version>
         <mybatis.version>3.0.5</mybatis.version>
-        <jjwt.version>0.12.7</jjwt.version>
+        <jjwt.version>0.13.0</jjwt.version>
         <!-- 必须与 Boot 3.5 BOM 的 flyway.version 一致，否则 flyway-core 与 flyway-mysql 错配 -->
         <flyway.version>11.7.2</flyway.version>
         <!-- 与 Boot 3.5 BOM 对齐；Connector/J 9.x 向后兼容 8.x API 且要求 Java 17+ -->
