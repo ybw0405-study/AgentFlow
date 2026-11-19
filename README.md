@@ -40,8 +40,6 @@ flowchart LR
 | 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
 | 审计只追加（触发器 + 最小授权 + MQ） | ✅ P0 |
 | mock LLM / mock 连接器（引擎侧离线演示与 CI，画布默认不产出） | ✅ P0 |
-
-画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
 | condition / loop / parallel / transform / subworkflow 节点 | ✅ P1 |
 | 灰度发布、故障注入测试套件 | ✅ P1 |
 | 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | ✅ P2 |
@@ -51,6 +49,8 @@ flowchart LR
 | 审批中心：待办收件箱、通过/驳回、审批人通知、outbox 重投 | ✅ P3 |
 | 评测集：数据集/用例、真实执行跑分、四种断言、轮询收口 | ✅ P3 |
 | A/B 对比：同数据集双版本、通过率→耗时→token 结论口径 | ✅ P3 |
+
+画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
 
 ## 快速开始（Windows）
 
@@ -157,6 +157,8 @@ Windows 上运行中的 jar 是独占打开的，不先停就会在 `spring-boot
 ```
 
 CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）。
+
+提交规范、迁移与依赖升级流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 引擎侧新增或改动路由、请求/响应模型后，基线必须同步刷新，否则 `contract-drift` 会红：
 
