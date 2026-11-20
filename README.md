@@ -74,6 +74,12 @@ flowchart LR
 
 ![画布](docs/images/canvas.png)
 
+模型不再是让人盲填 id 的裸文本框：点卡片上的「模型」会打开常见模型清单（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 / Step / OpenAI / 本地 Ollama），选一个即弹出端点、模型名与 API Key 的表单，「测试并连接」由服务端真实校验并通过后自动写回节点。模板默认的 `mock-large` 会显示成「内置演示模型 · 离线可跑」并给出一键切换提示；清单外的服务走「自定义 OpenAI 兼容端点」，原「连接器」页与完整配置抽屉全部保留。
+
+![模型清单](docs/images/model-picker.png)
+
+![模型连接向导](docs/images/model-connect.png)
+
 审批中心：`human_gate` 挂起后进入待办收件箱，表格给出提示词、执行短号、节点、超时剩余时间与通过/驳回；审批意见统一填在上方，裁决回执会注明实际走到的分支。
 
 ![审批中心](docs/images/approvals.png)
@@ -145,7 +151,13 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 ## 接入真实模型（OpenAI 兼容）
 
-推荐做法是在「连接器」页建一条**模型连接**：端点与密钥存在服务端（AES-256-GCM 密文），画布只引用连接 id，密钥不进 DSL、不落画布，换密钥也不必重启引擎。
+**推荐：在画布上一步接入。** 点 llm 节点卡片上的「模型」→ 从清单里选一个（例如「混元 Hy4」）→ 弹出的表单已按该服务预填 Base URL 与模型名，只需填 API Key → 点「测试并连接」。服务端解密注入凭据后真实请求一次 `GET /models`，同时验证端点可达、Key 正确、响应符合 OpenAI 兼容格式；通过后自动创建一条模型连接，把 `connectionId` 与 `model` 写回节点，节点立即可执行。
+
+验证不通过会就地给出可操作的原因（改 URL / 换 Key / 检查沙箱放行），并删掉刚建的临时连接，不会在列表里留下连不上的记录；上游没有 `/models` 时可在「高级选项」勾选「仍按预填模型名保存」。端点与模型名都可编辑，服务商控制台才是最终依据。
+
+![连接失败时的反馈](docs/images/model-connect-error.png)
+
+清单外的服务点「自定义 OpenAI 兼容端点」自行填写端点、模型名与 Key，走同一套校验。「管理已有连接」直达「连接器」页：**高级模式**（连接器页与配置抽屉里的「模型来源 / provider / model」）字段一个没少，仍可手动精调、拉取模型清单、换密钥。
 
 1. 「连接器」→ 类型选「模型接入（OpenAI 兼容）」，填名称、Base URL（如 `https://api.deepseek.com/v1`）、API Key。允许域名留空会取 Base URL 的域名。
 2. 「模型」一栏可以直接填自己用的模型名（逗号分隔，如 `deepseek-chat, deepseek-reasoner`）；留空则创建时自动拉一次 `/models`。手填与拉取结果会取并集，上游不支持 `/models` 时靠手填照样能用。

@@ -755,6 +755,8 @@ stateDiagram-v2
             "type": "object", "required": ["model","promptTemplate"], "additionalProperties": false,
             "properties": {
               "provider": { "enum": ["mock","openai-compatible"], "default": "mock" },
+              "connectionId": { "type": "string", "minLength": 1,
+                "description": "tool_connector 中 type=LLM 的记录 id；端点与密钥只在 connector-service，DSL 不含 URL/Key" },
               "model": { "type": "string", "minLength": 1 },
               "promptTemplate": { "type": "string", "minLength": 1 },
               "systemPrompt": { "type": "string" },
@@ -1434,3 +1436,62 @@ DSL 存的是绝对坐标，宽流程的首屏会只看到前几个节点、末�
 继续守「原始色值只在 tokens/base」「全仓无绿色」。新增 44 个前端单测覆盖
 节点分类与状态色、内联编辑、连接校验、折行布局、节点搜索、模板合法性、
 执行图状态聚合；前端 168 passed，全量门禁 ALL GATES GREEN，全栈 e2e 34 passed。
+
+## 19. 模型清单与画布一键接入（2026-11-20）
+
+### 19.1 问题与边界
+
+§18 把节点配置搬到了图上，但 LLM 节点的「模型」仍是一个裸文本框：模板默认值
+`mock-large` 看起来像没配好，而接真实模型要先去「连接器」页手填 `baseUrl`、
+`allowedHosts`、`auth`、`operations`，再回画布选「模型来源」，路径过长。
+
+本次只做**呈现层加法**，硬约束与 §18 一致：
+
+- 后端零改动。DSL、引擎、API、DB、投影、发布期校验一行未动；没有新增端点。
+- 安全边界不变：`LlmConfig` 仍是 `extra="forbid"`，`baseUrl` / `apiKey` **绝不进 DSL**；
+  端点与密钥只在 connector-service 解密后注入出网请求头，画布只持 `connectionId`。
+- 高级模式全保留：`ConfigDrawer` 的模型来源 / provider / model、`ConnectorsView`、
+  DSL / JSON 视图、进程级 `AF_LLM_*` 三条原有路径一个不少。
+
+### 19.2 预设清单是资料，不是配置
+
+`dsl/model-presets.ts` 存的是各家**公开可查的 OpenAI 兼容端点**与常见模型别名
+（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 /
+Step / OpenAI / 本地 Ollama），附厂商、标签、Key 申请地址、易错说明。它不含任何密钥，
+也不参与 DSL 校验：端点与模型名在向导里都可编辑，服务商控制台才是最终依据。
+`needsServerOptIn` 标注本地 Ollama 这类 `http + loopback` 预设需要
+`AF_SANDBOX_ALLOW_LOOPBACK` / `AF_SANDBOX_ALLOW_HTTP`，避免把沙箱拦截误判成故障。
+
+### 19.3 两步交互与连接编排
+
+`ModelHub.vue` 管两步：`ModelPicker.vue`（分组平铺列表、中文搜索、厂商标识、标签、
+内置演示 / 自定义 / 管理连接三个入口）→ `ModelConnectDialog.vue`（名称、Base URL、
+模型名、API Key、高级选项）。卡片上的「模型」字段由 `InlineField.kind='picker'`
+渲染成按钮，`displayModelName()` 把 `mock-*` 显示成「内置演示模型 · 离线可跑」，
+`nodeSummary()` 补一行接入提示；执行态只读时仍退化为纯文本。
+
+`dsl/model-connection.ts` 串起现有 API：
+
+```
+create(LLM/API_KEY, config) → authorize(id, secret) → probeModels(id) → update(id, config)
+```
+
+`probeModels` 在服务端解密凭据后真实请求 `GET /models`，因此一次操作同时验证
+网络可达、沙箱放行、凭据正确与 OpenAI 兼容格式。验证通过后把 `connectionId` / `model`
+写回节点 `config`，节点立即可执行；失败则 `safeRemove()` 删掉临时连接并返回
+`probeErrorMessage()` 的人话原因，列表里不留脏记录。上游不提供 `/models` 时可用
+`allowWithoutProbe` 降级按预填模型名保存，本地无 Key 端点走 `authType=NONE` 并跳过探测。
+
+`buildLlmConfig()` / `hostOf()` / `mergeModels()` / `probeErrorMessage()` 同时被
+`ConnectorsView.vue` 引用，两条入口共用一份 config 构造与错误口径，不再漂移。
+§6.2 的 llm JSON Schema 同步补上 `connectionId`（此前只有 Pydantic `LlmConfig`
+与前端运行时在写，文档与 `additionalProperties:false` 不一致）。
+
+### 19.4 验收
+
+新增 `model-presets` / `model-connection` / `model-picker` / `model-connect-dialog`
+四组单测，并更新节点卡片、配置抽屉的既有断言；前端 204 passed，typecheck / lint /
+build / design-redlines 全绿。实机验证覆盖：模型清单渲染、预设预填、无效 Key 出网
+返回 401 后向导就地显示「检查 Base URL 路径与 API Key」并保持可修改，以及演示模型
+卡片提示。截图落在 `docs/images/model-picker.png`、`model-connect.png`、
+`model-connect-error.png`，`canvas.png` 同步刷新。
