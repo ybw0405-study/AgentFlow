@@ -32,6 +32,16 @@ engine-api/.venv/Scripts/python.exe scripts/dump-openapi.py
 git add docs/openapi/engine-api.json
 ```
 
+基线里的 `info.version` 取自**已安装包**的元数据，不是 `pyproject.toml` 的静态值。改版本号后
+本地直接重跑 `dump-openapi.py` 仍会写出旧版本（`pip install -e .` 没重装），于是本地干净、
+CI 上红。改版本号的同一次提交要执行：
+
+```powershell
+cd engine-api
+.venv/Scripts/python.exe -m pip install -e . -q
+.venv/Scripts/python.exe ../scripts/dump-openapi.py
+```
+
 ## 数据库迁移
 
 `db/mysql` 与 `db/postgres` 由 Flyway 管理，**已合入的迁移文件禁止修改**，只能追加新版本号。
