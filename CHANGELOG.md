@@ -3,7 +3,7 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
-## [Unreleased]
+## [0.5.0] - 2026-11-20
 
 ### 不兼容变更
 

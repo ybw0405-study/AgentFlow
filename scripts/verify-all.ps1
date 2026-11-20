@@ -1,4 +1,4 @@
-# AgentFlow 本地全量门禁（对齐 CI）：Java（tests+Checkstyle+ArchUnit）/ Python（ruff+pytest）/ 前端（tsc+eslint+vitest+build）。
+﻿# AgentFlow 本地全量门禁（对齐 CI）：Java（tests+Checkstyle+ArchUnit）/ Python（ruff+pytest）/ 前端（tsc+eslint+vitest+build）。
 param(
   [switch]$SkipJava,
   [switch]$SkipPython,
