@@ -344,7 +344,7 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
               class="mono af-dim"
               style="text-align: right"
             >
-              {{ row.latencyMs === null ? '—' : `${num(row.latencyMs)} ms` }}
+              {{ row.latencyMs == null ? '—' : `${num(row.latencyMs)} ms` }}
             </td>
             <td
               class="mono"

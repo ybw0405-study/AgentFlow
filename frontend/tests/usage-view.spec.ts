@@ -123,6 +123,32 @@ describe('用量页', () => {
     expect(wrapper.text()).toContain('额度已用完')
   })
 
+  it('后端省略空字段时（无模型 / 无耗时）仍能正常渲染', async () => {
+    // 服务端对 null 字段不输出 key：模板不能拿 === null 去判断
+    mocks.summary.mockResolvedValue(
+      summary({
+        recentPreviews: [
+          {
+            id: 'pv-2',
+            definitionId: 'wf-1',
+            definitionName: null,
+            nodeKey: 'norm',
+            actorId: null,
+            status: 'SUCCEEDED',
+            tokenUsed: 0,
+            createdAt: '2026-11-20 10:05:00',
+          } as unknown as UsageSummary['recentPreviews'][number],
+        ],
+      }),
+    )
+    const wrapper = await mountView()
+
+    const text = wrapper.text()
+    expect(text).toContain('norm')
+    expect(text).toContain('—')
+    expect(text).not.toContain('undefined')
+  })
+
   it('后端失败时给出可读错误，而不是空白页', async () => {
     mocks.summary.mockRejectedValue(
       new ApiError({ status: 503, code: 'AGT-UPSTREAM-001', detail: '引擎暂时不可用', traceId: 't-1' }),
