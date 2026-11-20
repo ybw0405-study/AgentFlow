@@ -27,8 +27,8 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           name: '生成回答',
           position: { x: 340, y: 160 },
           config: {
-            provider: 'mock',
-            model: 'mock-large',
+            provider: 'openai-compatible',
+            model: 'deepseek-chat',
             promptTemplate: '{{ vars.question }}',
             maxTokens: 1024,
           },
@@ -59,8 +59,8 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           name: '起草',
           position: { x: 300, y: 200 },
           config: {
-            provider: 'mock',
-            model: 'mock-large',
+            provider: 'openai-compatible',
+            model: 'deepseek-chat',
             promptTemplate: '请就以下问题起草回复：{{ vars.question }}',
             maxTokens: 1024,
           },
@@ -83,8 +83,8 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           name: '正式回复',
           position: { x: 820, y: 110 },
           config: {
-            provider: 'mock',
-            model: 'mock-large',
+            provider: 'openai-compatible',
+            model: 'deepseek-chat',
             promptTemplate: '润色成正式回复：{{ vars.question }}',
             maxTokens: 1024,
           },
@@ -121,8 +121,8 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   },
   {
     id: 'parallel',
-    name: '并行取证后汇总',
-    description: '两条分支各取一份材料，汇合后交给模型总结',
+    name: '双角度分析后汇总',
+    description: '两条分支分别做事实梳理与风险提示，汇合后交给模型总结',
     dsl: {
       dslVersion: '1.0',
       variables: {
@@ -135,39 +135,49 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         {
           key: 'gather',
           type: 'parallel',
-          name: '并行取证',
+          name: '并行分析',
           position: { x: 320, y: 200 },
           config: {
             branches: {
-              kb: {
+              fact: {
                 nodes: [
                   {
-                    key: 'kb_hit',
-                    type: 'tool',
-                    config: { connectorId: 'mock.search', operation: 'search', paramsMapping: {} },
+                    key: 'fact_llm',
+                    type: 'llm',
+                    config: {
+                      provider: 'openai-compatible',
+                      model: 'deepseek-chat',
+                      promptTemplate: '只列出与问题相关的事实要点：{{ vars.question }}',
+                      maxTokens: 512,
+                    },
                   },
                   {
-                    key: 'kb_done',
+                    key: 'fact_done',
                     type: 'transform',
-                    config: { mappings: [{ target: 'vars.kbNote', template: '知识库命中' }] },
+                    config: { mappings: [{ target: 'vars.kbNote', template: '{{ nodes.fact_llm.output.text }}' }] },
                   },
                 ],
-                edges: [{ from: 'kb_hit', to: 'kb_done' }],
+                edges: [{ from: 'fact_llm', to: 'fact_done' }],
               },
-              crm: {
+              risk: {
                 nodes: [
                   {
-                    key: 'crm_hit',
-                    type: 'tool',
-                    config: { connectorId: 'mock.search', operation: 'search', paramsMapping: {} },
+                    key: 'risk_llm',
+                    type: 'llm',
+                    config: {
+                      provider: 'openai-compatible',
+                      model: 'deepseek-chat',
+                      promptTemplate: '指出回答这个问题需要注意的风险与前提：{{ vars.question }}',
+                      maxTokens: 512,
+                    },
                   },
                   {
-                    key: 'crm_done',
+                    key: 'risk_done',
                     type: 'transform',
-                    config: { mappings: [{ target: 'vars.crmNote', template: '客户记录已查' }] },
+                    config: { mappings: [{ target: 'vars.crmNote', template: '{{ nodes.risk_llm.output.text }}' }] },
                   },
                 ],
-                edges: [{ from: 'crm_hit', to: 'crm_done' }],
+                edges: [{ from: 'risk_llm', to: 'risk_done' }],
               },
             },
             join: 'all',
@@ -180,8 +190,8 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           name: '汇总',
           position: { x: 620, y: 200 },
           config: {
-            provider: 'mock',
-            model: 'mock-large',
+            provider: 'openai-compatible',
+            model: 'deepseek-chat',
             promptTemplate: '结合知识库与客户记录回答：{{ vars.question }}',
             maxTokens: 1024,
           },

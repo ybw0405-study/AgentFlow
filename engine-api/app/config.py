@@ -20,12 +20,14 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # 阶段门：只有已实现执行器的节点类型才放行（DSL 校验阶段拒绝未实现的）
-    # P0: start/end/llm/tool；P1 逐步放开 condition/transform/loop/parallel/subworkflow
+    # P0: start/end/llm/tool；P1 逐步放开 condition/transform/loop/parallel/subworkflow；
+    # retrieval 在文档知识库落地后放开（V009 + KnowledgeService + RetrievalExecutor）。
     supported_node_types: frozenset[str] = frozenset(
         {
             "start",
             "end",
             "llm",
+            "retrieval",
             "tool",
             "condition",
             "transform",
@@ -58,7 +60,7 @@ class Settings(BaseSettings):
     # 端点/密钥只从这里注入，绝不来自 DSL 或用户入参（SSRF / 凭据注入防线）。
     llm_base_url: str = ""
     llm_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"  # mock-* 占位模型名回落到此值
+    llm_model: str = "gpt-4o-mini"  # 默认模型名；真实调用需注入 AF_LLM_BASE_URL / AF_LLM_API_KEY
     llm_timeout_s: float = 60.0
     llm_max_response_chars: int = 100_000
     llm_json_response_format: bool = True  # 上游不支持 response_format 时置 false

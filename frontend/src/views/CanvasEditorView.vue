@@ -5,9 +5,10 @@ import { VueFlow } from '@vue-flow/core'
 import type { Connection, Edge as FlowEdge, Node as FlowNode } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { workflowApi, executionApi, llmApi, connectorApi } from '@/api'
+import { workflowApi, executionApi, llmApi, connectorApi, knowledgeApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
+import { bindConnectionToLlmNodes, inspectDemo } from '@/dsl/demo-state'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
 import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge, setEdgeBranch } from '@/dsl/graph-ops'
 import type { CanvasEdge } from '@/dsl/graph-ops'
@@ -28,7 +29,7 @@ import {
 import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
 import { branchOptions } from '@/dsl/types'
-import type { WorkflowDefinitionDto, LlmConnectionConfig } from '@/types/api'
+import type { WorkflowDefinitionDto, LlmConnectionConfig, KnowledgeBaseDto } from '@/types/api'
 import NodePalette from '@/components/canvas/NodePalette.vue'
 import ConfigDrawer from '@/components/canvas/ConfigDrawer.vue'
 import VariablesPanel from '@/components/canvas/VariablesPanel.vue'
@@ -36,6 +37,7 @@ import DslSourcePanel from '@/components/canvas/DslSourcePanel.vue'
 import WorkflowNode from '@/components/canvas/WorkflowNode.vue'
 import ModelHub from '@/components/canvas/ModelHub.vue'
 import { displayModelName } from '@/dsl/model-presets'
+import { probeErrorMessage } from '@/dsl/model-connection'
 import type { ConnectModelResult } from '@/dsl/model-connection'
 
 const route = useRoute()
@@ -71,6 +73,87 @@ const templateOpen = ref(false)
 const pendingTemplate = ref<WorkflowTemplate | null>(null)
 /** 从节点卡片 / 配置抽屉唤起的模型接入向导；值为目标节点 id。 */
 const modelHubFor = ref<string | null>(null)
+/** 本空间的知识库，供 retrieval 节点选择文档集。 */
+const knowledgeBases = ref<{ id: string; name: string; documentCount: number }[]>([])
+
+async function loadKnowledgeBases(): Promise<void> {
+  try {
+    const rows: KnowledgeBaseDto[] = await knowledgeApi.bases()
+    knowledgeBases.value = rows.map((b) => ({
+      id: b.id,
+      name: b.name,
+      documentCount: b.documentCount,
+    }))
+  } catch {
+    // 知识库列表只影响 retrieval 的可选项，拿不到不该阻断画布
+    knowledgeBases.value = []
+  }
+}
+
+/** 抽屉里的「立即拉取模型」：复用连接器页同一套探测 + 写回 config 的流程。 */
+async function probeConnectionModels(id: string): Promise<void> {
+  try {
+    const probe = await connectorApi.probeModels(id)
+    if (!probe.ok || !probe.models.length) {
+      notice.value = `没能连上：${probeErrorMessage(probe.errorCode)}`
+      return
+    }
+    const rows = await connectorApi.list()
+    const row = rows.find((c) => c.id === id)
+    const cfg = (row?.config ?? {}) as LlmConnectionConfig
+    const keep = cfg.defaultModel && probe.models.includes(cfg.defaultModel)
+    await connectorApi.update(id, {
+      config: {
+        ...cfg,
+        models: probe.models,
+        defaultModel: keep ? cfg.defaultModel : probe.models[0],
+      },
+    })
+    await loadLlmConnections()
+    notice.value = `连接可用，已拉取 ${probe.models.length} 个模型；现在可在 model 下拉里选`
+  } catch (e) {
+    notice.value = `没能连上：${errorText(e)}`
+  }
+}
+
+function goKnowledge(): void {
+  void router.push('/knowledge')
+}
+
+/** 内置示例的 llm 节点全是 mock：一键整层挂到第一条可用连接，不必逐节点改。 */
+function applyConnectionToAllLlm(): void {
+  const target = llmConnections.value[0]
+  if (!target) {
+    quickConnectDemoModel()
+    return
+  }
+  if (!target.defaultModel) {
+    notice.value = `「${target.name}」还没有默认模型：点「立即拉取模型」，或到「连接器」页设置后再切`
+    return
+  }
+  let count = 0
+  for (const n of nodes.value) {
+    if (n.data.nodeType !== 'llm') continue
+    patchNodeConfig(n.id, {
+      connectionId: target.id,
+      provider: 'openai-compatible',
+      model: target.defaultModel,
+    })
+    count += 1
+  }
+  notice.value = `已把 ${count} 个 llm 节点切到「${target.name}」，点「运行」即按当前草稿走该连接`
+}
+
+/** 演示态提示条上的一步到位入口：直接把第一个 llm 节点带进模型接入向导。 */
+function quickConnectDemoModel(): void {
+  const target = nodes.value.find((n) => n.data.nodeType === 'llm')
+  if (!target) {
+    notice.value = '画布上还没有 llm 节点，先从左侧添加一个'
+    return
+  }
+  selectNode(target.id)
+  openModelHub(target.id)
+}
 /** 运行弹窗里标出必填项，其余是流程内部变量，保持默认即可。 */
 const requiredVariableNames = computed(() =>
   Object.entries(variables.value)
@@ -89,6 +172,9 @@ const inSubgraph = computed(() => path.value.length > 0)
 function layerDsl(): WorkflowDsl {
   return flowToDsl({ nodes: nodes.value, edges: edges.value }, variables.value, defaults.value)
 }
+
+/** 演示态：整图没有真实模型 / 文档检索时，把「输出是示例文本」摆在明面上。 */
+const demoState = computed(() => inspectDemo(layerDsl()))
 
 /**
  * 把「画布当前层」合并回整份 DSL。
@@ -357,6 +443,7 @@ function addNode(type: NodeType): void {
           type,
           type === 'llm' ? modelCatalog.value.defaultModel : undefined,
           type === 'llm' ? (llmConnections.value[0] ?? null) : null,
+          type === 'retrieval' ? knowledgeBases.value[0]?.id : undefined,
         ),
       },
     },
@@ -473,13 +560,17 @@ async function onModelConnected(result: ConnectModelResult): Promise<void> {
     : `已接入「${result.name}」，节点模型 ${result.model} 立即可用`
 }
 
-/** 高级模式保留：随时能切回模板默认的离线演示模型。 */
+/** 不建画布连接时，改用启动脚本注入的进程级端点（AF_LLM_*）。 */
 function useBuiltinModel(): void {
   const id = modelHubFor.value
   closeModelHub()
   if (id) {
-    patchNodeConfig(id, { connectionId: undefined, provider: 'mock', model: 'mock-llm-large' })
-    notice.value = '已切回内置演示模型（离线可跑）'
+    patchNodeConfig(id, {
+      connectionId: undefined,
+      provider: 'openai-compatible',
+      model: modelCatalog.value.defaultModel || 'deepseek-chat',
+    })
+    notice.value = '已改用进程默认端点（AF_LLM_*），调用走服务端配置的真实模型'
   }
 }
 
@@ -569,10 +660,18 @@ function closeTemplates(): void {
 function confirmTemplate(): void {
   const template = pendingTemplate.value
   if (!template) return
-  applyDsl(JSON.parse(JSON.stringify(template.dsl)) as WorkflowDsl)
+  const dsl = JSON.parse(JSON.stringify(template.dsl)) as WorkflowDsl
+  const conn = llmConnections.value[0]
+  // 模板默认走进程级端点；若空间已有连接，则把整层 llm 节点挂到该连接。
+  const bound = conn
+    ? bindConnectionToLlmNodes(dsl, { id: conn.id, defaultModel: conn.defaultModel })
+    : 0
+  applyDsl(dsl)
   void saveNow()
   closeTemplates()
-  notice.value = `已应用模板「${template.name}」，草稿已保存`
+  notice.value = bound
+    ? `已应用模板「${template.name}」，并把 ${bound} 个 llm 节点接到「${conn?.name}」`
+    : `已应用模板「${template.name}」，草稿已保存；模型走进程默认端点（AF_LLM_*）`
   fitViewSoon()
 }
 
@@ -754,13 +853,41 @@ function openRunDialog(): void {
   runDialog.value = true
 }
 
+/**
+ * 引擎只认版本快照：触发时不带 versionId 会跑「已发布版本」而不是画布当前草稿。
+ * 这正是「向导接完模型、运行仍是 mock 文本」的根因。
+ * 这里把草稿冻结成（或复用）一个版本快照并显式传 versionId：
+ * 不改已发布版本、不走灰度分流、同内容不重复冻结。
+ */
+async function draftRunVersionId(checksum: string | undefined): Promise<string | undefined> {
+  const detail = await workflowApi.detail(workflowId)
+  const published = detail.versions.find((v) => v.id === detail.definition.currentVersionId)
+  if (checksum && published?.dslChecksum === checksum) return undefined
+  if (checksum) {
+    const reused = detail.versions.find((v) => v.dslChecksum === checksum)
+    if (reused) return reused.id
+  }
+  const version = await workflowApi.freeze(workflowId)
+  return version.id
+}
+
 async function run(): Promise<void> {
   busy.value = true
   error.value = null
   try {
     const variables = JSON.parse(runVariablesText.value) as Record<string, unknown>
+    const dsl = toDsl()
+    const saved = await workflowApi.saveDraft(workflowId, dsl)
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    lastSavedJson = JSON.stringify(dsl)
+    saveState.value = 'saved'
+    const versionId = await draftRunVersionId(saved?.checksum)
     const result = await executionApi.trigger(workflowId, {
       idempotencyKey: crypto.randomUUID(),
+      ...(versionId ? { versionId } : {}),
       variables,
     })
     void router.push({ name: 'execution-detail', params: { id: result.executionId } })
@@ -774,6 +901,7 @@ async function run(): Promise<void> {
 onMounted(async () => {
   void loadModelCatalog()
   void loadLlmConnections()
+  void loadKnowledgeBases()
   try {
     await load()
   } catch (e) {
@@ -938,6 +1066,42 @@ onUnmounted(() => {
       <span class="af-accent">{{ notice }}</span>
     </div>
 
+    <div
+      v-if="demoState?.demoOnly"
+      class="af-panel"
+      style="margin: 8px 12px 0; padding: 8px 12px; border-color: var(--af-accent-border); font-size: 12px; line-height: 1.6"
+    >
+      <span class="af-accent">演示态</span> · {{ demoState.summary }}
+      <button
+        v-if="llmConnections.length"
+        class="af-btn af-btn--sm af-btn--primary"
+        style="margin-left: 8px"
+        @click="applyConnectionToAllLlm"
+      >
+        一键切到「{{ llmConnections[0].name }}」
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        style="margin-left: 8px"
+        @click="quickConnectDemoModel"
+      >
+        接入真实模型
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        style="margin-left: 6px"
+        @click="goKnowledge"
+      >
+        导入文档
+      </button>
+      <div
+        class="af-faint"
+        style="margin-top: 6px"
+      >
+        「运行」按画布当前草稿生成版本快照执行，不会偷偷跑旧的已发布版本；「冻结并发布」才会影响正式版本。
+      </div>
+    </div>
+
     <div style="flex: 1; display: flex; min-height: 0; position: relative">
       <NodePalette
         :start-taken="hasStart"
@@ -1029,11 +1193,14 @@ onUnmounted(() => {
         :issues="issues"
         :model-catalog="modelCatalog"
         :llm-connections="llmConnections"
+        :knowledge-bases="knowledgeBases"
         @update="updateNode"
         @close="clearSelection"
         @remove="removeNode"
         @edit-subgraph="enterSubgraph"
         @pick-model="selectedNode && openModelHub(selectedNode.key)"
+        @probe-models="probeConnectionModels"
+        @open-knowledge="goKnowledge"
       />
     </div>
 
@@ -1063,6 +1230,13 @@ onUnmounted(() => {
         >
           运行工作流
         </div>
+        <div
+          v-if="demoState?.demoOnly"
+          class="af-error-box"
+          style="margin-bottom: 10px; line-height: 1.6; font-size: 12px"
+        >
+          <strong>这是演示运行</strong> · {{ demoState.summary }}
+        </div>
         <label class="af-label">initialVariables（JSON）</label>
         <p
           class="af-faint"
@@ -1070,6 +1244,12 @@ onUnmounted(() => {
         >
           必填：{{ requiredVariableNames }}；其余为流程内部变量，保持默认即可。
           按声明类型填写（布尔用 true / false，不要加引号）。
+        </p>
+        <p
+          class="af-faint"
+          style="margin: 0 0 8px; font-size: 11px"
+        >
+          本次执行用画布当前草稿的版本快照，不改变已发布版本；同内容草稿不会重复冻结。
         </p>
         <textarea
           v-model="runVariablesText"
@@ -1112,8 +1292,8 @@ onUnmounted(() => {
             class="af-faint"
             style="margin: 0 0 12px; font-size: 12px; line-height: 1.6"
           >
-            模板只替换当前草稿，已发布版本不受影响。默认走内置 mock 模型，
-            可在「连接器」页换成真实模型。
+            模板只替换当前草稿，已发布版本不受影响。模型默认走进程级 OpenAI 兼容端点，
+            也可在「连接器」页建连接后由画布一键切换。
           </p>
           <button
             v-for="t in WORKFLOW_TEMPLATES"

@@ -16,6 +16,9 @@ import type {
   MeData,
   LlmModelsDto,
   ModelProbeDto,
+  KnowledgeBaseDto,
+  KnowledgeDocumentDto,
+  KnowledgeSearchResult,
   NodeIo,
   PageResult,
   TriggerData,
@@ -201,4 +204,18 @@ export const adminApi = {
 
 export const llmApi = {
   models: () => get<LlmModelsDto>('/llm/models'),
+}
+
+/** 文档知识库：纯文本导入（前端读文件后按 JSON 提交，服务端不开放 multipart）。 */
+export const knowledgeApi = {
+  bases: () => get<KnowledgeBaseDto[]>('/knowledge/bases'),
+  createBase: (name: string, description?: string) =>
+    post<KnowledgeBaseDto>('/knowledge/bases', { name, description }),
+  removeBase: (id: string) => del<{ ok: boolean }>(`/knowledge/bases/${id}`),
+  documents: (id: string) => get<KnowledgeDocumentDto[]>(`/knowledge/bases/${id}/documents`),
+  addDocument: (id: string, body: { title?: string; content: string; source?: string }) =>
+    post<KnowledgeDocumentDto>(`/knowledge/bases/${id}/documents`, body),
+  removeDocument: (id: string) => del<{ ok: boolean }>(`/knowledge/documents/${id}`),
+  search: (body: { knowledgeBaseIds: string[]; query: string; topK?: number; minScore?: number }) =>
+    post<KnowledgeSearchResult>('/knowledge/search', body),
 }

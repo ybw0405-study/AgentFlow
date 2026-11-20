@@ -40,25 +40,27 @@ flowchart LR
 
 | 能力 | 状态 |
 |---|---|
-| 工作流 CRUD / 草稿 / 版本冻结（不可变+checksum）/ 发布 / 回滚 | ✅ P0 |
-| 画布编辑器（Vue Flow，9 类节点、分支连线、DSL 双向、自动保存、校验内联） | ✅ P0 |
-| 执行引擎（拓扑调度、并行上限、重试、超时、取消、checkpoint） | ✅ P0 |
-| 事件溯源 + 崩溃恢复（execution_spec 自足 + 启动/周期扫描） | ✅ P0 提前实现 |
-| SSE 实时节点状态 + 事件追平 | ✅ P0 |
-| JWT + refresh 轮换 + 租户隔离（跨租户 404）+ RBAC | ✅ P0 |
-| 健康检查（各服务 `/health`，依赖不可用返回 503） | ✅ P0 |
-| 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | ✅ P0 |
-| 审计只追加（触发器 + 最小授权 + outbox/relay，不可达时降级直写） | ✅ P0 |
-| mock LLM / mock 连接器（引擎侧离线演示与 CI，画布默认不产出） | ✅ P0 |
-| condition / loop / parallel / transform / subworkflow 节点（画布表单配置，子图有独立画布） | ✅ P1 |
-| 灰度发布、故障注入测试套件 | ✅ P1 |
-| 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | ✅ P2 |
-| connector-service：CRUD / AES-256-GCM 凭据 / OAuth2 / 出网沙箱 | ✅ P2 |
-| 成本中心：budget_ledger 投影累加、有效限额继承、预算对账 | ✅ P2 |
-| human_gate 人工审批：挂起/恢复、超时自动裁决、裁决幂等；审批人 ROLE / USERS / EXPRESSION（V006） | ✅ P3 |
-| 审批中心：待办收件箱、通过/驳回、审批人通知、outbox 重投；裁决经 HTTP + MQ 双通道送达引擎 | ✅ P3 |
-| 评测集：数据集/用例、真实执行跑分、四种断言、轮询收口 | ✅ P3 |
-| A/B 对比：同数据集双版本、通过率→耗时→token 结论口径 | ✅ P3 |
+| 工作流 CRUD / 草稿 / 版本冻结（不可变+checksum）/ 发布 / 回滚 | P0 |
+| 画布编辑器（Vue Flow，9 类节点、分支连线、DSL 双向、自动保存、校验内联） | P0 |
+| 执行引擎（拓扑调度、并行上限、重试、超时、取消、checkpoint） | P0 |
+| 事件溯源 + 崩溃恢复（execution_spec 自足 + 启动/周期扫描） | P0 提前实现 |
+| SSE 实时节点状态 + 事件追平 | P0 |
+| JWT + refresh 轮换 + 租户隔离（跨租户 404）+ RBAC | P0 |
+| 健康检查（各服务 `/health`，依赖不可用返回 503） | P0 |
+| 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | P0 |
+| 审计只追加（触发器 + 最小授权 + outbox/relay，不可达时降级直写） | P0 |
+| 真实模型调用（进程级 OpenAI 兼容端点 / 连接器注入凭据），密钥不落库不进日志 | P0 |
+| 文档知识库：建库 / 导入 `.txt`·`.md` / 切片 / 本地 BM25 检索 / 租户隔离（V009） | 已实现 |
+| `retrieval` 节点：真实检索用户文档，`output.text` / `results` / `citations` 供下游引用 | 已实现 |
+| condition / loop / parallel / transform / subworkflow 节点（画布表单配置，子图有独立画布） | P1 |
+| 灰度发布、故障注入测试套件 | P1 |
+| 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | P2 |
+| connector-service：CRUD / AES-256-GCM 凭据 / OAuth2 / 出网沙箱 | P2 |
+| 成本中心：budget_ledger 投影累加、有效限额继承、预算对账 | P2 |
+| human_gate 人工审批：挂起/恢复、超时自动裁决、裁决幂等；审批人 ROLE / USERS / EXPRESSION（V006） | P3 |
+| 审批中心：待办收件箱、通过/驳回、审批人通知、outbox 重投；裁决经 HTTP + MQ 双通道送达引擎 | P3 |
+| 评测集：数据集/用例、真实执行跑分、四种断言、轮询收口 | P3 |
+| A/B 对比：同数据集双版本、通过率→耗时→token 结论口径 | P3 |
 
 画布交互：单击选中节点或连线，`Delete` 删除（删节点会级联删掉它的进出连线），`Esc` 或点空白处取消选中，底部浮条会显示当前选中项并提供删除按钮。`start` 全局唯一：已有 start 时节点面板里的 start 置灰，避免建出第二个起点。
 
@@ -74,11 +76,13 @@ flowchart LR
 
 ![画布](docs/images/canvas.png)
 
-模型不再是让人盲填 id 的裸文本框：点卡片上的「模型」会打开常见模型清单（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 / Step / OpenAI / 本地 Ollama），选一个即弹出端点、模型名与 API Key 的表单，「测试并连接」由服务端真实校验并通过后自动写回节点。模板默认的 `mock-large` 会显示成「内置演示模型 · 离线可跑」并给出一键切换提示；清单外的服务走「自定义 OpenAI 兼容端点」，原「连接器」页与完整配置抽屉全部保留。
+模型不再是让人盲填 id 的裸文本框：点卡片上的「模型」会打开常见模型清单（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 / Step / OpenAI / 本地 Ollama），选一个即弹出端点、模型名与 API Key 的表单，「测试并连接」由服务端真实校验并通过后自动写回节点。清单里的「进程默认端点」走启动脚本注入的 `AF_LLM_*`；清单外的服务走「自定义 OpenAI 兼容端点」，原「连接器」页与完整配置抽屉全部保留。
 
 ![模型清单](docs/images/model-picker.png)
 
 ![模型连接向导](docs/images/model-connect.png)
+
+知识库页：建库后粘贴文本或选择 `.txt` / `.md` 文件导入，导入即按段落切片并可立即试检索；命中片段带文档标题、片段序号与相关度。也可一键生成引用该知识库的「检索 → 作答」工作流，不必手抄 UUID 进 DSL。画布里的「检索」节点在配置抽屉勾选知识库，命中原文写进 `output.text`，下游 llm 提示词用 `{{ nodes.xxx.output.text }}` 引用即可。
 
 审批中心：`human_gate` 挂起后进入待办收件箱，表格给出提示词、执行短号、节点、超时剩余时间与通过/驳回；审批意见统一填在上方，裁决回执会注明实际走到的分支。
 
@@ -123,7 +127,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 不用自己画流程，种子数据里已有两条发布好的示例。按下面点一遍就能看到完整链路（条件 → 并行 → 人工审批 → 循环）：
 
 1. **登录**：打开 `http://127.0.0.1:5174`，用 `admin@agentflow.dev` / `agentflow123` 登录，落在「工作流」列表。
-2. **打开画布**：点「示例：客户工单分诊」的名称，或该行的「画布」。右上角是「冻结版本 / 冻结并发布 / 运行」，自己画新流程时改完要先「冻结并发布」才能执行；内置示例已发布，可跳过。
+2. **打开画布**：点「示例：客户工单分诊」的名称，或该行的「画布」。右上角是「冻结版本 / 冻结并发布 / 运行」。「运行」按画布当前草稿生成版本快照执行，自建流程改完即可运行；只有要让正式版本对外生效时才需要「冻结并发布」。内置示例已发布 v4，模型与文档检索都走真实链路，两种方式结果一致。
 3. **运行**：点右上角「运行」，弹窗里的 `initialVariables` 是一份 JSON，**按声明类型填**（`urgent` 必须是 `true`/`false`，不能是 `"true"` 或空串）：
 
    ```json
@@ -145,7 +149,8 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 |---|---|
 | `EXEC-INPUT-001`：`variable 'urgent' expects type 'boolean'` | 运行弹窗里 `urgent` 留成了空串。填 `true` 或 `false`，不要加引号。 |
 | `EXEC-INPUT-001`：`missing required variable 'ticket'` | 删掉了必填变量。把 `ticket` 补回 JSON。 |
-| 运行按钮点了没反应 / 报未发布 | 自建工作流要先「冻结并发布」，草稿态不能执行。 |
+| 运行按钮点了没反应 / 报校验错误 | 「运行」会先保存并校验当前草稿，节点配置有红字时先按提示修好；草稿本身可以直接运行，无需先发布。 |
+| 运行报 `LLM-NOT_CONFIGURED-001` | 引擎没有拿到 `AF_LLM_*`。在启动脚本之前注入 `AF_LLM_BASE_URL` / `AF_LLM_API_KEY` / `AF_LLM_MODEL`，或在「连接器」页建一条模型连接并在画布上点「模型」接入。 |
 | 触发执行 403 | 用的是 `viewer@agentflow.dev`，该角色不能触发；换 admin 或 editor。 |
 | 审批中心是空的 | 用 `editor@agentflow.dev` 登录看不到 admin 的待办；换 admin。 |
 
@@ -154,6 +159,8 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 **推荐：在画布上一步接入。** 点 llm 节点卡片上的「模型」→ 从清单里选一个（例如「混元 Hy4」）→ 弹出的表单已按该服务预填 Base URL 与模型名，只需填 API Key → 点「测试并连接」。服务端解密注入凭据后真实请求一次 `GET /models`，同时验证端点可达、Key 正确、响应符合 OpenAI 兼容格式；通过后自动创建一条模型连接，把 `connectionId` 与 `model` 写回节点，节点立即可执行。
 
 验证不通过会就地给出可操作的原因（改 URL / 换 Key / 检查沙箱放行），并删掉刚建的临时连接，不会在列表里留下连不上的记录；上游没有 `/models` 时可在「高级选项」勾选「仍按预填模型名保存」。端点与模型名都可编辑，服务商控制台才是最终依据。
+
+**接入后怎么确认真的生效**：引擎触发只认版本快照，所以「运行」会先保存画布当前草稿，复用或冻结一份同 checksum 的版本快照并显式带 `versionId` 触发——跑的就是刚改过的那张图，不会执行旧的已发布版本；已发布版本与灰度配置都不受影响，「冻结并发布」才会改动正式版本。内置示例、模板与新建节点默认走真实端点：模型由 `AF_LLM_*` 或模型连接提供，检索读知识库文档。若导入了旧版演示 DSL（llm 节点仍是 `provider: mock`），画布顶部会出现提示条，可一键把整层节点切到现有连接。
 
 ![连接失败时的反馈](docs/images/model-connect-error.png)
 
@@ -179,13 +186,26 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 经连接调用时，端点与密钥**只在 connector-service 解密**并注入请求头；引擎与画布都只有连接 id。走进程级配置时同理，端点与密钥只来自环境变量，DSL 无法指定 URL。两条路径都不把密钥写进日志、错误体、事件载荷。
 - 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
+- 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板与新建节点默认用非推理的 `deepseek-chat`。
 - 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）；内置 mock 才是确定性的。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
 - `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
+
+## 文档检索（知识库）
+
+`retrieval` 节点检索的是**你自己导入的文档**，不是固定示例语料。数据模型见 `db/mysql/migration/V009__knowledge.sql`：知识库 → 文档 → 切片三层，全部带 `tenant_id`，软删文档/知识库时同步物理清除切片，检索 SQL 因此不需要 JOIN 软删状态。
+
+1. 顶栏「知识库」→ 新建知识库 → 粘贴正文或选择 `.txt` / `.md` 文件 → 「导入文档」。单文档上限 200000 字符、500 个切片；导入时按 ~420 字符窗口在句末标点处断开并保留 60 字符重叠。
+2. 「检索自测」输入问题，服务端用本地 BM25 对切片打分（中文单字 + 相邻二元组，ASCII 整词小写），返回带出处的原文片段。打分纯 JDK 实现，不引入向量库 / embedding 服务，文档内容不会外送第三方，离线可跑。
+3. 画布添加「检索」节点 → 配置抽屉勾选知识库 → 填 `queryTemplate`（如 `{{ vars.question }}`）、`topK`、`minScore`。命中原文写进 `output.text`，`output.results` / `output.citations` 给出片段、文档 id 与相关度；下游 llm 的 `promptTemplate` 用 `{{ nodes.retrieve.output.text }}` 引用。也可以点「用此知识库创建问答工作流」直接生成整套骨架。
+
+信任边界：引擎只持 `tenantId` 与内部令牌，经网关 `/internal/knowledge/search` 调控制面；服务端按租户逐条复核每个 `knowledgeBaseIds`，越权 id 静默忽略，既不返回数据也不报错暴露存在性。用户侧 `/api/v1/knowledge/search` 用同样的复核逻辑，便于在画布配置前先验证召回效果。
+
+局限：这是**词法检索**（BM25），不是语义向量召回；没有 rerank、没有 PDF/Office 解析、没有增量索引重建。导入纯文本即可用，需要语义召回时再接外部 embedding 服务。
 
 ## 演示脚本（P0 验收路径）
 
 1. 登录 `editor@agentflow.dev` → 新建工作流 `demo`。
-2. 画布：start → llm(draft) → end；或打开「DSL」粘贴 `docs/architecture.md` §6.4 的示例（LLM→工具→LLM）→ 应用。
+2. 画布：start → llm(draft) → end；或打开「DSL」粘贴 `docs/architecture.md` §6.4 的示例（LLM→检索→LLM）→ 应用。
 3. Ctrl+S 保存（右上角状态变「已保存」）→「冻结并发布」。
 4. 「运行」→ 变量 `{"question": "我的手机 13812345678 无法开机"}` → 触发。
 5. 执行详情：节点树实时变亮（SSE），点节点看输入/输出原文——手机号已脱敏为 `[PHONE]`；右栏 token/steps/traceId。
@@ -281,7 +301,7 @@ git add docs/openapi/engine-api.json
 | `AF_ROCKETMQ_GATE_TOPIC` | af-gate-decision | 裁决广播 topic（控制面发布，引擎消费；`start-dev` 与 CI 会预建） |
 | `AF_MQ_CONSUME` / `AF_MQ_GATE_TOPIC` / `AF_MQ_GATE_GROUP` | true / af-gate-decision / af-engine-gate-consumer | 引擎是否消费 MQ 裁决、消费的 topic、消费组名 |
 | `AF_DEFAULT_TOKEN_BUDGET` / `AF_DEFAULT_MAX_STEPS` / `AF_DEFAULT_DEADLINE_MS` | 50000 / 50 / 120000 | 租户政策上限（触发时钳制） |
-| `AF_AUTHORIZED_CONNECTORS` | mock.search,mock.echo,mock.flaky | 内置 mock 连接器（真实连接器由 connector-service 目录自动授权） |
+| `AF_AUTHORIZED_CONNECTORS` | mock.search,mock.echo,mock.flaky | 离线测试桩的授权名单；真实连接器由 connector-service 目录自动授权 |
 | `AF_CONNECTOR_SERVICE` | http://127.0.0.1:8085 | gateway → connector-service 路由目标 |
 | `AF_CRED_MASTER_KEY` | 本地 dev 值（base64 32B） | 凭据主密钥；生产必须经 KMS/环境注入 |
 | `AF_CRED_MASTER_KEY_PREVIOUS` | 空 | 轮换窗口内的旧主密钥（base64，逗号分隔），用于解密历史密文；全量重加密后清空 |
@@ -292,9 +312,9 @@ git add docs/openapi/engine-api.json
 | `AF_DEMO_ACCOUNTS` | true | 登录页是否下发演示账号提示；生产守护开启时恒不下发 |
 | `AF_CHECKPOINT_INTERVAL` | 10 | 每 N 事件一次 CheckpointCreated |
 | `AF_GATE_SWEEP_INTERVAL_S` | 15 | human_gate 超时裁决扫描间隔 |
-| `AF_LLM_BASE_URL` | 空 | 真实模型端点（OpenAI 兼容，如 `https://api.deepseek.com/v1`）；空则 provider 未启用 |
+| `AF_LLM_BASE_URL` | 空 | 真实模型端点（OpenAI 兼容，如 `https://api.deepseek.com/v1`）；空则节点报 `LLM-NOT_CONFIGURED-001` |
 | `AF_LLM_API_KEY` | 空 | 上游密钥；只在 engine-api 进程内使用，绝不写入日志/事件/仓库 |
-| `AF_LLM_MODEL` | gpt-4o-mini | 默认模型；节点里填 `mock-*` 占位名时自动回落到它 |
+| `AF_LLM_MODEL` | gpt-4o-mini | 默认模型名；`start-dev` 由 `DEEPSEEK_API_KEY` 派生为 `deepseek-chat`（非推理模式，正文不会被思维链吃光） |
 | `AF_LLM_TIMEOUT_S` / `AF_LLM_MAX_RESPONSE_CHARS` | 60 / 100000 | 单次调用超时、响应文本上限 |
 | `AF_LLM_JSON_RESPONSE_FORMAT` | true | 若上游不支持 `response_format` 则置 false |
 | `AF_LLM_SEND_SEED` | false | 是否向上游传递确定性 seed（仅部分厂商支持） |
@@ -318,7 +338,8 @@ git add docs/openapi/engine-api.json
 6. `human_gate` 的 `EXPRESSION` 审批人只认受限子集：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`，比较 `== != < <= > >=`、`in` / `not in`、`and` / `or` / `not`，字面量支持字符串、整数、布尔、null 与列表；**不支持函数调用与下标**。三处同文法——发布期在引擎侧以 `ast` 白名单静态校验、运行期由控制面逐候选求值、画布编辑时即时体检；表达式为空或非法一律 fail-closed（无人可批，记 ERROR）。子图（loop/parallel/subworkflow）内不允许 `human_gate`。
 7. 评测与 A/B 用轮询收口（默认 3s），不是事件驱动；用例数上限 50/次。
 8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、也不要求 `end`（出口由上层节点收口），画布最多下钻 4 层；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。
-9. `retrieval` 只在 DSL 类型与前端枚举里占位，引擎未实现该执行器（阶段门会以 `DSL-NODE-001` 拒绝，不会静默降级）。
+9. `retrieval` 检索为本地词法 BM25（中文单字 + 二元组），不是语义向量召回；无 rerank、无 PDF/Office 解析、无增量索引重建。不引入 embedding 服务，文档内容不出服务端。单次检索扫描切片上限 20000，`topK` 上限 50，单文档上限 200000 字符 / 500 切片；超出导入会在请求期被拒绝，不会静默截断。
+10. 默认模型用非推理的 `deepseek-chat`。DeepSeek 的 `deepseek-flash` / `deepseek-v4-pro` 是推理模型，`max_tokens` 同时约束思维链与正文；给到 1024 时思维链可能吃光预算、正文为空，节点以 `LLM-RESPONSE-001` 失败并提示调大 `maxTokens`。这是上游行为，不会退回示例文本。
 
 ## 目录
 

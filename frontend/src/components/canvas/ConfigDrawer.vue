@@ -23,6 +23,8 @@ const props = defineProps<{
     models: string[]
     defaultModel: string
   }[]
+  /** 本空间的知识库，供 retrieval 节点勾选文档集。 */
+  knowledgeBases?: { id: string; name: string; documentCount: number }[]
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +33,8 @@ const emit = defineEmits<{
   remove: [key: string]
   'edit-subgraph': [ref: SubgraphRef]
   'pick-model': []
+  'probe-models': [id: string]
+  'open-knowledge': []
 }>()
 
 /**
@@ -94,6 +98,19 @@ function setSource(id: string): void {
 }
 
 const modelOptions = computed(() => props.modelCatalog?.models ?? [])
+
+/** retrieval 节点勾选的知识库 id；数组直接落 DSL，服务端按租户复核归属。 */
+const knowledgeIds = computed<string[]>(() => {
+  const raw = cfg<unknown>('knowledgeBaseIds', [])
+  return Array.isArray(raw) ? raw.map(String) : []
+})
+
+function toggleKnowledgeBase(id: string): void {
+  const next = knowledgeIds.value.includes(id)
+    ? knowledgeIds.value.filter((x) => x !== id)
+    : [...knowledgeIds.value, id]
+  setCfg('knowledgeBaseIds', next)
+}
 
 const modelStatus = computed<string>(() => {
   const catalog = props.modelCatalog
@@ -391,7 +408,14 @@ function editBody(): void {
             连接 <span class="mono">{{ activeConnection.name }}</span> 提供 {{ activeConnection.models.length }} 个候选；清单外的模型名也可直接填。
           </template>
           <template v-else>
-            连接 <span class="mono">{{ activeConnection.name }}</span> 还没有模型清单，到「连接器」页点「拉取模型」，或在这里直接填。
+            连接 <span class="mono">{{ activeConnection.name }}</span> 还没有模型清单；点右边让服务端用已保存的密钥拉一次（也能顺带验证 Key 是否正确），或直接填模型名。
+            <button
+              class="af-btn af-btn--sm"
+              style="margin-left: 6px"
+              @click="emit('probe-models', activeConnection.id)"
+            >
+              立即拉取模型
+            </button>
           </template>
         </p>
         <p
@@ -479,6 +503,90 @@ function editBody(): void {
         :value="cfg('temperature', 0.7)"
         @input="setCfg('temperature', Number(($event.target as HTMLInputElement).value))"
       >
+    </template>
+
+    <template v-else-if="node.type === 'retrieval'">
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.7; margin: 0 0 10px"
+      >
+        从勾选的知识库里做真实检索；命中的原文片段写进
+        <span class="mono">output.text</span> / <span class="mono">output.results</span>，
+        下游 llm 节点的提示词里用 <span class="mono">nodes.xxx.output.text</span> 引用即可。
+      </p>
+      <label class="af-label">知识库（可多选）</label>
+      <div
+        v-if="(knowledgeBases ?? []).length"
+        style="border: 1px solid var(--af-border); border-radius: var(--af-radius); overflow: hidden"
+      >
+        <label
+          v-for="kb in knowledgeBases ?? []"
+          :key="kb.id"
+          style="display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--af-border); font-size: 12px; cursor: pointer"
+        >
+          <input
+            type="checkbox"
+            :checked="knowledgeIds.includes(kb.id)"
+            @change="toggleKnowledgeBase(kb.id)"
+          >
+          <span>{{ kb.name }}</span>
+          <span class="af-spacer" />
+          <span class="af-faint">{{ kb.documentCount }} 文档</span>
+        </label>
+      </div>
+      <div
+        v-else
+        class="af-panel"
+        style="padding: 10px; font-size: 12px"
+      >
+        还没有知识库。先去「知识库」页导入文档，再回来勾选。
+        <button
+          class="af-btn af-btn--sm"
+          style="margin-left: 8px"
+          @click="emit('open-knowledge')"
+        >
+          去导入文档
+        </button>
+      </div>
+      <p
+        v-if="!knowledgeIds.length"
+        class="af-error-box"
+        style="margin-top: 8px"
+      >
+        至少选择一个知识库，否则这个节点发布时会被校验拦下。
+      </p>
+      <label class="af-label">queryTemplate（Jinja2 沙箱）</label>
+      <textarea
+        class="af-textarea"
+        rows="3"
+        :value="cfg('queryTemplate', '')"
+        @input="setCfg('queryTemplate', ($event.target as HTMLTextAreaElement).value)"
+      />
+      <label class="af-label">topK</label>
+      <input
+        class="af-input mono"
+        type="number"
+        min="1"
+        max="50"
+        :value="cfg('topK', 5)"
+        @input="setCfg('topK', Number(($event.target as HTMLInputElement).value))"
+      >
+      <label class="af-label">minScore（0~1）</label>
+      <input
+        class="af-input mono"
+        type="number"
+        step="0.05"
+        min="0"
+        max="1"
+        :value="cfg('minScore', 0)"
+        @input="setCfg('minScore', Number(($event.target as HTMLInputElement).value))"
+      >
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6"
+      >
+        评分是本地 BM25 相关度（中文按字与二元组），不调用外部 embedding 服务；调高 minScore 可以只保留强相关片段。
+      </p>
     </template>
 
     <template v-else-if="node.type === 'tool'">

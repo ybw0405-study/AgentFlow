@@ -3,17 +3,17 @@ import { mount } from '@vue/test-utils'
 import ModelPicker from '@/components/canvas/ModelPicker.vue'
 
 function mountPicker() {
-  return mount(ModelPicker, { props: { currentModel: '内置演示模型 · 离线可跑' } })
+  return mount(ModelPicker, { props: { currentModel: '进程默认端点（AF_LLM_*）' } })
 }
 
 describe('模型选择器', () => {
-  it('列出市面常见模型，并提供内置演示与自定义入口', () => {
+  it('列出市面常见模型，并提供进程默认端点与自定义入口', () => {
     const wrapper = mountPicker()
     const text = wrapper.text()
     for (const name of ['混元 Hy4', 'DeepSeek', '智谱 GLM', 'Kimi', '通义千问', 'OpenAI']) {
       expect(text).toContain(name)
     }
-    expect(text).toContain('内置演示模型（离线可跑）')
+    expect(text).toContain('进程默认端点（AF_LLM_*）')
     expect(text).toContain('自定义 OpenAI 兼容端点')
     expect(text).toContain('管理已有连接')
   })
@@ -43,9 +43,9 @@ describe('模型选择器', () => {
     })
   })
 
-  it('内置演示、自定义、管理连接各自抛出对应事件', async () => {
+  it('进程默认端点、自定义、管理连接各自抛出对应事件', async () => {
     const wrapper = mountPicker()
-    const builtin = wrapper.findAll('.af-picker__row').find((r) => r.text().includes('内置演示模型'))
+    const builtin = wrapper.findAll('.af-picker__row').find((r) => r.text().includes('进程默认端点'))
     await builtin!.trigger('click')
     await wrapper.find('.af-picker__foot .af-btn--primary').trigger('click')
     const manage = wrapper.findAll('.af-picker__foot button').find((b) => b.text().includes('管理已有连接'))

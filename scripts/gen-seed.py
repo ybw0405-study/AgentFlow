@@ -21,16 +21,16 @@ def sql_literal(meta: dict) -> tuple[str, str]:
 DEMOS = [
     (
         "wf-demo",
-        "wfv-demo-1",
-        "示例：LLM → 工具 → LLM",
-        "内置演示：mock LLM 起草 → mock.search 检索 → mock LLM 综合。离线可跑。",
+        "wfv-demo-4",
+        "示例：LLM → 文档检索 → LLM",
+        "起草、检索、综合回答三段串联；模型走 OpenAI 兼容端点，检索命中内置知识库里的真实文档。",
         "_demo-workflow.json",
     ),
     (
         "wf-demo-triage",
-        "wfv-demo-triage-1",
+        "wfv-demo-triage-4",
         "示例：客户工单分诊",
-        "内置演示：分诊 → 加急判定 → 并行取证 → 人工审批（表达式审批人）→ 循环润色 → 回复。离线可跑。",
+        "分诊、加急判定、并行取证、人工审批、逐条润色、回复；取证改为检索知识库原文。",
         "_demo-triage-workflow.json",
     ),
 ]
@@ -71,29 +71,63 @@ INSERT IGNORE INTO budget_ledger (tenant_id, period, calls_used, tokens_used, li
 SELECT id, DATE_FORMAT(NOW(3), '%Y-%m'), 0, 0, 10000, 50000 FROM tenant;
 """
 
+DOC_TITLE = "售后与账号常见问题"
+DOC_CHUNKS = [
+    "退款政策：购买后七天内可申请全额退款，在订单页提交申请并填写订单编号，审核通过后原路退回。超过七天、三十天内可申请换货或维修。",
+    "发票开具：增值税普通发票在订单完成后三个工作日内开出，专票需补充开票资料。逾期未收到可联系财务组补开，电子发票发送至注册邮箱。",
+    "账号安全：登录验证码收不到时，先检查短信拦截与手机号是否绑定；连续五次输错密码会锁定三十分钟，可通过绑定邮箱自助解锁。",
+]
+CHAR_COUNT = sum(len(c) for c in DOC_CHUNKS)
+
+chunk_values = ",\n".join(
+    f"  ('kc-demo-{i + 1}', 't-space-a', 'kb-demo', 'kd-demo-1', {i}, '{DOC_TITLE}', "
+    f"'{c}', {max(1, len(c) // 3)})"
+    for i, c in enumerate(DOC_CHUNKS)
+)
+
+kb_block = f"""
+-- 内置知识库：示例里的 retrieval 节点引用 kb-demo，开箱即有真实文档可检索
+INSERT IGNORE INTO knowledge_base (id, tenant_id, name, description, created_by)
+VALUES ('kb-demo', 't-space-a', '产品与售后知识库',
+        '退款、发票与账号安全说明，供示例工作流检索', 'u-admin');
+
+INSERT INTO knowledge_document
+  (id, tenant_id, kb_id, title, source, char_count, chunk_count, created_by)
+VALUES ('kd-demo-1', 't-space-a', 'kb-demo', '{DOC_TITLE}', 'TEXT',
+        {CHAR_COUNT}, {len(DOC_CHUNKS)}, 'u-admin')
+ON DUPLICATE KEY UPDATE title = VALUES(title), chunk_count = VALUES(chunk_count);
+
+INSERT INTO knowledge_chunk
+  (id, tenant_id, kb_id, document_id, ordinal, document_title, content, token_count)
+VALUES
+{chunk_values}
+ON DUPLICATE KEY UPDATE content = VALUES(content), document_title = VALUES(document_title);
+"""
+
 blocks: list[str] = []
 for wf_id, ver_id, name, desc, dsl_file in DEMOS:
     meta = json.loads((ROOT / "scripts" / dsl_file).read_text(encoding="utf-8"))
     sql_json, checksum = sql_literal(meta)
     blocks.append(
         f"""
--- 内置示例工作流「{name.removeprefix('示例：')}」（已发布 v1）
+-- 内置示例工作流「{name.removeprefix('示例：')}」（已发布 v4）
 INSERT INTO workflow_definition
   (id, tenant_id, name, description, status, current_version_id, created_by)
 VALUES
   ('{wf_id}', 't-space-a', '{name}',
    '{desc}',
    'PUBLISHED', '{ver_id}', 'u-admin')
-ON DUPLICATE KEY UPDATE current_version_id = VALUES(current_version_id);
+ON DUPLICATE KEY UPDATE current_version_id = VALUES(current_version_id),
+                         name = VALUES(name), description = VALUES(description);
 
 INSERT INTO workflow_version
   (id, definition_id, version_no, dsl_json, dsl_checksum, immutable, published_at, published_by, created_by)
 VALUES
-  ('{ver_id}', '{wf_id}', 1, '{sql_json}', '{checksum}', 1, NOW(3), 'u-admin', 'u-admin')
+  ('{ver_id}', '{wf_id}', 4, '{sql_json}', '{checksum}', 1, NOW(3), 'u-admin', 'u-admin')
 ON DUPLICATE KEY UPDATE id = id;
 """
     )
 
-out = header + "".join(blocks)
+out = header + kb_block + "".join(blocks)
 (ROOT / "scripts" / "seed-demo.sql").write_text(out, encoding="utf-8", newline="\n")
 print("seed-demo.sql regenerated,", len(out), "bytes,", len(DEMOS), "demo workflows")

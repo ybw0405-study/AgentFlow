@@ -79,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             llm_providers,
             subworkflow_resolver,
             connector_gateway=(settings.gateway_base_url, settings.internal_token),
+            knowledge_gateway=(settings.gateway_base_url, settings.internal_token),
         )
         dispatcher = Dispatcher(settings, store, event_log, redis, executors, budget)
         app.state.settings = settings

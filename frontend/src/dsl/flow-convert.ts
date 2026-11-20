@@ -80,27 +80,35 @@ export function edgeId(e: { from: string; to: string; branch?: string }): string
 
 /** 新建节点的初始配置。
  *
- * 原则：默认值必须能直接通过引擎校验，不制造"刚拖出来就报红"的节点。
- * llm 默认接真实 provider：模型名取引擎给出的默认值，拿不到就留空由校验提示，
- * 不再写死 mock-* 占位名——那会让节点看起来能跑、实际走的是服务端默认模型。
+ * 默认值一律指向真实执行路径：有模型连接就挂 connectionId，否则走进程级
+ * OpenAI 兼容端点。未注入 AF_LLM_* 时执行会明确报 LLM-NOT_CONFIGURED-001，
+ * 由画布提示补齐配置，而不是静默产出确定性示例文本。
  */
 export function newNodeConfig(
   type: DslNode['type'],
   llmModel?: string,
   llmConnection?: { id: string; defaultModel: string } | null,
+  knowledgeBaseId?: string,
 ): Record<string, unknown> {
   switch (type) {
     case 'llm':
-      // 已有模型连接就直接挂上：新建的节点开箱可用，不必再去翻连接列表
       return {
         provider: 'openai-compatible',
         ...(llmConnection ? { connectionId: llmConnection.id } : {}),
-        model: llmModel || llmConnection?.defaultModel || '',
+        model: llmConnection?.defaultModel || llmModel || 'deepseek-chat',
         promptTemplate: '{{ vars.question }}',
         maxTokens: 1024,
       }
+    case 'retrieval':
+      return {
+        knowledgeBaseIds: knowledgeBaseId ? [knowledgeBaseId] : [],
+        queryTemplate: '{{ vars.question }}',
+        topK: 5,
+        minScore: 0,
+      }
     case 'tool':
-      return { connectorId: 'mock.search', operation: 'search', paramsMapping: {} }
+      // 不预填任何 mock 连接器：真实连接由连接器页创建，留空由校验提示补齐。
+      return { connectorId: '', operation: '', paramsMapping: {} }
     case 'condition':
       // when 用字面量 True：空工作流里没有变量可引用，先给一个能发布的起点
       return { cases: [{ name: 'yes', when: 'True' }], elseBranch: 'default' }

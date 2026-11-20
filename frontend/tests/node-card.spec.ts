@@ -73,4 +73,12 @@ describe('节点卡片呈现规则', () => {
     expect(nodeSummary('human_gate', { approvers: { type: 'EXPRESSION', expression: 'user.platformAdmin == true' } }))
       .toContain('表达式')
   })
+
+  it('retrieval 卡片显示文档集数量、TopK 与真实检索语义', () => {
+    const fields = inlineFields('retrieval', { knowledgeBaseIds: ['kb-1', 'kb-2'], topK: 5 })
+    expect(fields.find((f) => f.key === 'knowledgeBaseIds')?.value).toContain('2 个知识库')
+    expect(fields.find((f) => f.key === 'topK')?.kind).toBe('number')
+    expect(nodeSummary('retrieval', { knowledgeBaseIds: ['kb-1'], topK: 5 }))
+      .toContain('真实文档检索')
+  })
 })

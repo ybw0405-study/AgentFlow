@@ -75,6 +75,17 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
         { key: 'connectorId', label: '连接器', value: text(config.connectorId), kind: 'text' },
         { key: 'operation', label: '操作', value: text(config.operation), kind: 'text' },
       ]
+    case 'retrieval':
+      return [
+        {
+          key: 'knowledgeBaseIds',
+          label: '文档集',
+          value: `已选 ${count(config.knowledgeBaseIds)} 个知识库`,
+          kind: 'text',
+          readOnly: true,
+        },
+        { key: 'topK', label: 'TopK', value: text(config.topK), kind: 'number' },
+      ]
     case 'condition':
       return [
         { key: 'elseBranch', label: '默认分支', value: text(config.elseBranch), kind: 'text' },
@@ -142,10 +153,12 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
 export function nodeSummary(type: string, config: Record<string, unknown>): string {
   switch (type) {
     case 'llm':
-      // 模板默认走离线演示模型，卡片上直接说明并给出下一步，避免看起来像「没配好」。
+      // 历史草稿里若仍是演示模型，卡片给出下一步，避免看起来像「没配好」。
       return isBuiltinDemoModel(config) || !text(config.model)
         ? '点击「模型」可接入真实服务'
         : ''
+    case 'retrieval':
+      return `${count(config.knowledgeBaseIds)} 个知识库 · 真实文档检索 · TopK ${text(config.topK) || '5'}`
     case 'condition':
       return `${count(config.cases)} 个条件分支`
     case 'loop': {

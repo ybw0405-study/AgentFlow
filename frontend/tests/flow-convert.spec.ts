@@ -49,13 +49,28 @@ describe('flow-convert', () => {
   })
 
   it('newNodeConfig provides type defaults', () => {
-    expect(newNodeConfig('llm', 'deepseek-chat').provider).toBe('openai-compatible')
-    expect(newNodeConfig('llm', 'deepseek-chat').model).toBe('deepseek-chat')
-    expect(newNodeConfig('tool').connectorId).toBe('mock.search')
+    expect(newNodeConfig('tool').connectorId).toBe('')
     expect(newNodeConfig('end').resultMapping).toBeTruthy()
   })
 
-  it('没有模型清单时不写死占位模型名', () => {
-    expect(newNodeConfig('llm').model).toBe('')
+  it('没有模型连接时新建 llm 仍走真实 provider，不会静默产出假文本', () => {
+    const cfg = newNodeConfig('llm', 'deepseek-chat')
+    expect(cfg.provider).toBe('openai-compatible')
+    expect(cfg.model).toBe('deepseek-chat')
+    expect(newNodeConfig('llm').model).toBe('deepseek-chat')
+  })
+
+  it('已有模型连接时新建 llm 直接挂上连接', () => {
+    const cfg = newNodeConfig('llm', '', { id: 'conn-1', defaultModel: 'deepseek-chat' })
+    expect(cfg.provider).toBe('openai-compatible')
+    expect(cfg.connectionId).toBe('conn-1')
+    expect(cfg.model).toBe('deepseek-chat')
+  })
+
+  it('retrieval 默认带上第一个知识库，没有知识库时留空由校验提示', () => {
+    const cfg = newNodeConfig('retrieval', undefined, null, 'kb-1')
+    expect(cfg.knowledgeBaseIds).toEqual(['kb-1'])
+    expect(cfg.queryTemplate).toBeTruthy()
+    expect(newNodeConfig('retrieval').knowledgeBaseIds).toEqual([])
   })
 })

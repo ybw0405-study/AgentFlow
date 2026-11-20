@@ -153,4 +153,54 @@ describe('节点配置抽屉', () => {
     expect(emitted.config.connectionId).toBeUndefined()
     expect(emitted.config.model).toBe('deepseek-chat')
   })
+
+  it('连接没有模型清单时提供一键拉取入口', async () => {
+    const wrapper = mountDrawer(
+      llm({ connectionId: 'c1', provider: 'openai-compatible', model: 'deepseek-chat' }),
+      undefined,
+      [{ id: 'c1', name: 'deepseek', models: [], defaultModel: '' }],
+    )
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('立即拉取模型'))
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('probe-models')?.[0]).toEqual(['c1'])
+  })
+
+  it('retrieval 节点列出知识库并可多选', async () => {
+    const wrapper = mount(ConfigDrawer, {
+      props: {
+        node: {
+          key: 'kb', type: 'retrieval',
+          config: { knowledgeBaseIds: ['kb-1'], queryTemplate: '{{ vars.question }}', topK: 5 },
+        },
+        issues: [],
+        knowledgeBases: [
+          { id: 'kb-1', name: '售后手册', documentCount: 2 },
+          { id: 'kb-2', name: '价格表', documentCount: 1 },
+        ],
+      },
+    })
+    expect(wrapper.text()).toContain('售后手册')
+    expect(wrapper.text()).toContain('真实检索')
+    const boxes = wrapper.findAll('input[type="checkbox"]')
+    expect(boxes).toHaveLength(2)
+    expect((boxes[0].element as HTMLInputElement).checked).toBe(true)
+    await boxes[1].setValue(true)
+    const emitted = wrapper.emitted('update')?.at(-1)?.[0] as { config: Record<string, unknown> }
+    expect(emitted.config.knowledgeBaseIds).toEqual(['kb-1', 'kb-2'])
+  })
+
+  it('没有知识库时给出导入入口', async () => {
+    const wrapper = mount(ConfigDrawer, {
+      props: {
+        node: { key: 'kb', type: 'retrieval', config: { knowledgeBaseIds: [], queryTemplate: 'x' } },
+        issues: [],
+        knowledgeBases: [],
+      },
+    })
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('去导入文档'))
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('open-knowledge')).toHaveLength(1)
+  })
 })

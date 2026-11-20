@@ -35,11 +35,12 @@ export AF_MQ_ENABLED="${AF_MQ_ENABLED:-true}"
 export AF_ROCKETMQ_NAMESRV="${AF_ROCKETMQ_NAMESRV:-127.0.0.1:9876}"
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
-# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。
+# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引用真实模型的
+# 节点会返回 LLM-NOT_CONFIGURED-001，需显式注入 AF_LLM_*。
 if [ -z "${AF_LLM_API_KEY:-}" ] && [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   export AF_LLM_BASE_URL="${AF_LLM_BASE_URL:-https://api.deepseek.com/v1}"
   export AF_LLM_API_KEY="$DEEPSEEK_API_KEY"
-  export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-flash}"
+  export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-chat}"
 fi
 
 echo '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'

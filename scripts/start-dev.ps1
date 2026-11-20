@@ -79,11 +79,12 @@ if ($null -eq $env:AF_MQ_ENABLED) { $env:AF_MQ_ENABLED = 'true' }
 if ($null -eq $env:AF_ROCKETMQ_NAMESRV) { $env:AF_ROCKETMQ_NAMESRV = '127.0.0.1:9876' }
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
-# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引擎保持 mock。
+# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引用真实模型的
+# 节点会返回 LLM-NOT_CONFIGURED-001，需显式注入 AF_LLM_*。
 if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
     if ($null -eq $env:AF_LLM_BASE_URL) { $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1' }
     $env:AF_LLM_API_KEY = $env:DEEPSEEK_API_KEY
-    if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-flash' }
+    if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-chat' }
 }
 
 Write-Host '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'

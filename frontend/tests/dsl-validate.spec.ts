@@ -45,4 +45,27 @@ describe('dsl local validate', () => {
     expect(messages.some((m) => m.includes('connectorId'))).toBe(true)
     expect(messages.some((m) => m.includes('operation'))).toBe(true)
   })
+
+  it('retrieval 必须选择知识库并给出可操作提示', () => {
+    const dsl = base()
+    dsl.nodes.splice(1, 0, {
+      key: 'kb', type: 'retrieval', config: { queryTemplate: '{{ vars.question }}' },
+    })
+    dsl.edges = [{ from: 'start', to: 'kb' }, { from: 'kb', to: 'end' }]
+    const messages = validateDslLocal(dsl).map((i) => i.message)
+    expect(messages.some((m) => m.includes('知识库'))).toBe(true)
+  })
+
+  it('retrieval 选了知识库且模板齐全时通过校验', () => {
+    const dsl = base()
+    dsl.nodes.splice(1, 0, {
+      key: 'kb', type: 'retrieval',
+      config: {
+        knowledgeBaseIds: ['kb-1'], queryTemplate: '{{ vars.question }}',
+        topK: 5, minScore: 0,
+      },
+    })
+    dsl.edges = [{ from: 'start', to: 'kb' }, { from: 'kb', to: 'end' }]
+    expect(validateDslLocal(dsl)).toEqual([])
+  })
 })

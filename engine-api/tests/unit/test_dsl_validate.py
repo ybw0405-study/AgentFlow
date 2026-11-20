@@ -79,8 +79,12 @@ def test_orphan_node(settings, demo_dsl):
     assert DSL_ORPHAN in _codes(result)
 
 
-def test_phase_gate_rejects_unimplemented_node(settings, demo_dsl):
-    """阶段门只放行已实现执行器的节点：retrieval 尚未接入真实检索，仍应被拒绝。"""
+def test_phase_gate_rejects_node_outside_allowlist(settings, demo_dsl):
+    """阶段门仍按 Settings 白名单工作：retrieval 已实现，若配置里摘掉就应被拒绝。
+
+    默认白名单接受 retrieval 由 test_retrieval.py::test_phase_gate_accepts_retrieval_node 守住，
+    这里验证「白名单机制本身」没有随着放开节点类型一起失效。
+    """
     dsl = copy.deepcopy(demo_dsl)
     dsl["nodes"].append(
         {
@@ -89,8 +93,11 @@ def test_phase_gate_rejects_unimplemented_node(settings, demo_dsl):
             "config": {"knowledgeBaseIds": ["kb-1"], "queryTemplate": "{{ vars.question }}"},
         }
     )
-    dsl["edges"].append({"from": "final", "to": "gate"})
-    result = validate_dsl(dsl, settings)
+    dsl["edges"].append({"from": "start", "to": "lookup"})
+    gated = settings.model_copy(
+        update={"supported_node_types": settings.supported_node_types - {"retrieval"}}
+    )
+    result = validate_dsl(dsl, gated)
     assert DSL_VALIDATION in _codes(result)
     assert any("not enabled" in e.message for e in result.errors)
 

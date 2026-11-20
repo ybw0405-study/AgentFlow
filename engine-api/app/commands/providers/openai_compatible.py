@@ -247,6 +247,11 @@ class OpenAICompatibleProvider:
                 models.append(model_id)
                 if len(models) >= _MAX_MODEL_ENTRIES:
                     break
+        # 默认模型可能是上游只在请求侧接受、不在 /models 里列出的别名（例如 DeepSeek 的
+        # deepseek-chat）。画布下拉要能回显当前生效的模型，所以把它并入清单。
+        default_model = (self._default_model or "").strip()[:_MAX_MODEL_ID_LEN]
+        if default_model and default_model not in seen:
+            models.append(default_model)
         return ModelCatalog(configured=True, models=sorted(models))
 
     @staticmethod
@@ -331,7 +336,15 @@ class OpenAICompatibleProvider:
 
         text = self._extract_text(body)
         if not text:
-            return self._failure("LLM-RESPONSE-001", False, started, "empty content")
+            detail = "empty content"
+            choices = body.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                if isinstance(message, dict) and message.get("reasoning_content"):
+                    detail = (
+                        "empty content: model spent the token budget on reasoning; raise maxTokens"
+                    )
+            return self._failure("LLM-RESPONSE-001", False, started, detail)
         if len(text) > self._max_response_chars:
             return self._failure(
                 "LLM-RESPONSE-001", False, started, "content exceeds AF_LLM_MAX_RESPONSE_CHARS"

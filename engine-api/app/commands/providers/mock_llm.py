@@ -1,7 +1,7 @@
-"""离线 mock LLM Provider（P0 默认，§11 P0.7：无外网可演示）。
+"""离线测试桩：确定性 LLM Provider，仅供单元测试与故障注入使用。
 
-确定性：同一 (seed, prompt, model) 永远生成同一文本与同一 token 计数，
-保证重放/恢复语义可验证。
+同一 (seed, prompt, model) 永远生成同一文本与同一 token 计数，
+便于验证重放与恢复语义。产品 DSL 默认走真实 provider。
 """
 
 from __future__ import annotations

@@ -50,7 +50,7 @@ function titleFor(meta: { type: NodeType; description: string }): string {
       </template>
       <template v-else>
         选中节点在右侧配置；condition / human_gate 的出边分支在画布底部设置。
-        <br>retrieval 引擎尚未实现执行器，暂不提供。
+        <br>retrieval 会真实检索「知识库」里导入的文档，不再返回示例语料。
       </template>
     </div>
   </aside>

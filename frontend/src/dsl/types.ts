@@ -96,6 +96,7 @@ export const NODE_TYPE_METAS: NodeTypeMeta[] = [
   { type: 'start', label: 'Start', description: '入口：校验并合并初始变量' },
   { type: 'llm', label: 'LLM', description: '模型调用（连接器或进程级端点）' },
   { type: 'tool', label: 'Tool', description: '连接器工具调用（内置 mock.*）' },
+  { type: 'retrieval', label: 'Retrieval', description: '从导入的文档里检索真实片段' },
   {
     type: 'condition',
     label: 'Condition',

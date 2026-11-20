@@ -138,6 +138,13 @@ function validateGraph(nodes: DslNode[], edges: DslEdge[], scope: GraphScope): V
       if (!cfg.connectorId) at(n.key, 'tool 需要 connectorId', 'connectorId')
       if (!cfg.operation) at(n.key, 'tool 需要 operation', 'operation')
     }
+    if (n.type === 'retrieval') {
+      const ids = cfg.knowledgeBaseIds
+      if (!Array.isArray(ids) || !ids.length) {
+        at(n.key, 'retrieval 需要至少选择一个知识库（先在「知识库」页导入文档）', 'knowledgeBaseIds')
+      }
+      if (!cfg.queryTemplate) at(n.key, 'retrieval 需要 queryTemplate', 'queryTemplate')
+    }
     if (n.type === 'end') {
       const mapping = cfg.resultMapping as Record<string, string> | undefined
       if (!mapping || Object.keys(mapping).length === 0) {

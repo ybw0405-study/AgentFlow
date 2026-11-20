@@ -28,11 +28,11 @@ const query = ref('')
 const active = ref(0)
 const input = ref<HTMLInputElement | null>(null)
 
-const BUILTIN_KEYWORDS = ['内置', '演示', '离线', '可跑', 'mock', 'demo', 'builtin', '无需配置']
+const DEFAULT_ENDPOINT_KEYWORDS = ['进程', '默认', '端点', '服务端', 'af_llm', 'env', '环境变量', 'builtin']
 
 const builtinVisible = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return !q || BUILTIN_KEYWORDS.some((k) => k.toLowerCase().includes(q) || q.includes(k.toLowerCase()))
+  return !q || DEFAULT_ENDPOINT_KEYWORDS.some((k) => k.toLowerCase().includes(q) || q.includes(k.toLowerCase()))
 })
 
 const matched = computed(() => searchModelPresets(query.value))
@@ -140,12 +140,12 @@ onMounted(() => input.value?.focus())
             >AF</span>
             <span class="af-picker__text">
               <span class="af-picker__name">
-                {{ row.kind === 'preset' ? row.preset.label : '内置演示模型（离线可跑）' }}
+                {{ row.kind === 'preset' ? row.preset.label : '进程默认端点（AF_LLM_*）' }}
               </span>
               <span class="af-picker__desc">
                 {{ row.kind === 'preset'
                   ? `${row.preset.vendor} · ${row.preset.note}`
-                  : '不联网、不需要 Key；当前模板默认就是它，点这里可切回来' }}
+                  : '走启动脚本注入的 OpenAI 兼容端点，无需在画布上建连接' }}
               </span>
             </span>
             <span
@@ -156,7 +156,7 @@ onMounted(() => input.value?.focus())
             <span
               v-else-if="row.kind === 'builtin'"
               class="af-picker__tag"
-            >无需配置</span>
+            >服务端配置</span>
           </button>
         </template>
         <div

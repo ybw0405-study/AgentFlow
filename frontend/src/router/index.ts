@@ -28,6 +28,7 @@ const router = createRouter({
       component: () => import('@/views/ExecutionDetailView.vue'),
     },
     { path: '/connectors', name: 'connectors', component: () => import('@/views/ConnectorsView.vue') },
+    { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeView.vue') },
     { path: '/approvals', name: 'approvals', component: () => import('@/views/ApprovalsView.vue') },
     { path: '/evals', name: 'evals', component: () => import('@/views/EvalsView.vue') },
     { path: '/admin', name: 'admin', component: () => import('@/views/AdminView.vue') },

@@ -1447,7 +1447,7 @@ DSL 存的是绝对坐标，宽流程的首屏会只看到前几个节点、末�
 
 本次只做**呈现层加法**，硬约束与 §18 一致：
 
-- 后端零改动。DSL、引擎、API、DB、投影、发布期校验一行未动；没有新增端点。
+- 接入路径只在前端与连接器页增加了编排逻辑，引擎与控制面的接口契约保持不变。
 - 安全边界不变：`LlmConfig` 仍是 `extra="forbid"`，`baseUrl` / `apiKey` **绝不进 DSL**；
   端点与密钥只在 connector-service 解密后注入出网请求头，画布只持 `connectionId`。
 - 高级模式全保留：`ConfigDrawer` 的模型来源 / provider / model、`ConnectorsView`、
@@ -1495,3 +1495,105 @@ build / design-redlines 全绿。实机验证覆盖：模型清单渲染、预�
 返回 401 后向导就地显示「检查 Base URL 路径与 API Key」并保持可修改，以及演示模型
 卡片提示。截图落在 `docs/images/model-picker.png`、`model-connect.png`、
 `model-connect-error.png`，`canvas.png` 同步刷新。
+
+## 20. 文档检索与「运行即所见」（2026-11-20）
+
+§19 完成了模型接入向导，但接入只改草稿、触发只读版本快照，两条路径的 DSL 并不一致；
+内置示例也还停留在离线演示配置。本节记录两处补齐：知识库与 `retrieval` 执行器，
+以及「运行」按画布当前草稿生成版本快照。
+
+引擎的 `openai-compatible` provider 用 `httpx` 请求 `POST /chat/completions`，
+`connectionId` 路径经网关到 connector-service，由后者解密注入凭据并做出网校验。
+内置示例与模板现在默认指向这条链路，检索节点读用户导入的文档；未注入
+`AF_LLM_*` 时节点返回 `LLM-NOT_CONFIGURED-001`，不再回落到确定性示例文本。
+引擎里的 mock provider 与 `mock.*` 连接器只作为单元测试与离线故障注入的测试桩保留。
+
+### 20.1 V009：知识库 / 文档 / 切片
+
+检索不引入 pgvector 或外部 RAG 服务，打分在本地用 BM25 完成（见 §20.2）：
+文档内容不出控制面，也不新增基础设施依赖。`db/mysql/migration/V009__knowledge.sql`
+建三张带 `tenant_id` 的表：
+
+```
+knowledge_base      (id, tenant_id, name, description, created_by, created_at, deleted_at)
+knowledge_document  (id, tenant_id, kb_id, title, source, char_count, chunk_count, ..., deleted_at)
+knowledge_chunk     (id, tenant_id, kb_id, document_id, ordinal, document_title, content, token_count)
+```
+
+写入时切片（`KnowledgeService.split`）：~420 字符窗口，优先在句末标点/换行断开，
+段间保留 60 字符重叠，纯确定性算法保证同一文档每次得到相同切片。文档/知识库软删时
+**同步物理删除切片**，于是检索 SQL 不需要 JOIN 软删状态，过滤条件可完全下推到 SQL。
+`KnowledgeMapper.BASE_SELECT` 把 `documentCount` / `chunkCount` 两个统计子查询与
+其余 6 列合并成 8 列，与 `BaseRow` 的 8 个字段对齐——此前 `findBase` 只查 6 列，
+MyBatis 构造器映射失败，知识库列表在实机返回 500；`KnowledgeServiceTest` 用列数契约
+守住这处回归。`scripts/gen-seed.py` 同时写入 `kb-demo` 与三份售后文档切片，
+种子里的两条示例升级为 v4 并引用该知识库，起服后无需手工导入即可检索到真实内容。
+
+### 20.2 BM25 与信任边界
+
+`KnowledgeService.searchForTenant` 在应用层做 BM25（k1=1.5, b=0.75），分数经
+`1 - exp(-raw / 3)` 有界归一化到 (0,1)，`minScore` 才有稳定含义。词项
+（`tokenize`）：ASCII 字母数字按整词小写；CJK 同时产单字与相邻二元组，中文查询
+无需分词器也能召回。候选集由 `listChunksForSearch` 以 `tenant_id + kb_id IN (...)`
+下推并用 `LIMIT 20000` 硬上限，`topK` 上限 50。
+
+不引入向量库 / embedding 服务：全部计算在本地 JDK 完成，文档内容不出控制面，
+离线可跑。代价是词法检索而非语义召回，见 README「已知限制」。
+
+两条入口共用 `searchForTenant`：用户侧 `POST /api/v1/knowledge/search`（画布配置前
+自测）与内部 `POST /internal/knowledge/search`（引擎检索节点）。内部端点只认
+`X-Internal-Token`，`tenantId` 来自执行上下文而非请求方可信输入，
+`distinctOwnedBases` 逐 kbId 调 `findBase` 复核归属，越权 id 静默忽略——既不返回
+数据，也不报错暴露存在性。网关 `internal-dsl` 与 `workflow-service` 路由同时放行
+`/internal/knowledge/**` 与 `/api/v1/knowledge/**`，`TenantFilter` 同步纳入。
+
+### 20.3 retrieval 执行器
+
+`engine-api/app/nodes/retrieval.py` 的 `RetrievalExecutor` 通过
+`KnowledgeSearchClient`（`httpx.AsyncClient`）调用内部端点，错误按既有口径分类：
+超时/网络/5xx → `TransientNodeError`（由 RetryPolicy 重试），401/403/404 与畸形响应
+→ `PermanentNodeError`。Command 事件照旧发 `CommandIssued` / `CommandCompleted` /
+`CommandFailed`，`callId` 仍由 `executionId/nodeKey/attempt` 确定性派生。
+输出 `text` 是带 `《标题》 片段 N（相关度 …）` 出处的拼接上下文（上限 32KB），
+`results` / `citations` 保留结构化命中，`result` 与 tool 节点同形，模板可直接沿用。
+`build_executors` 新增 `knowledge_gateway=(gateway_base, internal_token)`；未配置时
+节点明确报 `RETRIEVAL-NOT_CONFIGURED-001`，不静默回落到示例文本。
+`Settings.supported_node_types` 正式加入 `retrieval`，DSL 校验不再拒绝。
+
+前端：`KnowledgeView.vue` 建库/导入/试检索/一键生成工作流；`ConfigDrawer.vue`
+为 retrieval 提供知识库多选、`queryTemplate` / `topK` / `minScore`；
+`validate.ts` 要求至少选一个知识库；`NodePalette` / `node-card` / `flow-convert`
+同步补齐类型描述、卡片字段与新建默认配置。
+
+### 20.4 「运行」按草稿执行，而不是按已发布版本
+
+`ExecutionService.trigger` 只认版本快照：不带 `versionId` 时走
+`def.currentVersionId`（或灰度分流），而接入向导改的是当前编辑中的草稿，
+两者不是同一份 DSL，因此刚接入的连接不会出现在执行里。
+
+`CanvasEditorView.run()` 现在：保存当前草稿 → 取 `detail` 比对 checksum →
+若已发布版本 checksum 与草稿一致则不带 `versionId`（保留灰度语义）；
+否则复用历史中同 checksum 的版本，找不到才 `freeze` 一份快照，最后显式带
+`versionId` 触发。因此：
+
+- 跑的是画布所见，接入的模型连接/文档检索立刻生效；
+- **不改已发布版本、不改灰度配置**，正式发布仍只由「冻结并发布」触发；
+- 同内容草稿不重复冻结，避免版本表被每次运行刷满。
+
+`inspectDemo` 在导入旧版演示 DSL 时给出提示；`applyConnectionToAllLlm` 把整层
+llm 节点切到指定连接，`confirmTemplate` 用 `bindConnectionToLlmNodes` 在应用模板时
+整层改写（含子图）。两条路径都要求连接带默认模型名，否则不改写。
+
+### 20.5 验收
+
+- Python：`test_retrieval.py`（真实切片、模板渲染、错误分类、客户端信封解析、
+  阶段门放行）、`test_dsl_validate.py`（白名单摘除仍拒绝）；ruff + 308 passed。
+- Java：`KnowledgeServiceTest`（切片/词项/BM25 排序/topK/minScore/租户隔离/
+  列数契约）；`mvn verify` 全模块 BUILD SUCCESS。
+- 前端：`demo-state.spec.ts`（演示态与整层改写含子图）、`knowledge-view.spec.ts`、
+  `canvas-editor.spec.ts`（运行带 `versionId` 触发）；typecheck / lint /
+  228 passed / build 全绿。
+- E2E：`e2e/test_knowledge_retrieval.py` 覆盖建库→导入→检索→跨租户隔离→删除清切片，
+  以及 retrieval 节点产出里出现导入原文且不含「mock 语料片段」；`e2e/test_subworkflow.py`
+  用自建子流程验证 `sub#run#` 前缀与 `outputMapping`，不把模型可用性耦合进来。先起全栈
+  （`scripts/start-dev.*`）后，`AF_E2E_REAL_LLM=1 pytest e2e -q` 全量通过。

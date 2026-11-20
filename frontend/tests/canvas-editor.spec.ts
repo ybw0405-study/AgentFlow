@@ -6,6 +6,8 @@ import CanvasEditorView from '@/views/CanvasEditorView.vue'
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(),
   saveDraft: vi.fn(),
+  freeze: vi.fn(),
+  trigger: vi.fn(),
   push: vi.fn(),
   models: vi.fn(),
   connections: vi.fn(),
@@ -15,8 +17,13 @@ vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
   return {
     ...actual,
-    workflowApi: { ...actual.workflowApi, detail: mocks.detail, saveDraft: mocks.saveDraft },
-    executionApi: { ...actual.executionApi, trigger: vi.fn() },
+    workflowApi: {
+      ...actual.workflowApi,
+      detail: mocks.detail,
+      saveDraft: mocks.saveDraft,
+      freeze: mocks.freeze,
+    },
+    executionApi: { ...actual.executionApi, trigger: mocks.trigger },
     llmApi: { ...actual.llmApi, models: mocks.models },
     connectorApi: { ...actual.connectorApi, list: mocks.connections },
   }
@@ -97,7 +104,11 @@ describe('画布交互', () => {
   beforeEach(() => {
     mocks.detail.mockReset()
     mocks.saveDraft.mockReset()
-    mocks.saveDraft.mockResolvedValue(undefined)
+    mocks.saveDraft.mockResolvedValue({ ok: true, checksum: 'sum-draft' })
+    mocks.freeze.mockReset()
+    mocks.freeze.mockResolvedValue({ id: 'v-9', versionNo: 1, dslChecksum: 'sum-draft' })
+    mocks.trigger.mockReset()
+    mocks.trigger.mockResolvedValue({ executionId: 'ex-1' })
     mocks.connections.mockReset()
     mocks.connections.mockResolvedValue([
       {
@@ -310,7 +321,7 @@ describe('画布交互', () => {
     expect(wrapper.text()).toContain('已接入')
   })
 
-  it('切回内置演示模型会清掉连接引用，保留离线可跑', async () => {
+  it('改用进程默认端点会清掉连接引用，仍走真实 provider', async () => {
     const wrapper = await mountCanvas()
     const hub = await openModelHub(wrapper)
     hub.vm.$emit('builtin')
@@ -322,7 +333,27 @@ describe('画布交互', () => {
     }[]
     const draft = nodes.find((n) => n.id === 'draft')
     expect(draft?.data.config.connectionId).toBeUndefined()
-    expect(draft?.data.config.model).toBe('mock-llm-large')
-    expect(draft?.data.config.provider).toBe('mock')
+    expect(draft?.data.config.model).toBe('deepseek-chat')
+    expect(draft?.data.config.provider).toBe('openai-compatible')
+  })
+
+  it('运行按当前草稿冻结版本并显式传 versionId，不跑旧的已发布版本', async () => {
+    const wrapper = await mountCanvas()
+    const open = wrapper.findAll('button').find((b) => b.text() === '运行')
+    expect(open).toBeTruthy()
+    await open!.trigger('click')
+    await flushPromises()
+
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '触发执行')
+    expect(confirm).toBeTruthy()
+    await confirm!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.saveDraft).toHaveBeenCalledWith('wf-1', expect.objectContaining({ dslVersion: '1.0' }))
+    expect(mocks.freeze).toHaveBeenCalledWith('wf-1')
+    expect(mocks.trigger).toHaveBeenCalledWith(
+      'wf-1',
+      expect.objectContaining({ versionId: 'v-9' }),
+    )
   })
 })

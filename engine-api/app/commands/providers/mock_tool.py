@@ -1,6 +1,6 @@
 """内置 mock 连接器（D3）：无凭据、无外网，副作用计数落 Redis 并按 callId 去重。
 
-P0–P1 用于演示与「恰好一次」验证；P2 由 connector-service 承接真实工具。
+用于单元测试与「恰好一次」重放验证；真实工具由 connector-service 承接。
 
 支持的 connectorId / operation：
 - mock.search / search(q)              → 固定语料检索结果

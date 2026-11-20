@@ -8,6 +8,7 @@ import redis.asyncio as aioredis
 
 from ..commands.providers.connector_llm import ConnectorLlmFactory
 from ..commands.providers.http_tool import HttpToolConnector
+from ..commands.providers.knowledge_search import KnowledgeSearchClient
 from ..commands.providers.mock_tool import MockToolConnector
 from .condition import ConditionExecutor
 from .end import EndExecutor
@@ -16,6 +17,7 @@ from .llm import LlmExecutor, LLMProvider
 from .loop import LoopExecutor
 from .parallel import ParallelExecutor
 from .registry import NodeExecutor
+from .retrieval import RetrievalExecutor
 from .start import StartExecutor
 from .subworkflow import SubworkflowExecutor
 from .tool import ConnectorRegistry, ToolExecutor
@@ -30,8 +32,11 @@ def build_executors(
     llm_providers: dict[str, LLMProvider],
     subworkflow_resolver: SubworkflowResolver | None = None,
     connector_gateway: tuple[str, str] | None = None,
+    knowledge_gateway: tuple[str, str] | None = None,
 ) -> dict[str, NodeExecutor]:
-    """connector_gateway=(gateway_base, internal_token) 时启用真实连接器与模型连接。"""
+    """connector_gateway=(gateway_base, internal_token) 时启用真实连接器与模型连接；
+    knowledge_gateway 同源，启用文档检索节点。两者缺省时对应节点给出明确错误而非静默回落。
+    """
     remote = (
         (lambda cid: HttpToolConnector(connector_gateway[0], connector_gateway[1], cid))
         if connector_gateway
@@ -45,10 +50,16 @@ def build_executors(
         else None
     )
     connectors = ConnectorRegistry(lambda cid: MockToolConnector(redis, cid), remote)
+    knowledge = (
+        KnowledgeSearchClient(knowledge_gateway[0], knowledge_gateway[1])
+        if knowledge_gateway
+        else None
+    )
     return {
         "start": StartExecutor(),
         "end": EndExecutor(),
         "llm": LlmExecutor(llm_providers, connector_llms),
+        "retrieval": RetrievalExecutor(knowledge),
         "tool": ToolExecutor(connectors),
         "condition": ConditionExecutor(),
         "transform": TransformExecutor(),

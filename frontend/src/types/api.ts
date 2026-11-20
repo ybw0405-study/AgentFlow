@@ -279,3 +279,40 @@ export interface LlmConnectionConfig {
   auth?: { headerName?: string; valuePrefix?: string }
   operations?: Record<string, { method?: string; path?: string }>
 }
+
+/** 文档知识库（V009）。chunkCount 是导入时切好的片段数，不是示例数据。 */
+export interface KnowledgeBaseDto {
+  id: string
+  name: string
+  description: string | null
+  documentCount: number
+  chunkCount: number
+  createdAt: string | null
+}
+
+export interface KnowledgeDocumentDto {
+  id: string
+  kbId: string
+  title: string
+  source: string
+  charCount: number
+  chunkCount: number
+  createdAt: string | null
+}
+
+export interface KnowledgeHitDto {
+  chunkId: string
+  documentId: string
+  documentTitle: string
+  kbId: string
+  ordinal: number
+  content: string
+  score: number
+}
+
+export interface KnowledgeSearchResult {
+  results: KnowledgeHitDto[]
+  query: string
+  matchedChunks: number
+  scannedChunks: number
+}

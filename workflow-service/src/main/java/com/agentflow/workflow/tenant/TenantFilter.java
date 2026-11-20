@@ -36,7 +36,7 @@ public class TenantFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
         return !(path.startsWith("/api/v1/workflows") || path.startsWith("/api/v1/executions")
                 || path.startsWith("/api/v1/connectors") || path.startsWith("/api/v1/gates")
-                || path.startsWith("/api/v1/evals"));
+                || path.startsWith("/api/v1/evals") || path.startsWith("/api/v1/knowledge"));
     }
 
     @Override

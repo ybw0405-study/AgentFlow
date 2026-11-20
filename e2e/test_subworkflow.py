@@ -1,14 +1,31 @@
 """E2E（P1）：subworkflow 节点经 gateway 内部端点解析子工作流 DSL 并回传结果。
 
-子工作流使用种子数据 wf-demo（start→draft→enrich→final→end），
-其 end 输出 {"answer": <text>}。父工作流通过 outputMapping 映射 answer。
+子工作流在用例内创建，只包含变量写回与收口，不依赖种子示例的内容，
+也不依赖外部模型服务；父流程通过 outputMapping 映射子流程的 answer。
 """
 
 from __future__ import annotations
 
+import copy
 import uuid
 
 from .conftest import SPACE_A, headers, new_idem, wait_terminal
+
+CHILD_DSL = {
+    "dslVersion": "1.0",
+    "variables": {
+        "question": {"type": "string", "required": True},
+        "answer": {"type": "string"},
+    },
+    "nodes": [
+        {"key": "start", "type": "start", "config": {}},
+        {"key": "echo", "type": "transform", "config": {
+            "mappings": [{"target": "vars.answer", "template": "子流程已收到：{{ vars.question }}"}]}},
+        {"key": "end", "type": "end", "config": {
+            "resultMapping": {"answer": "{{ vars.answer }}"}}},
+    ],
+    "edges": [{"from": "start", "to": "echo"}, {"from": "echo", "to": "end"}],
+}
 
 PARENT_DSL = {
     "dslVersion": "1.0",
@@ -20,7 +37,7 @@ PARENT_DSL = {
     "nodes": [
         {"key": "start", "type": "start", "config": {}},
         {"key": "sub", "type": "subworkflow", "config": {
-            "definitionId": "wf-demo",
+            "definitionId": "child-wf-id",
             "versionPolicy": "LATEST_PUBLISHED",
             "inputMapping": {"question": "{{ vars.question }}"},
             "outputMapping": {"answer": "{{ vars.answer }}"},
@@ -34,12 +51,25 @@ PARENT_DSL = {
 
 def test_subworkflow_e2e(client, editor_token, admin_token):
     hdrs = headers(editor_token, SPACE_A)
+    child = client.post("/api/v1/workflows",
+                        json={"name": f"e2e-subwf-child-{uuid.uuid4().hex[:8]}"}, headers=hdrs)
+    assert child.status_code == 200, child.text
+    child_id = child.json()["data"]["id"]
+    assert client.put(f"/api/v1/workflows/{child_id}/draft", json=CHILD_DSL,
+                      headers=hdrs).status_code == 200
+    child_ver = client.post(f"/api/v1/workflows/{child_id}/versions", headers=hdrs).json()["data"]
+    assert client.post(f"/api/v1/workflows/{child_id}/publish",
+                       json={"versionId": child_ver["id"]},
+                       headers=headers(admin_token, SPACE_A)).status_code == 200
+
     resp = client.post("/api/v1/workflows",
                        json={"name": f"e2e-subwf-{uuid.uuid4().hex[:8]}"}, headers=hdrs)
     assert resp.status_code == 200, resp.text
     wf_id = resp.json()["data"]["id"]
 
-    assert client.put(f"/api/v1/workflows/{wf_id}/draft", json=PARENT_DSL,
+    parent = copy.deepcopy(PARENT_DSL)
+    parent["nodes"][1]["config"]["definitionId"] = child_id
+    assert client.put(f"/api/v1/workflows/{wf_id}/draft", json=parent,
                       headers=hdrs).status_code == 200
     ver = client.post(f"/api/v1/workflows/{wf_id}/versions", headers=hdrs).json()["data"]
     assert client.post(f"/api/v1/workflows/{wf_id}/publish",
