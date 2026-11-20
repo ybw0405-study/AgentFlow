@@ -47,8 +47,9 @@ public class KillSwitchFilter extends OncePerRequestFilter {
             return true;
         }
         String path = request.getRequestURI();
-        // 只拦截 AI 副作用入口：触发执行 + 引擎派发路由
+        // 只拦截 AI 副作用入口：触发执行 + 引擎派发路由 + 公开 webhook
         return !(path.matches("^/api/v1/workflows/[^/]+/executions$")
+                || path.startsWith("/api/v1/hooks/")
                 || path.matches("^/engine/internal/executions$"));
     }
 

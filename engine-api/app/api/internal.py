@@ -8,14 +8,17 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import Field
 
 from ..config import Settings
 from ..dsl.models import CamelModel
 from ..dsl.validate import ValidationResult, validate_dsl
 from ..engine.replay import rebuild_state
-from ..engine.requests import ExecuteRequest
+from ..engine.requests import ExecuteRequest, PolicyIn
 from ..errors import EngineError
 from ..events.store import EventStore
+from ..events.types import EventType
+from ..preview import plan_preview
 
 router = APIRouter(prefix="/internal")
 
@@ -30,6 +33,16 @@ class GateResolveRequest(CamelModel):
     comment: str | None = None
 
 
+class LlmModelItem(CamelModel):
+    """单个模型的能力标注。字段拿不到就缺省，前端不显示空标签。"""
+
+    id: str
+    tags: list[str] = Field(default_factory=list)
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    source: Literal["upstream", "inferred"] = "inferred"
+
+
 class LlmModelsResponse(CamelModel):
     """可用模型清单。未配置真实端点时 configured=false，前端据此退回手填。"""
 
@@ -37,6 +50,7 @@ class LlmModelsResponse(CamelModel):
     default_model: str
     models: list[str]
     error: str | None = None
+    items: list[LlmModelItem] = Field(default_factory=list)
 
 
 def _settings(request: Request) -> Settings:
@@ -54,7 +68,11 @@ async def validate(body: ValidateRequest, request: Request) -> ValidationResult:
 
 @router.get("/llm/models")
 async def llm_models(request: Request) -> LlmModelsResponse:
-    """模型清单只对已配置的端点发起，密钥与 base_url 不出现在响应里。"""
+    """模型清单只对已配置的端点发起，密钥与 base_url 不出现在响应里。
+
+    models 是纯 id 列表（下拉框用），items 带能力标注（推理型、长上下文、输出上限），
+    后者只用于界面提示，不参与任何执行决策。
+    """
     settings = _settings(request)
     catalog = await request.app.state.llm_provider.list_models()
     return LlmModelsResponse(
@@ -62,12 +80,138 @@ async def llm_models(request: Request) -> LlmModelsResponse:
         default_model=settings.llm_model if catalog.configured else "",
         models=catalog.models,
         error=catalog.error,
+        items=[
+            LlmModelItem(
+                id=facts.id,
+                tags=list(facts.tags),
+                context_window=facts.context_window,
+                max_output_tokens=facts.max_output_tokens,
+                source=facts.source,
+            )
+            for facts in catalog.items
+        ],
     )
 
 
 @router.post("/executions", status_code=202)
 async def execute(body: ExecuteRequest, request: Request) -> dict[str, Any]:
     return await request.app.state.dispatcher.submit(body)
+
+
+class NodePreviewRequest(CamelModel):
+    """单节点试跑：整份草稿 + 目标节点 + 本次要用的变量。
+
+    传整份草稿而不是「节点配置」：试跑要把上游真实跑一遍，模板里引用的
+    `nodes.xxx.output` 才有值，否则用户拿到的只是一个渲染失败。
+    """
+
+    dsl: dict[str, Any]
+    node_key: str
+    variables: dict[str, Any] = Field(default_factory=dict)
+    tenant_id: str = "preview"
+    space_id: str = "preview"
+    requested_by: str = "preview"
+    authorized_connector_ids: list[str] = Field(default_factory=list)
+    token_budget: int | None = None
+    timeout_ms: int = 120_000
+
+
+def _last_event(events: list[Any], node_key: str, event_type: EventType) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if event.node_key == node_key and event.event_type == event_type:
+            return dict(event.payload or {})
+    return None
+
+
+@router.post("/nodes/preview")
+async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, Any]:
+    """试跑到目标节点：裁剪上游 + 真实执行 + 回传该节点的输入输出与链路。
+
+    与整体执行同源（同一个调度器），因此结果、错误码、token 计数都可以直接采信。
+    """
+    settings = _settings(request)
+    plan = plan_preview(body.dsl, body.node_key)
+    checked = validate_dsl(plan.dsl, settings)
+    if not checked.ok:
+        detail = "；".join(f"{e.code}: {e.message}" for e in checked.errors[:3])
+        raise EngineError("DSL-VALIDATION-001", detail or "preview dsl invalid")
+
+    execution_id = uuid.uuid4()
+    dispatcher = request.app.state.dispatcher
+    await dispatcher.submit(
+        ExecuteRequest(
+            execution_id=execution_id,
+            definition_id=f"preview:{body.node_key}",
+            version_id="preview",
+            tenant_id=body.tenant_id,
+            space_id=body.space_id,
+            triggered_by=body.requested_by,
+            idempotency_key=f"preview-{execution_id}",
+            version_snapshot=plan.dsl,
+            authorized_connector_ids=body.authorized_connector_ids,
+            initial_variables=body.variables,
+            policy=PolicyIn(
+                token_budget=body.token_budget,
+                max_steps=60,
+                deadline_ms=body.timeout_ms,
+            ),
+            trace_id=f"preview-{execution_id.hex[:12]}",
+        )
+    )
+    finished = await dispatcher.wait(execution_id, body.timeout_ms / 1000)
+
+    store = _store(request)
+    events = await store.read_all(execution_id)
+    state = rebuild_state(execution_id, events)
+
+    target = state.nodes.get(body.node_key)
+    completed = _last_event(events, body.node_key, EventType.NODE_COMPLETED)
+    failed = _last_event(events, body.node_key, EventType.NODE_FAILED)
+    io = await store.get_node_io(execution_id, body.node_key)
+
+    trace = []
+    for key in (*plan.upstream, plan.target):
+        runtime = state.nodes.get(key)
+        node_completed = _last_event(events, key, EventType.NODE_COMPLETED)
+        node_failed = _last_event(events, key, EventType.NODE_FAILED)
+        trace.append(
+            {
+                "key": key,
+                "status": runtime.status if runtime else "PENDING",
+                "tokenUsed": runtime.token_used if runtime else 0,
+                "latencyMs": (node_completed or node_failed or {}).get("latencyMs"),
+                "errorCode": (runtime.error_code if runtime else None)
+                or (node_failed or {}).get("errorCode"),
+            }
+        )
+
+    output = target.output if target and target.output else None
+    error_code = (failed or {}).get("errorCode") or (target.error_code if target else None)
+    error_message = (failed or {}).get("message")
+    status = state.status
+    if not finished and status not in ("SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"):
+        status = "TIMED_OUT"
+        error_code = error_code or "PREVIEW-TIMEOUT-001"
+        error_message = error_message or f"试跑在 {body.timeout_ms}ms 内没有结束，已请求取消"
+    if finished and target is not None and target.status == "SKIPPED":
+        error_code = error_code or "PREVIEW-SKIPPED-001"
+        error_message = error_message or "上游条件分支没有命中这个节点，本次试跑未执行它"
+
+    return {
+        "executionId": str(execution_id),
+        "nodeKey": body.node_key,
+        "status": status,
+        "nodeStatus": target.status if target else "PENDING",
+        "output": output,
+        "input": (io.get("in") or {}).get("payload"),
+        "errorCode": error_code,
+        "errorMessage": error_message,
+        "tokenUsed": target.token_used if target else 0,
+        "latencyMs": (completed or failed or {}).get("latencyMs"),
+        "totalTokens": state.token_used,
+        "result": state.result,
+        "trace": trace,
+    }
 
 
 @router.post("/executions/{execution_id}/gates/{node_key}/resolve")

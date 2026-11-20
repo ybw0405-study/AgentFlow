@@ -7,6 +7,12 @@
 
 ### 新增
 
+- **Webhook / 定时触发**（`V010__trigger.sql`）：新增 `workflow_trigger` 表与两条外部入口。Webhook 走公开路径 `/api/v1/hooks/{token}`，token（24 字节 Base64URL）即入口凭据；可选 `X-AF-Signature: sha256=HMAC_SHA256(secret, 原始请求体)`（常量时间比较）、`X-AF-Timestamp`（±300 秒防重放）、`X-AF-Idempotency-Key`（重复投递只执行一次，回 `idempotentReplay`）。定时触发用 5 段或 6 段 cron，统一归一到秒位，调度器每 30 秒扫一轮、以 `last_fired_at` 判点、重启不补跑。两者都复用 `ExecutionService.dispatch` 的幂等、版本解析、政策钳制与 PII 脱敏，跑的是**已发布版本**；入口限流 60 次/分钟，停用返回 409，`POST /api/v1/hooks/{token}/probe` 可在不触发执行的前提下自检入口。画布工具条「触发」进入管理页，可建入口、复制地址与密钥、轮换令牌、停用、删除、配固定入参。
+- **单节点试跑**：节点卡片与配置抽屉新增「试跑」。引擎把「目标节点 + 全部上游」裁成小图（`engine-api/app/preview.py`），交给同一个调度器、同一批执行器、同一份预算与错误分类真的跑一遍，回传该节点的输入 / 输出 / token / 耗时与整条上游链路状态。试跑**不落执行记录**、不产生版本，只留 `NODE_PREVIEWED` 审计；上游含 `loop` / `parallel` / `human_gate` 时返回 422 `PREVIEW-STRUCTURE-001` 并提示改用「运行」，因为裁剪会改变迭代、分支聚合与挂起续跑的语义。
+- **运行入参表单化**：运行弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件（布尔勾选框、数字框、文本框，`object` / `array` 走 JSON 编辑并即时提示解析错误），右上角可切回「JSON 原文」整块编辑。必填项缺失时「触发执行」禁用，不再先落一条注定 `EXEC-INPUT-001` 的执行记录。同一份表单复用到定时触发配置。
+- **工作流级默认模型（`defaults.llm`）**：工具条「默认模型」把 `connectionId` + `model` 写进 DSL 的 `defaults.llm`，只用于新建 llm 节点的继承；可勾选批量应用到现有节点。执行始终以节点自身 `config` 为准，改默认值不会影响已经跑通的节点。
+- **模型能力标注**：`/internal/llm/models` 与 `/api/v1/llm/models` 增加 `items`，按上游 `/models` 的 `context_window` / `max_output_tokens` / `input_modalities` / `effort.supported_levels` / `supported_parameters` 标注推理型、长上下文、支持 JSON、图像输入；上游只回 id 时按模型名推断并标 `source=inferred`，不硬编码某家某代的能力。画布模型输入框下展示标签与上下文 / 输出上限，选到推理型而 `maxTokens` 偏小时给「设为 4096」的一键建议。
+
 - **文档知识库 / 真实文档检索**：`V009__knowledge.sql` 建 `knowledge_base` / `knowledge_document` / `knowledge_chunk` 三表。新增「知识库」页：建库、粘贴或选择 `.txt` / `.md` 导入文档（写入时按标点/段落切片，中文按单字与相邻二元组建词项）、文档列表与删除、检索自测。引擎新增 `retrieval` 执行器与 `KnowledgeSearchClient`，经网关 `/internal/knowledge/search` 调控制面本地 BM25 打分，返回带出处的原文片段（`output.text` / `results` / `citations`），阶段门正式放行；画布可勾选知识库并配置 `queryTemplate` / `topK` / `minScore`，校验要求至少选一个，也可一键生成「文档检索 → 模型作答」工作流。跨租户 kbId 由服务端逐条复核后静默忽略，不泄露存在性。
 - **内置示例与模板改走真实链路**：种子里的两条示例升级为 v4，llm 节点指向 OpenAI 兼容端点，工具节点换成 `retrieval` 并引用预置知识库 `kb-demo`（含三份真实文档切片）；模板、新建节点与知识库一键生成的工作流同样默认走真实端点。未注入 `AF_LLM_*` 时执行报 `LLM-NOT_CONFIGURED-001`，不再静默产出确定性示例文本。
 - **模型清单 + 一键接入**：LLM 节点卡片上的「模型」从裸文本框改为可点开的常见模型清单（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 / Step / OpenAI / 本地 Ollama，带分组、搜索、厂商标识与标签）。选中即弹出预填 Base URL 与模型名的连接表单，只需填 API Key；「测试并连接」复用 `create → authorize → probeModels` 做真实出网校验，通过后自动写回 `connectionId` / `model`，节点立即可用，失败自动删掉临时连接并给出人话原因。清单外的服务走「自定义 OpenAI 兼容端点」。
@@ -31,8 +37,11 @@
   `EXEC-INPUT-001: variable 'urgent' expects type 'boolean'`。弹窗同时标出必填变量，
   并说明其余是流程内部变量、保持默认即可。
 
+- **错误提示丢掉后端给的具体原因**：`describeError` 增加 `detail`（problem+json 的 `detail`），触发页把它作为第二行「后端说明」显示。此前 cron 写法错误、入口已停用这类 409 只能看到「当前状态不允许此操作」，用户不知道该改哪里。正文与 hint 仍是翻译后的固定文案，只有业务侧显式写给人看的那句才透出，普通异常的 `message` 依旧不外泄。
+
 ### 文档
 
+- README 新增「调试与触发」章节：单节点试跑的语义与限制、运行入参表单、工作流默认模型、Webhook 签名 / 幂等 / 限流与定时触发口径（含可直接粘的 curl）；功能矩阵补 4 行，已知限制补定时单实例扫描、试跑不计成本、能力标签非权威数据三条。`docs/architecture.md` 新增 §21，记录试跑裁剪语义、外部触发的凭据模型与信任边界、`defaults.llm` 只影响新建节点、能力标注的来源分级与错误展示的 detail 补充行。
 - README 功能矩阵、界面、接入真实模型、已知限制同步更新，并新增「文档检索（知识库）」章节；`docs/architecture.md` 新增 §20，记录 V009 数据模型、BM25 口径、内部端点信任边界与「运行按草稿」的版本语义。内置示例升级 v4 与真实模型接入方式一并写入。
 - README「界面」与「接入真实模型」改写：画布一键接入为推荐路径，连接器页与配置抽屉明确为高级模式；补模型清单、连接向导、连接失败反馈三张实机截图，并说明预设端点可编辑、以服务商控制台为准。
 - README 新增「第一次使用：5 步跑通内置示例」：登录 → 打开示例画布 → 运行并填变量 →

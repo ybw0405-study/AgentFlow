@@ -18,6 +18,11 @@ const router = createRouter({
       component: () => import('@/views/VersionsView.vue'),
     },
     {
+      path: '/workflows/:id/triggers',
+      name: 'triggers',
+      component: () => import('@/views/TriggersView.vue'),
+    },
+    {
       path: '/executions',
       name: 'executions',
       component: () => import('@/views/ExecutionListView.vue'),

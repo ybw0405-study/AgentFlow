@@ -36,6 +36,8 @@ public class ExecutionService {
     private final int defaultMaxSteps;
     private final int defaultDeadlineMs;
     private final List<String> authorizedConnectors;
+    /** 试跑允许的最长等待：上游可能是两三次真实模型调用，给足但不无限等。 */
+    private static final int PREVIEW_TIMEOUT_MS = 120_000;
 
     public ExecutionService(
             WorkflowExecutionMapper executions, WorkflowDefinitionMapper definitions,
@@ -73,11 +75,32 @@ public class ExecutionService {
                             "definitionId", definitionId)));
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "insufficient role");
         }
-        var def = definitions.findByIdAndTenant(definitionId, tenant.tenantId());
+        return dispatch(tenant.tenantId(), tenant.userId(), definitionId, versionId,
+                idempotencyKey, variables, policy, traceId);
+    }
+
+    /**
+     * 外部入口（webhook / 定时）的执行触发：没有登录用户，凭据由调用方（触发器）校验。
+     *
+     * <p>仍然走同一套派发逻辑：幂等键、版本解析、政策钳制、PII 脱敏、审计一个不少，
+     * 区别只是不再做租户角色判断——触发器的权限在创建时已经由 EDITOR 确认过。
+     */
+    public TriggerResult triggerFromExternal(String tenantId, String actorId, String definitionId,
+                                             String versionId, String idempotencyKey,
+                                             Map<String, Object> variables, String traceId) {
+        return dispatch(tenantId, actorId, definitionId, versionId, idempotencyKey,
+                variables, null, traceId);
+    }
+
+    private TriggerResult dispatch(String tenantId, String userId, String definitionId,
+                                   String versionId, String idempotencyKey,
+                                   Map<String, Object> variables, PolicyRequest policy,
+                                   String traceId) {
+        var def = definitions.findByIdAndTenant(definitionId, tenantId);
         if (def == null) {
             throw new BusinessException(ErrorCode.WF_NOT_FOUND_001, "resource not found");
         }
-        var replayed = executions.findByIdempotency(tenant.tenantId(), idempotencyKey);
+        var replayed = executions.findByIdempotency(tenantId, idempotencyKey);
         if (replayed != null) {
             return new TriggerResult(replayed.id(), replayed.status(), true);
         }
@@ -87,7 +110,7 @@ public class ExecutionService {
             CanaryService.Decision decision = canary.route(definitionId, def.currentVersionId());
             if (decision != null) {
                 effectiveVersionId = decision.versionId();
-                audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+                audit.publish(AuditMessage.of(tenantId, null, userId,
                         "WF_CANARY_ROUTED", Map.of("definitionId", definitionId,
                                 "versionId", decision.versionId(),
                                 "canary", decision.canary(), "percent", decision.percent())));
@@ -104,7 +127,7 @@ public class ExecutionService {
                 || (policy.maxSteps() != null && policy.maxSteps() > maxSteps)
                 || (policy.deadlineMs() != null && policy.deadlineMs() > deadlineMs));
         if (clamped) {
-            audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+            audit.publish(AuditMessage.of(tenantId, null, userId,
                     "WF_POLICY_CLAMPED", Map.of("definitionId", definitionId,
                             "requested", policy.toString(),
                             "effective", "tokenBudget=" + tokenBudget + ",maxSteps=" + maxSteps
@@ -115,15 +138,15 @@ public class ExecutionService {
         var masked = maskVariables(variables == null ? Map.of() : variables);
         Map<String, Object> maskedVars = masked.values();
         if (!masked.categories().isEmpty()) {
-            audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+            audit.publish(AuditMessage.of(tenantId, null, userId,
                     "PII_MASKED", Map.of("definitionId", definitionId,
                             "categories", masked.categories(), "version", PiiMasker.VERSION)));
         }
 
         String executionId = UUID.randomUUID().toString();
         var row = new WorkflowExecutionMapper.ExecutionRow(
-                0L, executionId, definitionId, version.id(), tenant.tenantId(),
-                tenant.userId(), "PENDING", idempotencyKey, traceId,
+                0L, executionId, definitionId, version.id(), tenantId,
+                userId, "PENDING", idempotencyKey, traceId,
                 tokenBudget, maxSteps,
                 new Timestamp(System.currentTimeMillis() + deadlineMs),
                 0, 0, null, null, null, null);
@@ -131,7 +154,7 @@ public class ExecutionService {
             executions.insert(row);
         } catch (DuplicateKeyException e) {
             // 并发同键：唯一约束兜底，返回已存在的执行（US-02 并发触发）
-            var existing = executions.findByIdempotency(tenant.tenantId(), idempotencyKey);
+            var existing = executions.findByIdempotency(tenantId, idempotencyKey);
             return new TriggerResult(existing.id(), existing.status(), true);
         }
 
@@ -139,22 +162,12 @@ public class ExecutionService {
         engineRequest.put("executionId", executionId);
         engineRequest.put("definitionId", definitionId);
         engineRequest.put("versionId", version.id());
-        engineRequest.put("tenantId", tenant.tenantId());
-        engineRequest.put("spaceId", tenant.tenantId());
-        engineRequest.put("triggeredBy", tenant.userId());
+        engineRequest.put("tenantId", tenantId);
+        engineRequest.put("spaceId", tenantId);
+        engineRequest.put("triggeredBy", userId);
         engineRequest.put("idempotencyKey", idempotencyKey);
         engineRequest.put("versionSnapshot", readJson(version.dslJson()));
-        // 内置 mock + 该空间可见的真实连接器（含祖先租户共享，P2）
-        List<String> authorized = new ArrayList<>(authorizedConnectors);
-        List<String> discovered = engine.connectorIds(tenant.tenantId());
-        if (discovered != null) {
-            for (String id : discovered) {
-                if (!authorized.contains(id)) {
-                    authorized.add(id);
-                }
-            }
-        }
-        engineRequest.put("authorizedConnectorIds", authorized);
+        engineRequest.put("authorizedConnectorIds", authorizedFor(tenantId));
         engineRequest.put("initialVariables", maskedVars);
         engineRequest.put("policy", Map.of("tokenBudget", tokenBudget,
                 "maxSteps", maxSteps, "deadlineMs", deadlineMs));
@@ -165,10 +178,77 @@ public class ExecutionService {
             executions.markFailedDispatch(executionId, "FAILED", ErrorCode.AGT_UPSTREAM_001.code());
             throw e;
         }
-        audit.publish(AuditMessage.of(tenant.tenantId(), executionId, tenant.userId(),
+        audit.publish(AuditMessage.of(tenantId, executionId, userId,
                 "EXECUTION_TRIGGERED", Map.of("definitionId", definitionId,
                         "versionId", version.id(), "clamped", clamped)));
         return new TriggerResult(executionId, "PENDING", false);
+    }
+
+    /**
+     * 单节点试跑：把画布当前草稿 + 目标节点交给引擎，由引擎裁出上游真实跑一遍。
+     *
+     * <p>不落执行记录、不产生版本：试跑是调试动作，不该污染执行列表，也不该被当成
+     * 一次正式运行去审计成 EXECUTION_TRIGGERED。真实模型产生的 token 仍由引擎预算
+     * 与事件流记录，审计单列 NODE_PREVIEWED。
+     */
+    public Map<String, Object> preview(TenantInfo tenant, String definitionId, String nodeKey,
+                                       Map<String, Object> dsl, Map<String, Object> variables) {
+        if (!tenant.atLeast("EDITOR")) {
+            audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+                    "WF_FORBIDDEN_ATTEMPT", Map.of("action", "PREVIEW",
+                            "definitionId", definitionId)));
+            throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "insufficient role");
+        }
+        var def = definitions.findByIdAndTenant(definitionId, tenant.tenantId());
+        if (def == null) {
+            throw new BusinessException(ErrorCode.WF_NOT_FOUND_001, "resource not found");
+        }
+        Map<String, Object> snapshot = dsl;
+        if (snapshot == null && def.draftDsl() != null) {
+            snapshot = readJson(def.draftDsl());
+        }
+        if (snapshot == null && def.currentVersionId() != null) {
+            var version = versions.findById(def.currentVersionId());
+            if (version != null) {
+                snapshot = readJson(version.dslJson());
+            }
+        }
+        if (snapshot == null) {
+            throw new BusinessException(ErrorCode.WF_STATE_001, "no draft to preview");
+        }
+
+        var masked = maskVariables(variables == null ? Map.of() : variables);
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("dsl", snapshot);
+        request.put("nodeKey", nodeKey);
+        request.put("variables", masked.values());
+        request.put("tenantId", tenant.tenantId());
+        request.put("spaceId", tenant.tenantId());
+        request.put("requestedBy", tenant.userId());
+        request.put("authorizedConnectorIds", authorizedFor(tenant.tenantId()));
+        request.put("tokenBudget", defaultTokenBudget);
+        request.put("timeoutMs", PREVIEW_TIMEOUT_MS);
+
+        Map<String, Object> result = engine.previewNode(request);
+        audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+                "NODE_PREVIEWED", Map.of("definitionId", definitionId, "nodeKey", nodeKey,
+                        "status", String.valueOf(result.getOrDefault("status", "")),
+                        "tokenUsed", result.getOrDefault("totalTokens", 0))));
+        return result;
+    }
+
+    /** 授权清单：后台配置 + 该空间可见的真实连接器（含祖先租户共享）。 */
+    private List<String> authorizedFor(String tenantId) {
+        List<String> authorized = new ArrayList<>(authorizedConnectors);
+        List<String> discovered = engine.connectorIds(tenantId);
+        if (discovered != null) {
+            for (String id : discovered) {
+                if (!authorized.contains(id)) {
+                    authorized.add(id);
+                }
+            }
+        }
+        return authorized;
     }
 
     private WorkflowVersionMapper.VersionRow resolveVersion(

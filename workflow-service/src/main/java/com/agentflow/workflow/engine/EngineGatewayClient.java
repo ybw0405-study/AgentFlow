@@ -21,6 +21,8 @@ public class EngineGatewayClient {
 
     private final RestClient http;
     private final RestClient control;
+    /** 试跑要等上游节点真实跑完，读超时必须比普通调度请求长。 */
+    private final RestClient slow;
     private final String internalToken;
 
     public EngineGatewayClient(
@@ -33,6 +35,11 @@ public class EngineGatewayClient {
         this.http = builder.baseUrl(gatewayBaseUrl + "/engine/internal")
                 .requestFactory(factory).build();
         this.control = builder.baseUrl(gatewayBaseUrl).requestFactory(factory).build();
+        SimpleClientHttpRequestFactory slowFactory = new SimpleClientHttpRequestFactory();
+        slowFactory.setConnectTimeout(2_000);
+        slowFactory.setReadTimeout(150_000);
+        this.slow = builder.baseUrl(gatewayBaseUrl + "/engine/internal")
+                .requestFactory(slowFactory).build();
         this.internalToken = internalToken;
     }
 
@@ -51,8 +58,15 @@ public class EngineGatewayClient {
     public record EventsPage(List<EngineEvent> events, long lastSeq) {
     }
 
+    /**
+     * 模型清单。models 是纯 id 列表（下拉框用），items 是引擎附带的能力标注。
+     *
+     * items 用 Map 透传而不是在 Java 侧再定义一套能力模型：能力的语义归引擎所有
+     * （哪里有字段、怎么推断），控制面只是把它递给界面，多定义一层只会让两边走偏。
+     */
     public record LlmModelsResponse(boolean configured, String defaultModel,
-                                    List<String> models, String error) {
+                                    List<String> models, String error,
+                                    List<Map<String, Object>> items) {
     }
 
     public DslValidationResponse validateDsl(Map<String, Object> dsl) {
@@ -78,6 +92,53 @@ public class EngineGatewayClient {
         } catch (RestClientException e) {
             throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine dispatch failed");
         }
+    }
+
+    /**
+     * 单节点试跑：引擎裁剪上游后真实执行到目标节点并返回结果。
+     *
+     * <p>裁剪不了的结构（循环 / 并行 / 审批）在引擎侧是 422，这里把引擎给的原因原样
+     * 传给前端——「为什么不能试跑」比「试跑失败」有用得多。
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> previewNode(Map<String, Object> request) {
+        try {
+            Map<String, Object> body = slow.post().uri("/nodes/preview")
+                    .headers(this::applyInternal)
+                    .body(request)
+                    .retrieve()
+                    .body(Map.class);
+            return body == null ? Map.of() : body;
+        } catch (RestClientResponseException e) {
+            if (e.getStatusCode().value() == 422 || e.getStatusCode().value() == 400) {
+                throw new BusinessException(ErrorCode.DSL_VALIDATION_001, engineMessage(e));
+            }
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine preview failed");
+        } catch (RestClientException e) {
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine unreachable");
+        }
+    }
+
+    /** problem+json 里的可读原因；解析不出来时退回状态码，别把整段响应体塞给用户。 */
+    private String engineMessage(RestClientResponseException e) {
+        try {
+            Map<String, Object> body = e.getResponseBodyAs(new org.springframework.core
+                    .ParameterizedTypeReference<Map<String, Object>>() {
+                    });
+            if (body != null) {
+                Object detail = body.get("detail");
+                if (detail instanceof String text && !text.isBlank()) {
+                    return text;
+                }
+                Object title = body.get("title");
+                if (title instanceof String text && !text.isBlank()) {
+                    return text;
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 响应体不是 problem+json：用状态码兜底
+        }
+        return "试跑请求被引擎拒绝（HTTP " + e.getStatusCode().value() + "）";
     }
 
     public EventsPage tailEvents(long afterSeq, int limit) {

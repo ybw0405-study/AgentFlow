@@ -15,13 +15,14 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from ...governance.tokenmeter import estimate_tokens
 from ..base import CommandResult
+from .model_capabilities import ModelFacts, describe_model
 
 if TYPE_CHECKING:
     from ...config import Settings
@@ -131,11 +132,15 @@ class ModelCatalog:
 
     configured=False 表示进程未配置 AF_LLM_*，此时 models 为空是正常状态而非故障；
     error 只携带错误码，绝不回传上游响应体（可能含内部信息）。
+
+    models 只放 id，供旧版前端与下拉框直接使用；items 带上能力标注（推理型、
+    长上下文、输出上限等），拿不到能力字段的模型只有 id，前端不显示任何标签。
     """
 
     configured: bool
     models: list[str]
     error: str | None = None
+    items: list[ModelFacts] = field(default_factory=list)
 
 
 class OpenAICompatibleProvider:
@@ -236,6 +241,7 @@ class OpenAICompatibleProvider:
             return ModelCatalog(configured=True, models=[], error="LLM-RESPONSE-001")
 
         models: list[str] = []
+        items: list[ModelFacts] = []
         seen: set[str] = set()
         for item in raw:
             model_id = item.get("id") if isinstance(item, dict) else None
@@ -245,6 +251,9 @@ class OpenAICompatibleProvider:
             if model_id and model_id not in seen:
                 seen.add(model_id)
                 models.append(model_id)
+                facts = describe_model({**item, "id": model_id})
+                if facts is not None:
+                    items.append(facts)
                 if len(models) >= _MAX_MODEL_ENTRIES:
                     break
         # 默认模型可能是上游只在请求侧接受、不在 /models 里列出的别名（例如 DeepSeek 的
@@ -252,7 +261,14 @@ class OpenAICompatibleProvider:
         default_model = (self._default_model or "").strip()[:_MAX_MODEL_ID_LEN]
         if default_model and default_model not in seen:
             models.append(default_model)
-        return ModelCatalog(configured=True, models=sorted(models))
+            facts = describe_model({"id": default_model})
+            if facts is not None:
+                items.append(facts)
+        return ModelCatalog(
+            configured=True,
+            models=sorted(models),
+            items=sorted(items, key=lambda facts: facts.id),
+        )
 
     @staticmethod
     def _ms(started: float) -> int:

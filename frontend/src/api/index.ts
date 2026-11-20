@@ -20,8 +20,11 @@ import type {
   KnowledgeDocumentDto,
   KnowledgeSearchResult,
   NodeIo,
+  NodePreviewResult,
   PageResult,
   TriggerData,
+  TriggerDto,
+  TriggerType,
   WorkflowDetail,
   WorkflowDefinitionDto,
   WorkflowVersionDto,
@@ -53,6 +56,15 @@ export const workflowApi = {
     post<{ ok: boolean }>(`/workflows/${id}/publish`, { versionId }),
   rollback: (id: string, versionId: string) =>
     post<{ ok: boolean }>(`/workflows/${id}/rollback`, { versionId }),
+  /**
+   * 试跑到某个节点。dsl 传画布当前草稿：试跑要跑的就是眼前这份配置，
+   * 不能悄悄换成已保存的旧草稿。
+   */
+  previewNode: (
+    id: string,
+    key: string,
+    body: { dsl: WorkflowDsl; variables: Record<string, unknown> },
+  ) => post<NodePreviewResult>(`/workflows/${id}/nodes/${key}/preview`, body),
 }
 
 export const connectorApi = {
@@ -204,6 +216,21 @@ export const adminApi = {
 
 export const llmApi = {
   models: () => get<LlmModelsDto>('/llm/models'),
+}
+
+/** 外部触发：webhook（公开入口）与定时（cron）。 */
+export const triggerApi = {
+  list: (definitionId: string) => get<TriggerDto[]>(`/workflows/${definitionId}/triggers`),
+  create: (
+    definitionId: string,
+    body: { type: TriggerType; cron?: string; variables?: Record<string, unknown> },
+  ) => post<TriggerDto>(`/workflows/${definitionId}/triggers`, body),
+  patch: (
+    triggerId: string,
+    body: { enabled?: boolean; cron?: string; variables?: Record<string, unknown> },
+  ) => patch<TriggerDto>(`/triggers/${triggerId}`, body),
+  rotate: (triggerId: string) => post<TriggerDto>(`/triggers/${triggerId}/rotate`),
+  remove: (triggerId: string) => del<{ ok: boolean }>(`/triggers/${triggerId}`),
 }
 
 /** 文档知识库：纯文本导入（前端读文件后按 JSON 提交，服务端不开放 multipart）。 */

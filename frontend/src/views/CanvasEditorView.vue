@@ -16,6 +16,7 @@ import type { FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
 import { initialVariables } from '@/dsl/run-defaults'
+import { missingRequired } from '@/dsl/run-input'
 import { connectionProblem } from '@/dsl/connection'
 import { autoLayout } from '@/dsl/auto-layout'
 import NodeSearch from '@/components/canvas/NodeSearch.vue'
@@ -28,14 +29,19 @@ import {
 } from '@/dsl/subgraph'
 import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
+import type { LlmDefaults } from '@/dsl/types'
 import { branchOptions } from '@/dsl/types'
 import type { WorkflowDefinitionDto, LlmConnectionConfig, KnowledgeBaseDto } from '@/types/api'
+import type { ModelFactsDto } from '@/types/api'
 import NodePalette from '@/components/canvas/NodePalette.vue'
 import ConfigDrawer from '@/components/canvas/ConfigDrawer.vue'
 import VariablesPanel from '@/components/canvas/VariablesPanel.vue'
 import DslSourcePanel from '@/components/canvas/DslSourcePanel.vue'
 import WorkflowNode from '@/components/canvas/WorkflowNode.vue'
 import ModelHub from '@/components/canvas/ModelHub.vue'
+import NodePreviewPanel from '@/components/canvas/NodePreviewPanel.vue'
+import RunVariablesForm from '@/components/canvas/RunVariablesForm.vue'
+import WorkflowDefaultsDialog from '@/components/canvas/WorkflowDefaultsDialog.vue'
 import { displayModelName } from '@/dsl/model-presets'
 import { probeErrorMessage } from '@/dsl/model-connection'
 import type { ConnectModelResult } from '@/dsl/model-connection'
@@ -64,7 +70,11 @@ const saveState = ref<'saved' | 'saving' | 'error'>('saved')
 const notice = ref<string | null>(null)
 const error = ref<string | null>(null)
 const runDialog = ref(false)
-const runVariablesText = ref('{}')
+/** 运行弹窗里的入参：按变量声明类型填写，避免手写 JSON 出错。 */
+const runVariables = ref<Record<string, unknown>>({})
+/** 正在试跑的节点 key；为空表示面板关闭。 */
+const previewKey = ref<string | null>(null)
+const defaultsOpen = ref(false)
 const busy = ref(false)
 /** 双击画布 / 空格唤起的节点搜索，以及单节点复制粘贴。 */
 const searchOpen = ref(false)
@@ -161,6 +171,8 @@ const requiredVariableNames = computed(() =>
     .map(([name]) => name)
     .join('、') || '无',
 )
+
+const runMissing = computed(() => missingRequired(variables.value, runVariables.value))
 
 /** 根层 DSL：唯一真源。画布上正在编辑的可能是它内部的某一层子图。 */
 const rootDsl = ref<WorkflowDsl | null>(null)
@@ -285,6 +297,7 @@ const modelCatalog = ref<{
   defaultModel: string
   error: string | null
   models: string[]
+  items?: ModelFactsDto[]
 }>({ loaded: false, configured: false, defaultModel: '', error: null, models: [] })
 
 /** 模型连接：LLM 节点可以选用某条连接托管的端点与密钥，而不是进程级 AF_LLM_*。 */
@@ -417,6 +430,19 @@ const layerTitle = computed<string>(() => {
 })
 
 let keyCounter = 0
+
+/** 新建 llm 节点用哪套默认值：工作流默认模型 > 首条连接 > 服务端默认模型。 */
+function newLlmDefaults(): { model?: string; connection: { id: string; defaultModel: string } | null } {
+  const configured = defaults.value.llm
+  if (configured?.model) {
+    const connection = configured.connectionId
+      ? llmConnections.value.find((c) => c.id === configured.connectionId) ?? null
+      : null
+    return { model: configured.model, connection }
+  }
+  return { connection: llmConnections.value[0] ?? null }
+}
+
 function addNode(type: NodeType): void {
   if (type === 'start' && inSubgraph.value) {
     notice.value = '子图内不能创建 start 节点：进入子图就是它的入口'
@@ -430,6 +456,18 @@ function addNode(type: NodeType): void {
   let key = `${type}_${++keyCounter}`
   while (nodes.value.some((n) => n.id === key)) key = `${type}_${++keyCounter}`
   const offset = nodes.value.length * 30
+  const llmDefault = type === 'llm' ? newLlmDefaults() : null
+  const config = newNodeConfig(
+    type,
+    llmDefault?.model ?? (type === 'llm' ? modelCatalog.value.defaultModel : undefined),
+    llmDefault?.connection ?? null,
+    type === 'retrieval' ? knowledgeBases.value[0]?.id : undefined,
+  )
+  // 工作流默认模型优先于连接自带的默认模型：连接只提供端点，模型按默认值来
+  if (llmDefault?.model) {
+    config.model = llmDefault.model
+    config.connectionId = llmDefault.connection?.id
+  }
   nodes.value = [
     ...nodes.value,
     {
@@ -439,12 +477,7 @@ function addNode(type: NodeType): void {
       data: {
         nodeType: type,
         label: key,
-        config: newNodeConfig(
-          type,
-          type === 'llm' ? modelCatalog.value.defaultModel : undefined,
-          type === 'llm' ? (llmConnections.value[0] ?? null) : null,
-          type === 'retrieval' ? knowledgeBases.value[0]?.id : undefined,
-        ),
+        config,
       },
     },
   ]
@@ -775,6 +808,14 @@ function isTextEntry(target: EventTarget | null): boolean {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (defaultsOpen.value) {
+    if (e.key === 'Escape') defaultsOpen.value = false
+    return
+  }
+  if (previewKey.value) {
+    if (e.key === 'Escape') previewKey.value = null
+    return
+  }
   if (modelHubFor.value) {
     if (e.key === 'Escape') closeModelHub()
     return
@@ -849,8 +890,41 @@ async function freezeAndPublish(): Promise<void> {
 }
 
 function openRunDialog(): void {
-  runVariablesText.value = JSON.stringify(initialVariables(variables.value), null, 2)
+  runVariables.value = initialVariables(variables.value)
   runDialog.value = true
+}
+
+/** 试跑面板：把卡片 / 抽屉上的入口收敛到同一个状态，面板关闭即清空。 */
+function openPreview(key: string): void {
+  previewKey.value = key
+}
+
+const previewNode = computed(() => {
+  const node = nodes.value.find((n) => n.id === previewKey.value)
+  return node ? { key: node.id, type: node.data.nodeType } : null
+})
+
+const llmNodeCount = computed(() => nodes.value.filter((n) => n.data.nodeType === 'llm').length)
+
+/** 保存默认模型：可选同步到现有节点，避免节点一多就漏配。 */
+function saveDefaults(payload: { llm: LlmDefaults; applyAll: boolean }): void {
+  defaultsOpen.value = false
+  defaults.value = { ...defaults.value, llm: payload.llm }
+  let applied = 0
+  if (payload.applyAll) {
+    for (const node of nodes.value) {
+      if (node.data.nodeType !== 'llm') continue
+      patchNodeConfig(node.id, {
+        connectionId: payload.llm.connectionId,
+        provider: 'openai-compatible',
+        ...(payload.llm.model ? { model: payload.llm.model } : {}),
+      })
+      applied += 1
+    }
+  }
+  notice.value = applied
+    ? `默认模型已保存，并应用到 ${applied} 个 llm 节点`
+    : '默认模型已保存，新建 llm 节点会继承它'
 }
 
 /**
@@ -872,10 +946,14 @@ async function draftRunVersionId(checksum: string | undefined): Promise<string |
 }
 
 async function run(): Promise<void> {
+  if (runMissing.value.length) {
+    error.value = `必填项还没填：${runMissing.value.join('、')}`
+    return
+  }
   busy.value = true
   error.value = null
   try {
-    const variables = JSON.parse(runVariablesText.value) as Record<string, unknown>
+    const variables = runVariables.value
     const dsl = toDsl()
     const saved = await workflowApi.saveDraft(workflowId, dsl)
     if (saveTimer) {
@@ -960,6 +1038,13 @@ onUnmounted(() => {
       </button>
       <button
         class="af-btn af-btn--sm"
+        title="新建 llm 节点继承的模型"
+        @click="defaultsOpen = true"
+      >
+        默认模型
+      </button>
+      <button
+        class="af-btn af-btn--sm"
         title="双击画布或按空格唤起"
         @click="searchOpen = true"
       >
@@ -994,6 +1079,12 @@ onUnmounted(() => {
       </button>
       <router-link :to="{ name: 'versions', params: { id: workflowId } }">
         <button class="af-btn af-btn--sm">版本</button>
+      </router-link>
+      <router-link :to="{ name: 'triggers', params: { id: workflowId } }">
+        <button
+          class="af-btn af-btn--sm"
+          title="Webhook 与定时触发"
+        >触发</button>
       </router-link>
       <button
         class="af-btn af-btn--sm"
@@ -1139,6 +1230,7 @@ onUnmounted(() => {
               @update-config="(patch: Record<string, unknown>) => patchNodeConfig(props.id, patch)"
               @expand="openFullConfig(props.id)"
               @pick-model="openModelHub(props.id)"
+              @preview="openPreview(props.id)"
             />
           </template>
         </VueFlow>
@@ -1201,6 +1293,7 @@ onUnmounted(() => {
         @pick-model="selectedNode && openModelHub(selectedNode.key)"
         @probe-models="probeConnectionModels"
         @open-knowledge="goKnowledge"
+        @preview="selectedNode && openPreview(selectedNode.key)"
       />
     </div>
 
@@ -1237,13 +1330,12 @@ onUnmounted(() => {
         >
           <strong>这条流程跑不起来</strong> · {{ legacyState.summary }}
         </div>
-        <label class="af-label">initialVariables（JSON）</label>
+        <label class="af-label">initialVariables</label>
         <p
           class="af-faint"
           style="margin: 0 0 8px; font-size: 12px"
         >
           必填：{{ requiredVariableNames }}；其余为流程内部变量，保持默认即可。
-          按声明类型填写（布尔用 true / false，不要加引号）。
         </p>
         <p
           class="af-faint"
@@ -1251,12 +1343,17 @@ onUnmounted(() => {
         >
           本次执行用画布当前草稿的版本快照，不改变已发布版本；同内容草稿不会重复冻结。
         </p>
-        <textarea
-          v-model="runVariablesText"
-          class="af-textarea"
-          rows="8"
-          spellcheck="false"
+        <RunVariablesForm
+          v-model="runVariables"
+          :variables="variables"
         />
+        <p
+          v-if="runMissing.length"
+          class="af-danger"
+          style="margin: 8px 0 0; font-size: 12px"
+        >
+          还差必填项：{{ runMissing.join('、') }}
+        </p>
         <div style="display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end">
           <button
             class="af-btn af-btn--sm"
@@ -1266,7 +1363,7 @@ onUnmounted(() => {
           </button>
           <button
             class="af-btn af-btn--sm af-btn--primary"
-            :disabled="busy"
+            :disabled="busy || runMissing.length > 0"
             @click="run"
           >
             触发执行
@@ -1274,6 +1371,26 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <WorkflowDefaultsDialog
+      v-if="defaultsOpen"
+      :current="defaults.llm"
+      :catalog="modelCatalog"
+      :connections="llmConnections"
+      :llm-node-count="llmNodeCount"
+      @save="saveDefaults"
+      @close="defaultsOpen = false"
+    />
+
+    <NodePreviewPanel
+      v-if="previewNode"
+      :workflow-id="workflowId"
+      :node-key="previewNode.key"
+      :node-type="previewNode.type"
+      :dsl="toDsl()"
+      :variables="variables"
+      @close="previewKey = null"
+    />
 
     <div
       v-if="templateOpen"

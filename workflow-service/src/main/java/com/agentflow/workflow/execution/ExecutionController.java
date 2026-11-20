@@ -69,6 +69,26 @@ public class ExecutionController {
                 result.idempotentReplay(), base + "/events", base + "/events/stream"));
     }
 
+    /** 试跑请求：dsl 为空时用已保存的草稿；variables 是这次要喂给 start 的入参。 */
+    public record PreviewRequest(Map<String, Object> dsl, Map<String, Object> variables) {
+    }
+
+    /**
+     * 试跑到某个节点：上游会真实执行（模型真的被调用），目标节点的输出直接回传。
+     *
+     * <p>路径挂在 workflows 下而不是 executions 下：试跑不产生执行记录，语义上是草稿的调试动作。
+     * 但它用的是执行侧的服务与账本，所以处理入口放在执行控制器里，避免工作流包反向依赖执行包。
+     */
+    @PostMapping("/api/v1/workflows/{id}/nodes/{key}/preview")
+    public ApiResponse<Map<String, Object>> previewNode(@PathVariable String id,
+                                                        @PathVariable String key,
+                                                        @RequestBody(required = false)
+                                                        PreviewRequest body) {
+        PreviewRequest request = body == null ? new PreviewRequest(null, null) : body;
+        return ApiResponse.ok(service.preview(TenantContext.require(), id, key,
+                request.dsl(), request.variables()));
+    }
+
     @GetMapping("/api/v1/executions/{id}")
     public ApiResponse<Map<String, Object>> detail(@PathVariable String id) {
         var tenant = TenantContext.require();

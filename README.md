@@ -50,6 +50,10 @@ flowchart LR
 | 预算钳制 / 硬停止、PII 双层脱敏（pii-v2 双端同规则） | P0 |
 | 审计只追加（触发器 + 最小授权 + outbox/relay，不可达时降级直写） | P0 |
 | 真实模型调用（进程级 OpenAI 兼容端点 / 连接器注入凭据），密钥不落库不进日志 | P0 |
+| 单节点试跑：目标节点 + 全部上游真实跑一遍，不落执行记录，结构不支持时明确拒绝 | 已实现 |
+| 运行入参表单（按变量声明渲染控件，必填前置拦截）；工作流级默认模型 `defaults.llm` | 已实现 |
+| Webhook / 定时触发：令牌入口、HMAC 签名、幂等键、限流、审计（V010） | 已实现 |
+| 模型能力标注：推理型 / 长上下文 / 支持 JSON / 输出上限，推理型给 `maxTokens` 建议 | 已实现 |
 | 文档知识库：建库 / 导入 `.txt`·`.md` / 切片 / 本地 BM25 检索 / 租户隔离（V009） | 已实现 |
 | `retrieval` 节点：真实检索用户文档，`output.text` / `results` / `citations` 供下游引用 | 已实现 |
 | condition / loop / parallel / transform / subworkflow 节点（画布表单配置，子图有独立画布） | P1 |
@@ -187,6 +191,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
 - 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板与新建节点默认用非推理的 `deepseek-chat`。
+- 模型输入框下面会带能力标签（推理型 / 长上下文 / 支持 JSON / 图像输入）与上游给的上下文长度、输出上限。标签优先取上游 `/models` 的字段；上游只回 id 时按模型名推断并标「推断」，不硬编码某家某代的能力。选到推理型而 `maxTokens` 偏小时，界面给一个「设为 4096」的一键建议。
 - 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
 - `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
 
@@ -201,6 +206,54 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 信任边界：引擎只持 `tenantId` 与内部令牌，经网关 `/internal/knowledge/search` 调控制面；服务端按租户逐条复核每个 `knowledgeBaseIds`，越权 id 静默忽略，既不返回数据也不报错暴露存在性。用户侧 `/api/v1/knowledge/search` 用同样的复核逻辑，便于在画布配置前先验证召回效果。
 
 局限：这是**词法检索**（BM25），不是语义向量召回；没有 rerank、没有 PDF/Office 解析、没有增量索引重建。导入纯文本即可用，需要语义召回时再接外部 embedding 服务。
+
+## 调试与触发
+
+### 单节点试跑
+
+画布任意节点卡片上的「试跑」（配置抽屉里也有「试跑此节点」）会把**目标节点 + 它的全部上游**裁成一张小图交给引擎，用同一个调度器、同一批执行器、同一份预算与错误分类真的跑一遍：模型真的被调用、检索真的查库、连接器真的出网，然后把这个节点的输入、输出、token、耗时和整条上游链路的状态回给你。
+
+| 行为 | 说明 |
+|---|---|
+| 执行范围 | 只跑目标节点及其上游；目标节点之后的一律不执行 |
+| 执行记录 | **不产生**。试跑是草稿的调试动作，不进执行列表、不产生版本，只留一条 `NODE_PREVIEWED` 审计 |
+| 入参 | 与「运行」同一个表单，按 DSL 变量声明填写，必填项缺了不给点 |
+| 超时 | 单次试跑最长 120 秒，超时以 `PREVIEW-TIMEOUT-001` 结束并取消 |
+| 拒绝的结构 | 上游含 `loop` / `parallel` / `human_gate` 时返回 422 `PREVIEW-STRUCTURE-001`——裁剪会改变迭代、分支聚合与挂起续跑的语义，这时请用「运行」跑完整流程 |
+
+### 运行入参：表单而不是手写 JSON
+
+「运行」弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件：布尔给勾选框、数字给数字框、字符串给文本框、`object` / `array` 给 JSON 编辑框（解析失败就地提示，不写回）；右上角可切回「JSON 原文」整块编辑。必填项没填时「触发执行」是禁用的，不会先落一条注定失败的执行记录——引擎侧的 `EXEC-INPUT-001` 仍然兜底，前端只是不让它白跑一趟。
+
+### 工作流默认模型
+
+工具条「默认模型」写入 DSL 的 `defaults.llm`（`connectionId` + `model`），只用于**新建** llm 节点的继承。勾选「同时应用到现有 N 个 llm 节点」会把当前值批量写进已有节点，不勾则一个都不动——执行时始终以节点自身 `config` 为准，改默认值不会让线上跑着的流程偷偷换模型。
+
+### Webhook 与定时触发
+
+画布工具条「触发」进入该工作流的触发页（`/workflows/:id/triggers`）。触发跑的是**已发布版本**，与画布草稿无关；没发布就先「冻结并发布」，否则触发会以 409 结束。
+
+```bash
+# Webhook：令牌即凭据，签名可选但建议带
+curl -X POST 'http://127.0.0.1:8080/api/v1/hooks/<token>' \
+  -H 'Content-Type: application/json' \
+  -H "X-AF-Signature: sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | cut -d' ' -f2)" \
+  -H "X-AF-Timestamp: $(date +%s)" \
+  -H 'X-AF-Idempotency-Key: order-2024-0001' \
+  -d '{"question":"退款怎么申请"}'
+```
+
+| 项 | 语义 |
+|---|---|
+| `token` | 24 字节 Base64URL，写在路径里；轮换后旧链接立即失效 |
+| `X-AF-Signature` | `sha256=HMAC_SHA256(secret, 原始请求体)`；带上才校验，比较用常量时间 |
+| `X-AF-Timestamp` | 秒级时间戳，与服务器偏差超过 300 秒直接拒（防重放） |
+| `X-AF-Idempotency-Key` | 同一 key 重复投递只执行一次，第二次回 `idempotentReplay: true` |
+| 限流 | 每个触发入口 60 次/分钟（Redis 固定窗口），超限 `AGT-RATE_LIMIT-001` |
+| 停用 | 触发页关掉「启用」后入口返回 409，不再执行 |
+| `POST /api/v1/hooks/<token>/probe` | 入口自检：只回类型、启用状态与所属工作流，不触发执行、不回密钥 |
+
+定时触发用 cron（5 段 `分 时 日 月 周`，也接受 6 段写法并归一到秒位），最小精度到分钟，时区默认 `Asia/Shanghai`；调度器每 30 秒扫一轮，以 `last_fired_at` 为基准判断是否到点，**重启不补跑**。触发配置里可以写固定的入参，webhook 请求体里的同名字段会覆盖它。
 
 ## 演示脚本（P0 验收路径）
 
@@ -340,6 +393,9 @@ git add docs/openapi/engine-api.json
 8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、也不要求 `end`（出口由上层节点收口），画布最多下钻 4 层；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。
 9. `retrieval` 检索为本地词法 BM25（中文单字 + 二元组），不是语义向量召回；无 rerank、无 PDF/Office 解析、无增量索引重建。不引入 embedding 服务，文档内容不出服务端。单次检索扫描切片上限 20000，`topK` 上限 50，单文档上限 200000 字符 / 500 切片；超出导入会在请求期被拒绝，不会静默截断。
 10. 默认模型用非推理的 `deepseek-chat`。DeepSeek 的 `deepseek-flash` / `deepseek-v4-pro` 是推理模型，`max_tokens` 同时约束思维链与正文；给到 1024 时思维链可能吃光预算、正文为空，节点以 `LLM-RESPONSE-001` 失败并提示调大 `maxTokens`。这是上游行为，不会退回示例文本。
+11. 定时触发由 workflow-service 内的单实例调度器扫表（默认 30s 一轮），多副本部署会重复扫描同一批行——目前靠 `last_fired_at` 的乐观更新与幂等键 `sched-{triggerId}-{分钟}` 收口，尚未做主备选举。触发粒度到分钟，不支持秒级；停机期间的到点不会补跑。Webhook 限流是单实例固定窗口（60 次/分钟），多副本时需要换成 Redis 原子计数器。
+12. 试跑不落执行记录、不计入成本中心与评测：它跑的是真实副作用（模型调用会真的计费），但没有 `workflow_execution` 行，token 只出现在试跑面板与 `NODE_PREVIEWED` 审计里。上游含 `loop` / `parallel` / `human_gate` 的节点不给试跑。
+13. 模型能力标签不是权威数据：上游 `/models` 给出字段才标得更准，只回 id 时按模型名推断并显式标「推断」。标签只影响界面提示与 `maxTokens` 建议，不改变实际下发的请求。
 
 ## 目录
 

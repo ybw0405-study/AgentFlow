@@ -133,6 +133,22 @@ class Dispatcher:
         self._tasks[req.execution_id] = task
         return {"executionId": str(req.execution_id), "status": state.status, "resumed": resumed}
 
+    async def wait(self, execution_id: uuid.UUID, timeout_s: float) -> bool:
+        """等一个执行跑到当前这一轮结束（试跑用；返回是否在超时前收口）。
+
+        只等本进程持有的任务：超时后置取消位，调度器在下一个节点边界收口，
+        不会把已经发出去的模型调用硬砍断。
+        """
+        task = self._tasks.get(execution_id)
+        if task is None:
+            return True
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=max(timeout_s, 0.1))
+            return True
+        except TimeoutError:
+            await self.cancel(execution_id)
+            return False
+
     async def _run(
         self, req: ExecuteRequest, dsl: WorkflowDsl, state: ExecutionState, lease: Lease
     ) -> None:

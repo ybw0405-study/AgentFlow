@@ -63,7 +63,11 @@ const DSL = {
     {
       key: 'draft',
       type: 'llm',
-      config: { provider: 'mock', model: 'mock-large', promptTemplate: '{{ vars.question }}' },
+      config: {
+        provider: 'openai-compatible',
+        model: 'deepseek-chat',
+        promptTemplate: '{{ vars.question }}',
+      },
     },
     { key: 'end', type: 'end', config: { resultMapping: { answer: '{{ vars.question }}' } } },
   ],
@@ -346,6 +350,9 @@ describe('画布交互', () => {
 
     const confirm = wrapper.findAll('button').find((b) => b.text() === '触发执行')
     expect(confirm).toBeTruthy()
+    // 必填项没填时按钮是禁用的：先按声明类型把问题填上
+    const question = wrapper.find('.af-modal .af-input')
+    await question.setValue('退款怎么申请')
     await confirm!.trigger('click')
     await flushPromises()
 
@@ -353,7 +360,21 @@ describe('画布交互', () => {
     expect(mocks.freeze).toHaveBeenCalledWith('wf-1')
     expect(mocks.trigger).toHaveBeenCalledWith(
       'wf-1',
-      expect.objectContaining({ versionId: 'v-9' }),
+      expect.objectContaining({ versionId: 'v-9', variables: { question: '退款怎么申请' } }),
     )
+  })
+
+  it('必填项为空时不触发执行，先提醒补齐', async () => {
+    const wrapper = await mountCanvas()
+    const open = wrapper.findAll('button').find((b) => b.text() === '运行')
+    await open!.trigger('click')
+    await flushPromises()
+
+    const confirm = wrapper.findAll('button').find((b) => b.text() === '触发执行')
+    expect(confirm!.attributes('disabled')).toBeDefined()
+    await confirm!.trigger('click')
+    await flushPromises()
+    expect(mocks.trigger).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('还差必填项')
   })
 })

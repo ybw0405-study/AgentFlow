@@ -1598,3 +1598,105 @@ llm 节点切到指定连接，`confirmTemplate` 用 `bindConnectionToLlmNodes` 
   以及 retrieval 节点产出里出现导入原文且不含「测试语料片段」；`e2e/test_subworkflow.py`
   用自建子流程验证 `sub#run#` 前缀与 `outputMapping`，不把模型可用性耦合进来。先起全栈
   （`scripts/start-dev.*`）后，`AF_E2E_REAL_LLM=1 pytest e2e -q` 全量通过。
+
+## 21. 调试与外部触发（2026-11-20）
+
+这一层解决的是「跑之前怎么确认对」和「跑之外怎么被叫起来」两类问题。两者的共同约束是：
+**不能为了调试或便利，绕过引擎已有的幂等、预算、审计与租户边界**。
+
+### 21.1 单节点试跑：同源执行，裁剪语义
+
+画布上的「试跑」不是本地模拟：`engine-api/app/preview.py` 把「目标节点 + 全部上游」裁成一张
+小图（保留 `variables` / `defaults`，补一个合成 end 节点收口），连同整份草稿交给
+`Dispatcher`，用与正式执行**同一套**执行器、预算账本、错误分类与重试策略跑一遍。
+
+为什么不复用「临时改 DSL 跑全图」：全图会执行目标节点之后的分支，副作用不可控；也不做
+「只渲染模板」的假跑，那样模型、检索、连接器都不会真的被调用，用户拿到的还是猜。
+
+裁剪的语义禁区（`UNSUPPORTED_TYPES`）：上游出现 `loop` / `parallel` / `human_gate` 时
+直接拒绝（422 `PREVIEW-STRUCTURE-001`）。三者裁剪后会变语义——循环迭代次数、并行分支聚合、
+挂起后续跑都不再成立，与其给一个看起来能跑的结果，不如让用户用「运行」跑完整流程。
+
+试跑不落 `workflow_execution`：它是草稿的调试动作，不该出现在执行列表、成本中心与评测里。
+可观测性由事件流里的一条 `NODE_PREVIEWED` 审计承载（含 `definitionId` / `nodeKey` /
+`status` / `tokenUsed`）。代价是试跑消耗的 token 不进预算账本，这一点写在「已知限制」里。
+
+`Dispatcher.wait()` 用 `asyncio.shield` 等任务收口，超时后置取消位、由调度器在节点边界
+取消，避免试跑请求挂着不走。控制面 `ExecutionService.preview` 只做三件事：选 DSL
+（入参 > 草稿 > 当前版本）、PII 脱敏、拼请求；权限仍是 `EDITOR`。
+
+### 21.2 运行入参：表单化 + 必填前置
+
+运行弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件；`object` / `array`
+退回 JSON 编辑并即时提示解析错误，右上角可切回「JSON 原文」。`missingRequired()` 在触发前
+挡住必填缺失——不是为了替代引擎校验，而是避免白造一条注定 `EXEC-INPUT-001` 的执行记录
+（执行记录是只增的，脏数据会一直躺在列表里）。引擎侧校验不变，仍是唯一权威。
+
+### 21.3 `defaults.llm`：只影响新建节点
+
+DSL 增加 `defaults.llm`（`connectionId` + `model`），画布新建 llm 节点时继承，弹窗可勾选
+批量应用到现有节点。**执行时仍以节点自身 `config` 为准**：如果默认值能覆盖节点配置，
+「改了默认模型，线上跑的还是老模型」这类问题会变成「改了默认模型，线上悄悄换了模型」，
+两种都不可接受。
+
+### 21.4 外部触发：凭据模型与信任边界
+
+`V010__trigger.sql` 的 `workflow_trigger` 一行对应一个入口，两种类型共用同一套凭据字段：
+
+| 字段 | Webhook | 定时 | 说明 |
+|---|---|---|---|
+| `token` | 路径里的入口 id | 不使用 | 24 字节 Base64URL，唯一索引；轮换即换 token |
+| `secret` | HMAC 密钥 | 不使用 | 32 字节 hex，只在创建/轮换时回显给创建者 |
+| `cron_expr` | 不使用 | 5/6 段 cron | 5 段前补 `0` 秒，`CronExpression.parse` 校验 |
+| `variables_json` | 固定入参 | 固定入参 | 请求体中的同名字段覆盖它 |
+| `last_fired_at` | 记录触发时间 | 上次到点时间 | 定时以此为基准判断是否到点，重启不补跑 |
+
+信任边界的四层：
+
+1. **公开路径白名单**（`PublicPaths.PREFIXES`）只放 `/api/v1/hooks/`，注释明确「只给凭据在
+   路径里的入口用，其余不用通配符」；`/api/v1/triggers/**` 仍走 JWT + `TenantFilter`。
+2. **签名可选、校验从严**：带 `X-AF-Signature` 就必校验，`MessageDigest.isEqual` 常量时间
+   比较；`X-AF-Timestamp` 与服务器偏差超过 300 秒直接拒。不带签名时令牌本身就是 bearer。
+3. **限流在服务内**：Redis 固定窗口 `af:hook:rate:{triggerId}:{分钟}`，60 次/分钟。
+   `RateLimitFilter` 不覆盖 hooks（它按 JWT 主体计数），所以这一层由 `TriggerService` 自己做。
+4. **降权执行**：`triggerFromExternal` 走与用户触发同一个 `dispatch`（幂等、版本解析、政策
+   钳制、PII 脱敏），但 `actorId` 是 `trigger:{id}`，审计里能一眼区分是人点的还是外部叫的。
+
+入口探测 `POST /api/v1/hooks/{token}/probe` 只回类型、启用状态与所属工作流，不触发执行、
+不回 `secret`——接入方联调时用它确认地址对不对，而不是靠发一次真实请求试。
+
+### 21.5 模型能力标注：数据从哪来
+
+`model_capabilities.describe_model` 把上游 `/models` 的零散字段收敛成四个标签：
+`reasoning` / `long-context` / `json` / `vision`，外加 `context_window` 与
+`max_output_tokens`。真实来源（以 DeepSeek 为例）：
+
+- `context_window` / `max_output_tokens` / `input_modalities`：上游直接给数字与模态；
+- `effort.supported_levels`：只有推理型模型才有的「思考强度」开关，比按名字猜可靠；
+- `supported_parameters`（部分网关）：`reasoning` / `response_format` 直接对应能力。
+
+上游只回 id 时退回模型名推断（整词元匹配，`gpt-4o-mini` 不会被 `o1` 误伤），并在
+`source` 里标 `inferred`，界面显式写「推断」。**刻意不做家族能力表**：把某家某代的上下文
+长度写死在代码里，等厂商换代就成了一句静默的谎话。标签只影响界面提示与 `maxTokens`
+建议，不参与任何执行决策。
+
+### 21.6 错误展示：正文之外补一行原因
+
+`describeError` 的正文与 hint 仍是翻译后的固定文案（不暴露内部码），但额外返回 `detail`
+——problem+json 里业务代码显式写给人看的那一句（`invalid cron expression: ...`、
+`trigger is disabled`）。触发页把它渲染成第二行「后端说明」。普通异常的 `message` 依旧
+不透出：只有 `ApiError`（服务端受控文案）才允许走到这一行。
+
+### 21.7 验收
+
+- Python：`test_preview.py`（裁剪、合成 end 的 key 冲突避让、缺节点/不可达/结构拒绝、
+  `variables` 与 `defaults` 保留）、`test_model_capabilities.py`（上游字段优先、effort 判推理、
+  词元边界、无字段不出标签）；ruff + 324 passed。
+- Java：`LlmControllerTest`（`items` 透传）、`WorkflowArchitectureTest`（试跑端点放在执行
+  控制器里，守住 `workflow -> execution` 不成环）；`mvn verify` 全模块 BUILD SUCCESS。
+- 前端：`triggers-view.spec.ts`（建入口、复制地址、停用、后端原因回显）、
+  `model-capabilities.spec.ts` / `model-facts-chips.spec.ts`（标签、推断、`maxTokens` 建议）、
+  `canvas-editor.spec.ts`（必填拦截）；typecheck / lint / 249 passed / build 全绿。
+- E2E：`e2e/test_node_preview.py`（上游真实执行、不落执行记录、跨租户 404、循环结构 422）、
+  `e2e/test_triggers.py`（真实触发、未知 token 404、签名 403/200、幂等、停用 409、probe
+  不触发、非法 cron 409、定时 1 分钟内到点）。

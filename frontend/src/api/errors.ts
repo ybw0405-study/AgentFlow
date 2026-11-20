@@ -14,6 +14,8 @@ export interface DescribedError {
   text: string
   /** 具体处置建议；无建议时为 null */
   hint: string | null
+  /** 后端给出的具体原因（problem+json 的 detail），作为第二行补充；没有则为 null */
+  detail: string | null
   /** 内部错误码，仅用于排查展示 */
   code: string | null
   traceId: string | null
@@ -109,26 +111,53 @@ function lookup(code: string): { text: string; hint: string | null } {
   return { text: byPrefix?.text ?? '操作未成功', hint: null }
 }
 
+/** detail 只做补充，不参与正文；过长的截断，避免把后端整段日志摆到用户面前。 */
+const MAX_DETAIL = 300
+
+/**
+ * 取后端写的具体原因。只有 problem+json 的 detail 才算数：
+ * 它是业务代码显式写给人看的一句话（例如「cron 写法不合法」「触发已停用」），
+ * 与正文的固定文案互补；普通异常的 message 一律不透出。
+ */
+function serverDetail(error: ApiError, text: string): string | null {
+  const raw = error.message?.trim()
+  if (!raw || raw === text) {
+    return null
+  }
+  // ApiError 在 detail/title 都缺失时用 HTTP 状态码兜底，这种不算业务原因
+  if (/^HTTP[\s_-]?\d{3}$/.test(raw)) {
+    return null
+  }
+  return raw.length > MAX_DETAIL ? `${raw.slice(0, MAX_DETAIL)}…` : raw
+}
+
 /** 把任意异常归一为可直接展示的文案。 */
 export function describeError(error: unknown): DescribedError {
   if (error instanceof ApiError) {
-    const { text, hint } = lookup(error.code)
     if (error.status === 0) {
-      return { text: '网络不可达', hint: '请检查网络连接后重试', code: null, traceId: null }
+      return { text: '网络不可达', hint: '请检查网络连接后重试', detail: null, code: null, traceId: null }
     }
+    const { text, hint } = lookup(error.code)
+    const traceId = error.traceId ?? null
     // 后端未给业务码时（ApiError 兜底为 HTTP-xxx），按状态码给出更贴近场景的说明
     if (text === '操作未成功') {
       const byStatus = STATUS_FALLBACK[error.status]
       if (byStatus) {
-        return { text: byStatus, hint: null, code: error.code, traceId: error.traceId ?? null }
+        return {
+          text: byStatus,
+          hint: null,
+          detail: serverDetail(error, byStatus),
+          code: error.code,
+          traceId,
+        }
       }
     }
-    return { text, hint, code: error.code, traceId: error.traceId ?? null }
+    return { text, hint, detail: serverDetail(error, text), code: error.code, traceId }
   }
   if (error instanceof Error && error.message === 'Network Error') {
-    return { text: '网络不可达', hint: '请检查网络连接后重试', code: null, traceId: null }
+    return { text: '网络不可达', hint: '请检查网络连接后重试', detail: null, code: null, traceId: null }
   }
-  return { text: '操作未成功', hint: '请稍后重试', code: null, traceId: null }
+  return { text: '操作未成功', hint: '请稍后重试', detail: null, code: null, traceId: null }
 }
 
 /** 仅取一句话说明（适合放在提示条、toast 里）。 */

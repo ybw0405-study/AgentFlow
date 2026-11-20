@@ -45,4 +45,19 @@ describe('错误文案映射', () => {
   it('hint 与正文拼接成一句话', () => {
     expect(errorText(apiError(401, 'USR-TOKEN-001'))).toBe('登录状态已过期，请重新登录')
   })
+
+  it('后端写的具体原因作为补充行保留，方便说明为什么被拒', () => {
+    const d = describeError(apiError(409, 'WF-STATE-001', 'invalid cron expression: 0 9 * * 8'))
+    expect(d.text).toBe('当前状态不允许此操作')
+    expect(d.detail).toBe('invalid cron expression: 0 9 * * 8')
+  })
+
+  it('detail 与正文重复或是 HTTP 兜底文案时不再重复展示', () => {
+    expect(describeError(apiError(409, 'WF-STATE-001', '当前状态不允许此操作')).detail).toBe(null)
+    expect(describeError(apiError(500, undefined, 'HTTP 500')).detail).toBe(null)
+  })
+
+  it('普通异常不带 detail', () => {
+    expect(describeError(new Error('boom')).detail).toBe(null)
+  })
 })

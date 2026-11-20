@@ -27,10 +27,18 @@ export interface RetryPolicy {
   backoffMultiplier?: number
 }
 
+export interface LlmDefaults {
+  /** 默认走哪条模型连接；为空表示进程级 AF_LLM_*。 */
+  connectionId?: string
+  model?: string
+}
+
 export interface DslDefaults {
   timeoutMs?: number
   maxParallelism?: number
   retry?: RetryPolicy
+  /** 工作流级默认模型：新建 llm 节点时继承，执行仍以节点配置为准。 */
+  llm?: LlmDefaults
 }
 
 export interface LlmConfig {

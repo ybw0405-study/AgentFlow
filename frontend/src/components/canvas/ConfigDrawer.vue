@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { approverExpressionError } from '@/dsl/approver-expr'
 import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslNode } from '@/dsl/types'
+import type { ModelFactsDto } from '@/types/api'
+import ModelFactsChips from './ModelFactsChips.vue'
 
 defineOptions({ name: 'ConfigDrawer' })
 
@@ -15,6 +17,7 @@ const props = defineProps<{
     configured: boolean
     error: string | null
     models: string[]
+    items?: ModelFactsDto[]
   } | null
   /** 已启用且属于本空间的模型连接；选中后模型从该连接的清单里挑。 */
   llmConnections?: {
@@ -35,7 +38,15 @@ const emit = defineEmits<{
   'pick-model': []
   'probe-models': [id: string]
   'open-knowledge': []
+  preview: []
 }>()
+
+/** 循环 / 并行 / 审批裁剪不出可试跑的小图，入口在这里也不给。 */
+const canPreview = computed(
+  () =>
+    !!props.node
+    && !['start', 'end', 'loop', 'parallel', 'human_gate'].includes(props.node.type),
+)
 
 /**
  * 只显示与当前节点相关的问题。
@@ -400,6 +411,12 @@ function editBody(): void {
             :value="m"
           />
         </datalist>
+        <ModelFactsChips
+          :model="cfg('model', '')"
+          :items="modelCatalog?.items"
+          :current-max-tokens="cfg('maxTokens', 1024)"
+          @apply-max-tokens="setCfg('maxTokens', $event)"
+        />
         <p
           class="af-faint"
           style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
@@ -452,6 +469,12 @@ function editBody(): void {
             :value="m"
           />
         </datalist>
+        <ModelFactsChips
+          :model="cfg('model', '')"
+          :items="modelCatalog?.items"
+          :current-max-tokens="cfg('maxTokens', 1024)"
+          @apply-max-tokens="setCfg('maxTokens', $event)"
+        />
         <p
           class="af-faint"
           style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
@@ -1128,7 +1151,15 @@ function editBody(): void {
       @input="setTimeoutMs(($event.target as HTMLInputElement).value)"
     >
 
-    <div style="margin-top: 20px">
+    <div style="margin-top: 20px; display: flex; gap: 8px">
+      <button
+        v-if="canPreview"
+        class="af-btn af-btn--sm af-btn--primary"
+        title="跑这个节点和它的上游，直接看真实输出"
+        @click="emit('preview')"
+      >
+        试跑此节点
+      </button>
       <button
         class="af-btn af-btn--danger af-btn--sm"
         @click="emit('remove', node.key)"

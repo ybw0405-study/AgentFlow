@@ -38,10 +38,22 @@ class RetryPolicy(CamelModel):
     backoff_multiplier: float = Field(2.0, ge=1.0)
 
 
+class LlmDefaults(CamelModel):
+    """工作流级默认模型：新建 llm 节点时继承。
+
+    执行时仍以节点自己的 config 为准——这里不参与解析，避免「改了默认模型，
+    线上跑的还是老模型」这种看不见的行为变化。
+    """
+
+    connection_id: str | None = None
+    model: str | None = None
+
+
 class Defaults(CamelModel):
     timeout_ms: int = Field(30_000, ge=100, le=600_000)
     max_parallelism: int = Field(4, ge=1, le=32)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
+    llm: LlmDefaults | None = None
 
 
 class Edge(CamelModel):

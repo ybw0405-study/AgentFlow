@@ -88,7 +88,18 @@ describe('节点卡片内联编辑', () => {
 
   it('展开完整配置抛出 expand', async () => {
     const wrapper = mountNode()
-    await wrapper.find('.af-node__expand').trigger('click')
+    const button = wrapper.findAll('button').find((b) => b.text() === '展开完整配置')
+    await button!.trigger('click')
     expect(wrapper.emitted('expand')).toHaveLength(1)
+  })
+
+  it('卡片上提供试跑入口，起止节点与循环不给', async () => {
+    const wrapper = mountNode()
+    const preview = wrapper.findAll('button').find((b) => b.text() === '试跑')
+    await preview!.trigger('click')
+    expect(wrapper.emitted('preview')).toHaveLength(1)
+
+    expect(mountNode({ nodeType: 'start' }).findAll('button').some((b) => b.text() === '试跑')).toBe(false)
+    expect(mountNode({ nodeType: 'loop' }).findAll('button').some((b) => b.text() === '试跑')).toBe(false)
   })
 })

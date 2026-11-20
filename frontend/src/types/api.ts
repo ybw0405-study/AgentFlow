@@ -261,6 +261,18 @@ export interface LlmModelsDto {
   defaultModel: string
   models: string[]
   error: string | null
+  /** 引擎附带的能力标注；拿不到能力字段的模型只有 id。 */
+  items?: ModelFactsDto[]
+}
+
+/** 模型能力标注：只用于界面提示，不参与任何执行决策。 */
+export interface ModelFactsDto {
+  id: string
+  tags: string[]
+  contextWindow: number | null
+  maxOutputTokens: number | null
+  /** upstream=上游 /models 给的字段；inferred=按模型名推断。 */
+  source: 'upstream' | 'inferred'
 }
 
 /** 模型连接探测结果：只回模型 id，端点与密钥不出服务端。 */
@@ -315,4 +327,46 @@ export interface KnowledgeSearchResult {
   query: string
   matchedChunks: number
   scannedChunks: number
+}
+
+/** 单节点试跑结果：上游真实跑过一遍，这里是目标节点的输出与整条链路的状态。 */
+export interface NodePreviewTraceItem {
+  key: string
+  status: string
+  tokenUsed: number
+  latencyMs: number | null
+  errorCode: string | null
+}
+
+export interface NodePreviewResult {
+  executionId: string
+  nodeKey: string
+  status: string
+  nodeStatus: string
+  output: Record<string, unknown> | null
+  input: Record<string, unknown> | null
+  errorCode: string | null
+  errorMessage: string | null
+  tokenUsed: number
+  latencyMs: number | null
+  totalTokens: number
+  result: Record<string, unknown> | null
+  trace: NodePreviewTraceItem[]
+}
+
+export type TriggerType = 'WEBHOOK' | 'SCHEDULE'
+
+/** 工作流外部触发器；token 即入口凭据，secret 用于校验 X-AF-Signature。 */
+export interface TriggerDto {
+  id: string
+  type: TriggerType
+  token: string
+  secret: string
+  cron: string | null
+  timezone: string
+  enabled: boolean
+  variables: Record<string, unknown>
+  versionId: string | null
+  lastFiredAt: string | null
+  createdAt: string | null
 }

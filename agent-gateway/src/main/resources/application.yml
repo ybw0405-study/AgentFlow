@@ -26,7 +26,7 @@ spring:
           - id: workflow-service
             uri: ${AF_WORKFLOW_SERVICE:http://127.0.0.1:8084}
             predicates:
-              - Path=/api/v1/workflows/**,/api/v1/executions/**,/api/v1/auth/**,/api/v1/gates/**,/api/v1/notifications/**,/api/v1/evals/**,/api/v1/llm/**,/api/v1/knowledge/**,/api/v1/admin/usage/**,/api/v1/admin/canary/**,/api/v1/admin/audit-outbox/**
+              - Path=/api/v1/workflows/**,/api/v1/executions/**,/api/v1/auth/**,/api/v1/gates/**,/api/v1/notifications/**,/api/v1/evals/**,/api/v1/llm/**,/api/v1/knowledge/**,/api/v1/triggers/**,/api/v1/hooks/**,/api/v1/admin/usage/**,/api/v1/admin/canary/**,/api/v1/admin/audit-outbox/**
   data:
     redis:
       url: redis://${AF_REDIS_HOST:127.0.0.1}:${AF_REDIS_PORT:6379}/0

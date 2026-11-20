@@ -35,12 +35,19 @@ const emit = defineEmits<{
   'update-config': [patch: Record<string, unknown>]
   expand: []
   'pick-model': []
+  preview: []
 }>()
 
 const accent = computed(() => categoryColor(nodeCategory(props.data.nodeType)))
 const status = computed(() => statusColor(props.data.status))
 const isLive = computed(() =>
   ['RUNNING', 'SUSPENDED', 'PENDING'].includes(props.data.status ?? ''),
+)
+/** 循环 / 并行 / 审批无法裁剪出可试跑的小图，卡片上不提供入口（后端也会拒绝）。 */
+const previewable = computed(
+  () =>
+    !props.data.readOnly &&
+    !['start', 'end', 'loop', 'parallel', 'human_gate'].includes(props.data.nodeType),
 )
 const fields = computed(() => inlineFields(props.data.nodeType, props.data.config ?? {}))
 const summary = computed(() => nodeSummary(props.data.nodeType, props.data.config ?? {}))
@@ -161,14 +168,26 @@ function write(fieldKey: string, kind: string, raw: string): void {
       </div>
     </div>
 
-    <button
-      class="af-node__expand nodrag"
-      @mousedown.stop
-      @pointerdown.stop
-      @click.stop="emit('expand')"
-    >
-      {{ data.readOnly ? '查看输入 / 输出' : '展开完整配置' }}
-    </button>
+    <div class="af-node__actions">
+      <button
+        v-if="previewable"
+        class="af-node__expand nodrag"
+        title="只跑这个节点和它的上游，看真实输出"
+        @mousedown.stop
+        @pointerdown.stop
+        @click.stop="emit('preview')"
+      >
+        试跑
+      </button>
+      <button
+        class="af-node__expand nodrag"
+        @mousedown.stop
+        @pointerdown.stop
+        @click.stop="emit('expand')"
+      >
+        {{ data.readOnly ? '查看输入 / 输出' : '展开完整配置' }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -333,17 +352,24 @@ function write(fieldKey: string, kind: string, raw: string): void {
   color: var(--af-danger);
 }
 
+.af-node__actions {
+  display: flex;
+  border-top: 1px solid var(--af-border);
+}
+
 .af-node__expand {
-  display: block;
-  width: 100%;
+  flex: 1;
   padding: 5px 8px;
   background: var(--af-panel);
   border: none;
-  border-top: 1px solid var(--af-border);
   color: var(--af-text-dim);
   font-size: 11px;
   text-align: left;
   cursor: pointer;
+}
+
+.af-node__expand + .af-node__expand {
+  border-left: 1px solid var(--af-border);
 }
 
 .af-node__expand:hover {
