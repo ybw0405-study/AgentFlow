@@ -1384,3 +1384,53 @@ DSL 存的是绝对坐标，宽流程的首屏会只看到前几个节点、末�
 被 `SKIPPED` 的节点没有 `output`，直接引用会在收口时 `EXPR-EVAL-001`。所以两条分支各自把
 结果写进 `vars.outcome`，`end` 只取这一个变量。canonical 串与 checksum 仍由生成脚本计算，
 与服务端落库口径一致。
+
+## 18. 前端呈现层改造（2026-11-20，ComfyUI 式画布）
+
+### 18.1 边界
+
+这一轮只动 `frontend/`：DSL schema、引擎、控制面 API、数据库、投影、发布期校验与
+既有 34 个全栈 e2e 全部未改。新增能力都是「加法」，原能力一个不删：
+
+- `ConfigDrawer.vue`（全字段）与 `DslSourcePanel.vue`（JSON）原样保留，收进卡片
+  「展开完整配置」与工具条「DSL」两个高级入口，字段逻辑一行未重写。
+- `NodeTree.vue` 扁平列表原样保留，执行详情新增「节点列表」标签切过去。
+- 子图画布的面包屑逐层进出不变；折行只影响排布，不改 `body` / `branches` 语义。
+
+### 18.2 节点卡片
+
+`dsl/node-card.ts` 把卡片呈现规则从视图里抽出来：`nodeCategory` 三类
+（执行 / 控制 / 边界）、`categoryColor` 只返回设计令牌、`inlineFields` 每类挑 1~2 个
+顶层字段、`nodeSummary` 给出子图规模与审批人规则、`statusColor` 守三色语义。
+`WorkflowNode.vue` 只负责渲染；内联编辑通过 `update-config` 抛一个 patch，
+`CanvasEditorView.patchNodeConfig` 只合并顶层字段，不重建节点、不碰 `cases` / `mappings`
+这类嵌套数组（嵌套结构仍只读展示）。表单元素一律加 `nodrag` 与
+`mousedown` / `pointerdown` / `click` / `keydown` 的 `stop`，避免与 Vue Flow 拖拽、
+画布快捷键冲突。
+
+### 18.3 交互与校验前置
+
+`dsl/connection.ts` 的 `connectionProblem()` 把发布期已有的连线规则前置到落线瞬间；
+`dsl/auto-layout.ts` 按拓扑分层并在超过 4 层时折行（`MAX_COLS=4`），只用于展示与
+「整理布局」，不改持久化的 `position`。`NodeSearch.vue` 支持中文名模糊匹配，
+`addFromSearch` 在落位后按需补一条连线；三个模板都在单测里过一遍
+`validateDslLocal`，保证拖进来就能发布。
+
+### 18.4 执行态复用同一张图
+
+执行详情从 `workflowApi.detail(definitionId).versions` 里按 `execution.versionId`
+取**冻结版本**的 `dslJson`，不用当前草稿，否则节点与执行记录对不上。
+`dsl/exec-status.ts` 的 `aggregateStatus` 把 `gather#kb#kb_hit` / `polish#0#polish_sign`
+这类带层级的执行记录按最严重状态聚合到根层卡片，避免分支失败被整片 `SUCCEEDED` 盖住。
+`ExecutionGraph.vue` 对冻结 DSL 做一次纯展示用的折行 `autoLayout`，再交给只读
+`VueFlow`；`fitView` 在 `nodesInitialized` 与节点数变化后各触发一次（节点数据是异步
+到达的，初始化那次可能量不到尺寸）。SSE 合并逻辑未改，`detail.nodes` 变化时两个视图
+同时刷新；DSL 取不到时自动回退列表视图并给出说明。
+
+### 18.5 设计红线与验收
+
+`design/tokens.css` 只新增一个分类色 `--af-node-control`；状态色仍严格是
+强调（进行/挂起）、危险（失败）、中性（完成）三种，`design-redlines.spec.ts`
+继续守「原始色值只在 tokens/base」「全仓无绿色」。新增 44 个前端单测覆盖
+节点分类与状态色、内联编辑、连接校验、折行布局、节点搜索、模板合法性、
+执行图状态聚合；前端 168 passed，全量门禁 ALL GATES GREEN，全栈 e2e 34 passed。
