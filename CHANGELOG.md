@@ -3,6 +3,22 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [Unreleased]
+
+### 修复
+
+- **运行弹窗不再让执行在 `start` 节点就失败**：`initialVariables` 初值改为按 DSL 声明类型
+  生成（`boolean → false`、`number` / `integer → 0`、`object → {}`、`array → []`），声明了
+  `default` 时优先用 `default`。此前所有变量统一给 `""`，内置示例的 `urgent` 是布尔，
+  用户不改弹窗直接点「触发执行」会立刻得到
+  `EXEC-INPUT-001: variable 'urgent' expects type 'boolean'`。弹窗同时标出必填变量，
+  并说明其余是流程内部变量、保持默认即可。
+
+### 文档
+
+- README 新增「第一次使用：5 步跑通内置示例」：登录 → 打开示例画布 → 运行并填变量 →
+  审批通过 → 看执行结果，附正确的变量 JSON、执行详情页三栏说明与常见卡点对照表。
+
 ## [0.4.0] - 2026-11-20
 
 交付前的最后一轮打磨：把「看得见的错」补齐（节点失败原因、表达式字面量、子图规则），

@@ -14,6 +14,7 @@ import type { CanvasEdge } from '@/dsl/graph-ops'
 import type { FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
+import { initialVariables } from '@/dsl/run-defaults'
 import {
   readSubgraphPath,
   subgraphRemovalError,
@@ -55,6 +56,13 @@ const error = ref<string | null>(null)
 const runDialog = ref(false)
 const runVariablesText = ref('{}')
 const busy = ref(false)
+/** 运行弹窗里标出必填项，其余是流程内部变量，保持默认即可。 */
+const requiredVariableNames = computed(() =>
+  Object.entries(variables.value)
+    .filter(([, spec]) => spec.required)
+    .map(([name]) => name)
+    .join('、') || '无',
+)
 
 /** 根层 DSL：唯一真源。画布上正在编辑的可能是它内部的某一层子图。 */
 const rootDsl = ref<WorkflowDsl | null>(null)
@@ -551,11 +559,7 @@ async function freezeAndPublish(): Promise<void> {
 }
 
 function openRunDialog(): void {
-  const vars: Record<string, unknown> = {}
-  for (const [name, spec] of Object.entries(variables.value)) {
-    vars[name] = spec.default ?? ''
-  }
-  runVariablesText.value = JSON.stringify(vars, null, 2)
+  runVariablesText.value = JSON.stringify(initialVariables(variables.value), null, 2)
   runDialog.value = true
 }
 
@@ -805,6 +809,13 @@ onUnmounted(() => {
           运行工作流
         </div>
         <label class="af-label">initialVariables（JSON）</label>
+        <p
+          class="af-faint"
+          style="margin: 0 0 8px; font-size: 12px"
+        >
+          必填：{{ requiredVariableNames }}；其余为流程内部变量，保持默认即可。
+          按声明类型填写（布尔用 true / false，不要加引号）。
+        </p>
         <textarea
           v-model="runVariablesText"
           class="af-textarea"

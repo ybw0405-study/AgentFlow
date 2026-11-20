@@ -108,6 +108,37 @@ cd frontend; npm install; cd ..
 
 WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.ps1` 停掉 Windows 侧）。
 
+## 第一次使用：5 步跑通内置示例
+
+不用自己画流程，种子数据里已有两条发布好的示例。按下面点一遍就能看到完整链路（条件 → 并行 → 人工审批 → 循环）：
+
+1. **登录**：打开 `http://127.0.0.1:5174`，用 `admin@agentflow.dev` / `agentflow123` 登录，落在「工作流」列表。
+2. **打开画布**：点「示例：客户工单分诊」的名称，或该行的「画布」。右上角是「冻结版本 / 冻结并发布 / 运行」，自己画新流程时改完要先「冻结并发布」才能执行；内置示例已发布，可跳过。
+3. **运行**：点右上角「运行」，弹窗里的 `initialVariables` 是一份 JSON，**按声明类型填**（`urgent` 必须是 `true`/`false`，不能是 `"true"` 或空串）：
+
+   ```json
+   {
+     "ticket": "登录页验证码收不到，客户很急",
+     "urgent": true
+   }
+   ```
+
+   点「触发执行」，页面会自动跳到该次执行的详情页。
+4. **审批**：流程跑到「加急审批」会停下，状态变 `SUSPENDED`。点顶部「审批」，上方输入框填审批意见（可选），在待办行点「通过」。审批人规则是表达式 `user.platformAdmin == true`，所以只有平台管理员（admin）能看到这条待办。
+5. **看结果**：回到「执行」列表点开那次执行，或点待办里的执行短号。刷新后状态为 `SUCCEEDED`；左栏节点树里能看到并行分支的 `gather#kb#kb_hit`、循环两轮的 `polish#0` / `polish#1`、被跳过的 `notify`。想看驳回支路：再运行一次，在审批中心点「驳回」。
+
+执行详情页分三栏：**左**是节点树（点任意一行选中），**中**是该节点的输入 / 输出原文，失败时还会就地给出错误码与原因，**右**是 token / steps / traceId / 错误码与最终产出。页面通过 SSE 实时刷新；未结束的执行右上角有「取消执行」。
+
+常见卡点：
+
+| 现象 | 原因与处理 |
+|---|---|
+| `EXEC-INPUT-001`：`variable 'urgent' expects type 'boolean'` | 运行弹窗里 `urgent` 留成了空串。填 `true` 或 `false`，不要加引号。 |
+| `EXEC-INPUT-001`：`missing required variable 'ticket'` | 删掉了必填变量。把 `ticket` 补回 JSON。 |
+| 运行按钮点了没反应 / 报未发布 | 自建工作流要先「冻结并发布」，草稿态不能执行。 |
+| 触发执行 403 | 用的是 `viewer@agentflow.dev`，该角色不能触发；换 admin 或 editor。 |
+| 审批中心是空的 | 用 `editor@agentflow.dev` 登录看不到 admin 的待办；换 admin。 |
+
 ## 接入真实模型（OpenAI 兼容）
 
 推荐做法是在「连接器」页建一条**模型连接**：端点与密钥存在服务端（AES-256-GCM 密文），画布只引用连接 id，密钥不进 DSL、不落画布，换密钥也不必重启引擎。
