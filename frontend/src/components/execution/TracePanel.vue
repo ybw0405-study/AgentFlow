@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ExecutionDto } from '@/types/api'
+import { formatInstant } from '@/utils/instant'
 
 defineOptions({ name: 'TracePanel' })
 
@@ -35,11 +36,11 @@ defineProps<{ execution: ExecutionDto }>()
     </div>
     <div class="af-trace__row">
       <span class="af-faint">started</span>
-      <span class="mono af-dim">{{ execution.startedAt?.slice(0, 19) ?? '—' }}</span>
+      <span class="mono af-dim">{{ formatInstant(execution.startedAt) }}</span>
     </div>
     <div class="af-trace__row">
       <span class="af-faint">finished</span>
-      <span class="mono af-dim">{{ execution.finishedAt?.slice(0, 19) ?? '—' }}</span>
+      <span class="mono af-dim">{{ formatInstant(execution.finishedAt) }}</span>
     </div>
   </div>
 </template>

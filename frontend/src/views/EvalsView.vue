@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { evalApi, workflowApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
+import { formatInstant } from '@/utils/instant'
 import type {
   EvalCaseDto,
   EvalDatasetDto,
@@ -568,7 +569,9 @@ onUnmounted(stopPolling)
             <td class="mono">
               {{ r.versionId.slice(0, 8) }}
             </td>
-            <td>{{ r.createdAt }}</td>
+            <td class="mono af-dim">
+              {{ formatInstant(r.createdAt) }}
+            </td>
           </tr>
           <tr v-if="!runs.length">
             <td

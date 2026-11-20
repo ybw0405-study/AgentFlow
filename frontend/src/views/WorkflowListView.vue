@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { workflowApi } from '@/api'
 import { ApiError } from '@/api/http'
+import { formatInstant } from '@/utils/instant'
 import type { WorkflowDefinitionDto } from '@/types/api'
 
 const router = useRouter()
@@ -154,7 +155,7 @@ onMounted(() => load())
               {{ wf.currentVersionId ? '已发布' : '—' }}
             </td>
             <td class="mono af-dim">
-              {{ wf.updatedAt?.slice(0, 19) }}
+              {{ formatInstant(wf.updatedAt) }}
             </td>
             <td>
               <router-link :to="{ name: 'editor', params: { id: wf.id } }">

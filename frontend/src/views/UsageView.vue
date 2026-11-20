@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { usageApi } from '@/api'
 import { errorText } from '@/api/errors'
+import { formatInstant } from '@/utils/instant'
 import type { UsageSummary } from '@/types/api'
 
 const WINDOWS = [7, 30, 90] as const
@@ -482,7 +483,7 @@ function previewShareOfUsed(preview: number | undefined, used: number | undefine
             :key="row.id"
           >
             <td class="mono af-dim">
-              {{ row.createdAt }}
+              {{ formatInstant(row.createdAt) }}
             </td>
             <td>{{ row.definitionName ?? row.definitionId.slice(0, 8) }}</td>
             <td class="mono">

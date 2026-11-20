@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { workflowApi } from '@/api'
 import { errorText } from '@/api/errors'
+import { formatInstant } from '@/utils/instant'
 import type { WorkflowDefinitionDto, WorkflowVersionDto } from '@/types/api'
 
 const route = useRoute()
@@ -136,7 +137,7 @@ onMounted(() => load().catch((e) => {
               {{ v.dslChecksum.slice(0, 12) }}
             </td>
             <td class="mono af-dim">
-              {{ v.publishedAt?.slice(0, 19) ?? '—' }}
+              {{ formatInstant(v.publishedAt) }}
             </td>
             <td class="mono af-dim">
               {{ v.publishedBy?.slice(0, 8) ?? '—' }}

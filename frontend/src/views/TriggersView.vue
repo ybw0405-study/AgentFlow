@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { triggerApi, workflowApi } from '@/api'
 import { describeError, type DescribedError } from '@/api/errors'
+import { formatInstant } from '@/utils/instant'
 import { initialVariables } from '@/dsl/run-defaults'
 import RunVariablesForm from '@/components/canvas/RunVariablesForm.vue'
 import type { VariableSpec, WorkflowDsl } from '@/dsl/types'
@@ -92,11 +93,7 @@ async function load(): Promise<void> {
 
 /** 「上次触发」是真实瞬间，按浏览器时区渲染；档位与下次是 cron 墙钟，原样展示。 */
 function instantText(iso: string | null): string {
-  if (!iso) return '从未'
-  const date = new Date(iso)
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleString('zh-CN', { hour12: false })
+  return iso ? formatInstant(iso) : '从未'
 }
 
 /**
@@ -358,7 +355,7 @@ onMounted(() => {
             class="mono af-faint"
             style="font-size: 11px"
           >
-            创建于 {{ webhook.createdAt?.slice(0, 19) ?? '—' }}
+            创建于 {{ formatInstant(webhook.createdAt) }}
           </span>
           <div class="af-spacer" />
           <button

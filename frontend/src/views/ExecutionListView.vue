@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { executionApi } from '@/api'
 import { errorText } from '@/api/errors'
+import { formatInstant } from '@/utils/instant'
 import type { ExecutionDto } from '@/types/api'
 
 const props = defineProps<{ definitionId?: string }>()
@@ -115,10 +116,10 @@ onMounted(() => load())
               {{ ex.errorCode ?? '' }}
             </td>
             <td class="mono af-dim">
-              {{ ex.startedAt?.slice(0, 19) ?? '—' }}
+              {{ formatInstant(ex.startedAt) }}
             </td>
             <td class="mono af-dim">
-              {{ ex.finishedAt?.slice(0, 19) ?? '—' }}
+              {{ formatInstant(ex.finishedAt) }}
             </td>
           </tr>
           <tr v-if="!items.length && !loading">

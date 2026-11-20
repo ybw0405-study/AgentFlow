@@ -12,6 +12,7 @@ import type {
   AdminUsage,
 } from '@/api'
 import { describeError, type DescribedError } from '@/api/errors'
+import { formatInstant } from '@/utils/instant'
 
 const tab = ref<'usage' | 'cross' | 'audit' | 'ops'>('usage')
 const usage = ref<AdminUsage | null>(null)
@@ -736,7 +737,7 @@ onMounted(() => loadUsage())
               {{ a.tenantId.slice(0, 8) }}
             </td>
             <td class="mono af-dim">
-              {{ a.createdAt?.slice(0, 19) }}
+              {{ formatInstant(a.createdAt) }}
             </td>
           </tr>
           <tr v-if="!auditItems.length">
@@ -846,7 +847,7 @@ onMounted(() => loadUsage())
                 {{ staleReason(row) }}
               </td>
               <td class="mono af-dim">
-                {{ row.createdAt?.slice(0, 19).replace('T', ' ') }}
+                {{ formatInstant(row.createdAt) }}
               </td>
             </tr>
             <tr v-if="!stale.length">
