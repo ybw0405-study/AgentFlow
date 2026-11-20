@@ -31,7 +31,12 @@ import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslDefaults, DslNode, NodeType, VariableSpec, WorkflowDsl } from '@/dsl/types'
 import type { LlmDefaults } from '@/dsl/types'
 import { branchOptions } from '@/dsl/types'
-import type { WorkflowDefinitionDto, LlmConnectionConfig, KnowledgeBaseDto } from '@/types/api'
+import type {
+  WorkflowDefinitionDto,
+  LlmConnectionConfig,
+  KnowledgeBaseDto,
+  ProbeModelItem,
+} from '@/types/api'
 import type { ModelFactsDto } from '@/types/api'
 import NodePalette from '@/components/canvas/NodePalette.vue'
 import ConfigDrawer from '@/components/canvas/ConfigDrawer.vue'
@@ -43,7 +48,7 @@ import NodePreviewPanel from '@/components/canvas/NodePreviewPanel.vue'
 import RunVariablesForm from '@/components/canvas/RunVariablesForm.vue'
 import WorkflowDefaultsDialog from '@/components/canvas/WorkflowDefaultsDialog.vue'
 import { displayModelName } from '@/dsl/model-presets'
-import { probeErrorMessage } from '@/dsl/model-connection'
+import { probeErrorMessage, withProbeItems } from '@/dsl/model-connection'
 import type { ConnectModelResult } from '@/dsl/model-connection'
 
 const route = useRoute()
@@ -114,13 +119,16 @@ async function probeConnectionModels(id: string): Promise<void> {
     const keep = cfg.defaultModel && probe.models.includes(cfg.defaultModel)
     await connectorApi.update(id, {
       config: {
-        ...cfg,
+        ...withProbeItems(cfg, probe.items),
         models: probe.models,
         defaultModel: keep ? cfg.defaultModel : probe.models[0],
       },
     })
     await loadLlmConnections()
-    notice.value = `连接可用，已拉取 ${probe.models.length} 个模型；现在可在 model 下拉里选`
+    const facts = probe.items.filter((i) => i.contextWindow || i.maxOutputTokens).length
+    notice.value = facts
+      ? `连接可用，已拉取 ${probe.models.length} 个模型（其中 ${facts} 个带上游能力字段）`
+      : `连接可用，已拉取 ${probe.models.length} 个模型；现在可在 model 下拉里选`
   } catch (e) {
     notice.value = `没能连上：${errorText(e)}`
   }
@@ -301,7 +309,14 @@ const modelCatalog = ref<{
 }>({ loaded: false, configured: false, defaultModel: '', error: null, models: [] })
 
 /** 模型连接：LLM 节点可以选用某条连接托管的端点与密钥，而不是进程级 AF_LLM_*。 */
-const llmConnections = ref<{ id: string; name: string; models: string[]; defaultModel: string }[]>([])
+const llmConnections = ref<{
+  id: string
+  name: string
+  models: string[]
+  /** 上次探测到的能力字段；连接建得早时可能为空，界面退回按模型名推断。 */
+  modelItems: ProbeModelItem[]
+  defaultModel: string
+}[]>([])
 
 async function loadLlmConnections(): Promise<void> {
   try {
@@ -315,6 +330,7 @@ async function loadLlmConnections(): Promise<void> {
           id: c.id,
           name: c.name,
           models,
+          modelItems: Array.isArray(cfg.modelItems) ? cfg.modelItems : [],
           defaultModel: cfg.defaultModel ?? models[0] ?? '',
         }
       })

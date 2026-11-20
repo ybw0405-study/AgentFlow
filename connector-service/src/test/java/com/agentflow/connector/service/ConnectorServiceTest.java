@@ -152,12 +152,16 @@ class ConnectorServiceTest {
                 "conn-llm", "space-a", "deepseek", "LLM", "API_KEY",
                 JSON.valueToTree(config), true, "u-admin")));
         when(invoker.probeModels(any(), anyInt())).thenReturn(
-                new ConnectorInvoker.ProbeResult(true, List.of("deepseek-chat"), null));
+                new ConnectorInvoker.ProbeResult(true, List.of("deepseek-chat"),
+                        List.of(new ConnectorInvoker.ModelItem("deepseek-chat", 128_000, 8_192,
+                                List.of("text"), List.of(), false)), null));
 
         var result = service.probeModels(tenant("space-a", "u-editor", "EDITOR"), "conn-llm");
 
         assertThat(result.ok()).isTrue();
         assertThat(result.models()).containsExactly("deepseek-chat");
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().get(0).contextWindow()).isEqualTo(128_000);
     }
 
     @Test

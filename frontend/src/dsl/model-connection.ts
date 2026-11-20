@@ -8,6 +8,7 @@
 
 import { connectorApi } from '@/api'
 import { errorText } from '@/api/errors'
+import type { ProbeModelItem } from '@/types/api'
 
 /** 从 Base URL 推导允许域名，省掉一次手填；用户仍可改成多个。 */
 export function hostOf(baseUrl: string): string {
@@ -35,15 +36,19 @@ export function buildLlmConfig(input: {
   baseUrl: string
   allowedHosts?: string[]
   models?: string[]
+  /** 探测到的能力字段；手填清单时没有，缺省不写进 config。 */
+  modelItems?: ProbeModelItem[]
   defaultModel?: string
 }): Record<string, unknown> {
   const models = (input.models ?? []).filter(Boolean)
+  const modelItems = input.modelItems ?? []
   const defaultModel = input.defaultModel?.trim() ?? ''
   const hosts = (input.allowedHosts ?? []).map((h) => h.trim()).filter(Boolean)
   return {
     baseUrl: input.baseUrl.trim(),
     allowedHosts: hosts.length ? hosts : [hostOf(input.baseUrl)].filter(Boolean),
     ...(models.length ? { models } : {}),
+    ...(modelItems.length ? { modelItems } : {}),
     ...(defaultModel ? { defaultModel } : {}),
     // OpenAI 兼容端点的凭据形态固定为 Authorization: Bearer <key>
     auth: { headerName: 'Authorization', valuePrefix: 'Bearer ' },
@@ -52,6 +57,25 @@ export function buildLlmConfig(input: {
       models: { method: 'GET', path: '/models' },
     },
   }
+}
+
+/**
+ * 用一次新的探测结果覆盖已有 config 里的能力字段。
+ *
+ * 整份替换而不是合并：上游这轮没给的字段就是「没有」，留着上一轮的旧数字会让界面
+ * 长期显示一个早已不成立的上限。探测没回任何能力字段时把整段删掉。
+ */
+export function withProbeItems<T extends object>(
+  config: T,
+  items: ProbeModelItem[],
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...(config as Record<string, unknown>) }
+  if (items.length) {
+    next.modelItems = items
+  } else {
+    delete next.modelItems
+  }
+  return next
 }
 
 /** 探测失败码翻成人话：这些错误多半是填错了，不该只甩一个内部编码。 */
@@ -156,7 +180,7 @@ export async function connectModel(input: ConnectModelInput): Promise<ConnectMod
     const probeAttempted = Boolean(secret)
     const probe = probeAttempted
       ? await connectorApi.probeModels(createdId)
-      : { ok: false, models: [] as string[], errorCode: null }
+      : { ok: false, models: [] as string[], items: [] as ProbeModelItem[], errorCode: null }
 
     if (probeAttempted && !probe.ok && !input.allowWithoutProbe) {
       await safeRemove(createdId)
@@ -173,6 +197,7 @@ export async function connectModel(input: ConnectModelInput): Promise<ConnectMod
         baseUrl: input.baseUrl,
         allowedHosts: input.allowedHosts,
         models,
+        modelItems: probe.items,
         defaultModel: input.model,
       }),
     })

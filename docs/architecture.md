@@ -1761,3 +1761,62 @@ cron（业务方看不见、也不会自动补）比多扫一轮表严重得多�
 
 触发粒度仍是分钟，停机期间的到点不补跑：补跑需要「错过区间」的持久记录与去重口径，属于另一
 个特性，当前用「重启后按 `last_fired_at` 从现在开始算」这一条简单规则，行为可预测。
+
+## 23. 模型能力标注的第二条来源（2026-11-20）
+
+### 23.1 为什么连接侧也要带
+
+§21.5 的能力标注只覆盖了进程级 `/llm/models`。用户实际更多走「模型连接」（连接器托管端点与
+密钥），而那条路径上的探测接口只回 `models: string[]`——画布拿到一串 id，标签只能按名字猜。
+「是不是推理型」直接决定 `maxTokens` 该填多少，猜错的代价是节点以 `LLM-RESPONSE-001` 失败
+（思维链吃光预算、正文为空）。
+
+于是把 `POST /api/v1/connectors/{id}/models/probe` 的返回扩成
+`{ok, models, items, errorCode}`，`items` 里每个模型带 5 个字段：
+`contextWindow` / `maxOutputTokens` / `inputModalities` / `supportedParameters` /
+`reasoningEffort`。
+
+### 23.2 Java 只搬运，标签只在前端算
+
+三条约束决定了这个切法：
+
+1. **要落库**。探测结果会像 `models` 一样写进 `config_json`，所以只能搬白名单字段。上游
+   `/models` 还有 owner、created、权限等与选模型无关的内容，多搬一个就多一份会过期的数据。
+2. **别再加第三份规则**。标签规则已经有两处：Python（引擎侧，见 §21.5）与 TS（前端在拿不到
+   `items` 时按模型名推断）。再在 Java 抄一份，等于三个地方慢慢长歪。
+3. **前端本来就在做这件事**。「引擎没给 → 按名字推断」与「连接给了字段 → 用字段」是同一段
+   逻辑的两端，放在一起才不会出现两套口径。
+
+所以 `ConnectorInvoker.modelItems` 只做四件事：按别名取第一个有值的数字（`context_length` /
+`context_window` / `max_context_length` / `max_model_len`，输出上限还会看 `top_provider`）、
+列表字段小写去重后截断到 16 项、`effort.supported_levels` 非空则 `reasoningEffort=true`、
+id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**——界面上「上下文 0」比不显示更糟。
+
+`factsFromProbe` 在前端把这些字段翻成与引擎一致的标签与 `source`：`supported_parameters` 里的
+`reasoning` / `response_format`、`effort` 开关、`input_modalities` 含 `image`、
+`context_window ≥ 100_000`（阈值与 Python 侧同一个常量），名字推断仍作为兜底。
+
+代价要说清楚：引擎侧与前端各有一份标签规则。这是既有事实（前端本来就要在没有 `items` 时推断），
+本次没有把它变成三份。
+
+### 23.3 连接优先于引擎清单
+
+`mergeFacts(连接探测结果, 引擎清单)` 让同名模型取连接的。理由不是「新的比旧的好」，而是两条来源
+可能指向完全不同的端点：`deepseek-chat` 在进程级端点是 128k，在另一家网关的转售实例上可能是
+32k。谁在服务这次调用，就以谁的字段为准。引擎清单只补连接里没有的模型（比如节点还没配
+`connectionId`）。
+
+### 23.4 缓存与失效
+
+`config.modelItems` 是展示用缓存，与 `models` 同生共死：重新探测整份覆盖，探测没回任何能力
+字段就整段删掉（`withProbeItems`）。不做「合并保留旧值」——留着上一轮的数字，界面会长期显示
+一个早已不成立的上限。连接建得早、库里还没有这份缓存时，界面退回按模型名推断并标「推断」，
+点一次「拉取模型」即补齐；这条回退路径保证老数据不会把界面变成空白。
+
+### 23.5 验收
+
+- Java：`ConnectorLlmTest`（带能力字段的上游 → 五项字段齐全、`owner`/`created` 不出现在结果里、
+  超长 id 截断、参数小写去重）、`ConnectorServiceTest`（`items` 透传）。
+- 前端：`model-capabilities.spec.ts`（字段→标签、`effort` 判推理、0/负数当没给、连接优先于
+  引擎、来源为空不报错）、`connectors-view.spec.ts`（刷新覆盖、探测无字段时清缓存）、
+  `model-connection.spec.ts`（快速接入把 `modelItems` 一起回写）。

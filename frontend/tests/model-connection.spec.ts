@@ -104,7 +104,15 @@ describe('建立连接并验证', () => {
     mocks.authorize.mockResolvedValue(undefined)
     mocks.update.mockResolvedValue({})
     mocks.remove.mockResolvedValue(undefined)
-    mocks.probeModels.mockResolvedValue({ ok: true, models: ['hy4', 'hy4-flash'], errorCode: null })
+    mocks.probeModels.mockResolvedValue({
+      ok: true,
+      models: ['hy4', 'hy4-flash'],
+      items: [
+        { id: 'hy4', contextWindow: 256_000, maxOutputTokens: 16_384 },
+        { id: 'hy4-flash', reasoningEffort: true },
+      ],
+      errorCode: null,
+    })
   })
 
   it('成功：建 → 存密钥 → 真实探测 → 回写清单，返回可直接写回节点的结果', async () => {
@@ -126,7 +134,15 @@ describe('建立连接并验证', () => {
     expect(mocks.authorize).toHaveBeenCalledWith('c-new', 'sk-test-key')
     expect(mocks.probeModels).toHaveBeenCalledWith('c-new')
     expect(mocks.update).toHaveBeenCalledWith('c-new', {
-      config: expect.objectContaining({ models: ['hy4', 'hy4-flash'], defaultModel: 'hy4' }),
+      config: expect.objectContaining({
+        models: ['hy4', 'hy4-flash'],
+        // 能力字段与清单一起回写：少了这一步，画布只能按模型名猜
+        modelItems: [
+          { id: 'hy4', contextWindow: 256_000, maxOutputTokens: 16_384 },
+          { id: 'hy4-flash', reasoningEffort: true },
+        ],
+        defaultModel: 'hy4',
+      }),
     })
     expect(result).toMatchObject({ ok: true, connectorId: 'c-new', model: 'hy4' })
     expect(result.warning).toBeUndefined()

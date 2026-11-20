@@ -275,10 +275,24 @@ export interface ModelFactsDto {
   source: 'upstream' | 'inferred'
 }
 
-/** 模型连接探测结果：只回模型 id，端点与密钥不出服务端。 */
+/**
+ * 探测回来的单个模型：服务端只做白名单搬运（contextWindow / inputModalities /
+ * supportedParameters / reasoningEffort），标签规则留在前端一处，避免多语言各抄一份。
+ */
+export interface ProbeModelItem {
+  id: string
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
+  inputModalities?: string[] | null
+  supportedParameters?: string[] | null
+  reasoningEffort?: boolean | null
+}
+
+/** 模型连接探测结果：只回模型 id 与能力字段，端点与密钥不出服务端。 */
 export interface ModelProbeDto {
   ok: boolean
   models: string[]
+  items: ProbeModelItem[]
   errorCode: string | null
 }
 
@@ -287,6 +301,8 @@ export interface LlmConnectionConfig {
   baseUrl?: string
   allowedHosts?: string[]
   models?: string[]
+  /** 上次探测到的能力字段；只是展示用缓存，重新探测会整份覆盖。 */
+  modelItems?: ProbeModelItem[]
   defaultModel?: string
   auth?: { headerName?: string; valuePrefix?: string }
   operations?: Record<string, { method?: string; path?: string }>

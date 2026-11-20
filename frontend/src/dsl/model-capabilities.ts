@@ -4,14 +4,15 @@
  * 两个来源，按可信度取：
  * 1. 引擎随 `/llm/models` 一起给回来的 `items`（上游 `/models` 明写的字段，或引擎按
  *    模型名推断的结果）；
- * 2. 本地按模型名推断——连接器里的模型清单（`connection.models`）只有 id，没有能力字段，
- *    而「是不是推理型」直接影响 maxTokens 该填多少，值得单独兜一层。
+ * 2. 连接器探测回来的原始能力字段——服务端只做白名单搬运，标签在这里算，避免 Java/Python/TS
+ *    三份启发式各自长歪；
+ * 3. 都没有时本地按模型名推断。
  *
  * 这里只做展示与建议，不参与任何执行决策：真正的模型行为由上游决定，界面标错最多是
  * 提示不准，不会改变下发的请求。
  */
 
-import type { ModelFactsDto } from '@/types/api'
+import type { ModelFactsDto, ProbeModelItem } from '@/types/api'
 
 export interface ModelFacts {
   id: string
@@ -37,6 +38,9 @@ const REASONING_MARKERS = new Set([
 ])
 
 const LONG_CONTEXT_MARKERS = ['128k', '200k', '256k', '1m', 'long-context', 'longcontext']
+
+/** 到这个量级才算「长上下文」，与引擎侧口径一致：8k / 32k 不该被标成长上下文。 */
+export const LONG_CONTEXT_THRESHOLD = 100_000
 
 const TAG_LABELS: Record<string, string> = {
   reasoning: '推理型',
@@ -88,6 +92,75 @@ export function modelFacts(
     }
   }
   return inferFacts(name)
+}
+
+/**
+ * 把连接器探测回来的原始字段转成能力标注。
+ *
+ * 与引擎侧（Python）同一套口径：`supported_parameters` 里的 `reasoning` /
+ * `response_format`、`effort.supported_levels` 的「有就是推理型」、
+ * `input_modalities` 含 `image`、`context_window` 过 10 万算长上下文；
+ * 上游一个字段都没给时退回按模型名推断，并如实标 `inferred`。
+ *
+ * 上游偶尔会回 `context_window: 0` 这种占位值，取不到就当没有——显示「上下文 0」比不显示更糟。
+ */
+export function factsFromProbe(item: ProbeModelItem): ModelFactsDto {
+  const params = new Set((item.supportedParameters ?? []).map((p) => String(p).toLowerCase()))
+  const modalities = new Set((item.inputModalities ?? []).map((m) => String(m).toLowerCase()))
+  const contextWindow = item.contextWindow && item.contextWindow > 0 ? item.contextWindow : null
+  const maxOutputTokens = item.maxOutputTokens && item.maxOutputTokens > 0
+    ? item.maxOutputTokens
+    : null
+  const named = inferFacts(item.id)
+
+  const tags: string[] = []
+  if (
+    params.has('reasoning')
+    || params.has('include_reasoning')
+    || Boolean(item.reasoningEffort)
+    || named.tags.includes('reasoning')
+  ) {
+    tags.push('reasoning')
+  }
+  if (params.has('response_format')) tags.push('json')
+  if (modalities.has('image')) tags.push('vision')
+  if (
+    (contextWindow !== null && contextWindow >= LONG_CONTEXT_THRESHOLD)
+    || named.tags.includes('long-context')
+  ) {
+    tags.push('long-context')
+  }
+
+  const upstream = Boolean(
+    params.size || modalities.size || contextWindow || maxOutputTokens || item.reasoningEffort,
+  )
+  return {
+    id: item.id,
+    tags,
+    contextWindow,
+    maxOutputTokens,
+    source: upstream ? 'upstream' : 'inferred',
+  }
+}
+
+/**
+ * 合并能力来源：连接探测的结果优先，引擎清单只补连接里没有的模型。
+ *
+ * 两条来源可能指向不同端点（进程级 AF_LLM_* vs 连接里的第三方），同一个模型名在两边的
+ * 上下文长度未必相同——谁在服务这次调用，就以谁的字段为准。
+ */
+export function mergeFacts(
+  probeItems: ProbeModelItem[] | null | undefined,
+  catalogItems: ModelFactsDto[] | null | undefined,
+): ModelFactsDto[] {
+  const merged = new Map<string, ModelFactsDto>()
+  for (const item of probeItems ?? []) {
+    merged.set(item.id, factsFromProbe(item))
+  }
+  for (const item of catalogItems ?? []) {
+    if (!merged.has(item.id)) merged.set(item.id, item)
+  }
+  return [...merged.values()]
 }
 
 export function tagLabel(tag: string): string {

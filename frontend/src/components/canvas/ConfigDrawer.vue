@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { approverExpressionError } from '@/dsl/approver-expr'
+import { mergeFacts } from '@/dsl/model-capabilities'
 import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslNode } from '@/dsl/types'
-import type { ModelFactsDto } from '@/types/api'
+import type { ModelFactsDto, ProbeModelItem } from '@/types/api'
 import ModelFactsChips from './ModelFactsChips.vue'
 
 defineOptions({ name: 'ConfigDrawer' })
@@ -24,6 +25,7 @@ const props = defineProps<{
     id: string
     name: string
     models: string[]
+    modelItems?: ProbeModelItem[]
     defaultModel: string
   }[]
   /** 本空间的知识库，供 retrieval 节点勾选文档集。 */
@@ -109,6 +111,10 @@ function setSource(id: string): void {
 }
 
 const modelOptions = computed(() => props.modelCatalog?.models ?? [])
+
+const capabilityItems = computed<ModelFactsDto[]>(() =>
+  mergeFacts(activeConnection.value?.modelItems, props.modelCatalog?.items),
+)
 
 /** retrieval 节点勾选的知识库 id；数组直接落 DSL，服务端按租户复核归属。 */
 const knowledgeIds = computed<string[]>(() => {
@@ -413,7 +419,7 @@ function editBody(): void {
         </datalist>
         <ModelFactsChips
           :model="cfg('model', '')"
-          :items="modelCatalog?.items"
+          :items="capabilityItems"
           :current-max-tokens="cfg('maxTokens', 1024)"
           @apply-max-tokens="setCfg('maxTokens', $event)"
         />
@@ -471,7 +477,7 @@ function editBody(): void {
         </datalist>
         <ModelFactsChips
           :model="cfg('model', '')"
-          :items="modelCatalog?.items"
+          :items="capabilityItems"
           :current-max-tokens="cfg('maxTokens', 1024)"
           @apply-max-tokens="setCfg('maxTokens', $event)"
         />

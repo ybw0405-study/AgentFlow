@@ -1,10 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { connectorApi } from '@/api'
-import type { ConnectorAuthType, ConnectorDto, LlmConnectionConfig } from '@/types/api'
+import type {
+  ConnectorAuthType,
+  ConnectorDto,
+  LlmConnectionConfig,
+  ProbeModelItem,
+} from '@/types/api'
 import { errorText } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
-import { buildLlmConfig, hostOf, mergeModels, probeErrorMessage } from '@/dsl/model-connection'
+import {
+  buildLlmConfig,
+  hostOf,
+  mergeModels,
+  probeErrorMessage,
+  withProbeItems,
+} from '@/dsl/model-connection'
 
 const auth = useAuthStore()
 const connectors = ref<ConnectorDto[]>([])
@@ -44,11 +55,16 @@ function manualModels(): string[] {
 }
 
 /** 与画布「快速接入」共用同一份 config 构造规则，避免两条入口行为漂移。 */
-function llmConfig(models: string[], defaultModel: string): Record<string, unknown> {
+function llmConfig(
+  models: string[],
+  defaultModel: string,
+  modelItems?: ProbeModelItem[],
+): Record<string, unknown> {
   return buildLlmConfig({
     baseUrl: form.baseUrl,
     allowedHosts: form.allowedHosts.split(',').map((h) => h.trim()).filter(Boolean),
     models,
+    modelItems,
     defaultModel,
   })
 }
@@ -98,12 +114,14 @@ async function create(): Promise<void> {
       // 拉取只为省事：上游没有 /models 时，用户手填的清单照样能用
       const probe = form.secret.trim()
         ? await connectorApi.probeModels(created.id)
-        : { ok: false, models: [] as string[], errorCode: null }
+        : { ok: false, models: [] as string[], items: [] as ProbeModelItem[], errorCode: null }
       const merged = mergeModels(typed, probe.models)
       if (merged.length) {
         const wanted = form.defaultModel.trim()
         const fallback = merged.includes(wanted) ? wanted : merged[0]
-        await connectorApi.update(created.id, { config: llmConfig(merged, fallback) })
+        await connectorApi.update(created.id, {
+          config: llmConfig(merged, fallback, probe.items),
+        })
       }
       if (probe.ok && probe.models.length) {
         suffix = `，可选用 ${merged.length} 个模型`
@@ -152,7 +170,11 @@ async function refreshModels(row: ConnectorDto): Promise<void> {
     const cfg = (row.config ?? {}) as LlmConnectionConfig
     const keep = cfg.defaultModel && probe.models.includes(cfg.defaultModel)
     await connectorApi.update(row.id, {
-      config: { ...cfg, models: probe.models, defaultModel: keep ? cfg.defaultModel : probe.models[0] },
+      config: {
+        ...withProbeItems(cfg, probe.items),
+        models: probe.models,
+        defaultModel: keep ? cfg.defaultModel : probe.models[0],
+      },
     })
     notice.value = `${row.name}：${probe.models.length} 个模型`
     await load()

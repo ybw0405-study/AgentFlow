@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   REASONING_MAX_TOKENS,
+  factsFromProbe,
   factsSummary,
   formatTokens,
   inferFacts,
   maxTokensSuggestion,
+  mergeFacts,
   modelFacts,
   tagLabel,
 } from '@/dsl/model-capabilities'
@@ -67,5 +69,60 @@ describe('模型能力标注', () => {
     expect(factsSummary(modelFacts('m', [
       { id: 'm', tags: [], contextWindow: 128_000, maxOutputTokens: 8_192, source: 'upstream' },
     ]))).toBe('128k 上下文 · 输出上限 8k')
+  })
+})
+
+describe('连接器探测回来的能力字段', () => {
+  it('上游字段直接变成标签与数字，标 upstream', () => {
+    const facts = factsFromProbe({
+      id: 'some-gateway-model',
+      contextWindow: 1_000_000,
+      maxOutputTokens: 393_216,
+      inputModalities: ['text', 'image'],
+      supportedParameters: ['reasoning', 'response_format'],
+      reasoningEffort: true,
+    })
+    expect(facts.tags).toEqual(['reasoning', 'json', 'vision', 'long-context'])
+    expect(facts.contextWindow).toBe(1_000_000)
+    expect(facts.maxOutputTokens).toBe(393_216)
+    expect(facts.source).toBe('upstream')
+  })
+
+  it('只有思考强度开关也算推理型（不按名字猜）', () => {
+    const facts = factsFromProbe({ id: 'opaque-1', reasoningEffort: true })
+    expect(facts.tags).toContain('reasoning')
+    expect(facts.source).toBe('upstream')
+  })
+
+  it('上游一个字段都没给时退回按名字推断，并标 inferred', () => {
+    const facts = factsFromProbe({ id: 'deepseek-reasoner' })
+    expect(facts.tags).toContain('reasoning')
+    expect(facts.contextWindow).toBeNull()
+    expect(facts.source).toBe('inferred')
+  })
+
+  it('0 / 负数当成没给，不显示「上下文 0」', () => {
+    const facts = factsFromProbe({ id: 'm', contextWindow: 0, maxOutputTokens: -1 })
+    expect(facts.contextWindow).toBeNull()
+    expect(facts.maxOutputTokens).toBeNull()
+    expect(facts.source).toBe('inferred')
+  })
+
+  it('连接的结果优先，引擎清单只补连接里没有的模型', () => {
+    const merged = mergeFacts(
+      [{ id: 'shared', contextWindow: 200_000, maxOutputTokens: 4_096 }],
+      [
+        { id: 'shared', tags: [], contextWindow: 32_000, maxOutputTokens: 1_024, source: 'upstream' },
+        { id: 'engine-only', tags: ['json'], contextWindow: 8_192, maxOutputTokens: null, source: 'upstream' },
+      ],
+    )
+    expect(merged).toHaveLength(2)
+    expect(merged[0].contextWindow).toBe(200_000)
+    expect(merged[1].id).toBe('engine-only')
+  })
+
+  it('两个来源都为空时不报错', () => {
+    expect(mergeFacts(undefined, undefined)).toEqual([])
+    expect(mergeFacts([], [])).toEqual([])
   })
 })

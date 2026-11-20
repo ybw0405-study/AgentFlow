@@ -195,6 +195,83 @@ describe('连接器页面：模型接入', () => {
     expect(mocks.probeModels).not.toHaveBeenCalled()
   })
 
+  it('重新拉取时把能力字段一并覆盖，探测没给就清掉旧的', async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: 'c1',
+        tenantId: 'space-alpha',
+        name: 'deepseek',
+        type: 'LLM',
+        authType: 'API_KEY',
+        config: {
+          models: ['deepseek-chat'],
+          modelItems: [{ id: 'deepseek-chat', contextWindow: 8_192 }],
+          defaultModel: 'deepseek-chat',
+        },
+        enabled: true,
+        hasCredential: true,
+        inherited: false,
+      },
+    ])
+    mocks.probeModels.mockResolvedValue({
+      ok: true,
+      models: ['deepseek-chat', 'deepseek-v4-pro'],
+      items: [
+        { id: 'deepseek-chat', contextWindow: 128_000, maxOutputTokens: 8_192 },
+        { id: 'deepseek-v4-pro', contextWindow: 1_000_000, reasoningEffort: true },
+      ],
+      errorCode: null,
+    })
+
+    const wrapper = await mountView()
+    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取模型')
+    await refresh!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.update).toHaveBeenCalledWith('c1', {
+      config: expect.objectContaining({
+        models: ['deepseek-chat', 'deepseek-v4-pro'],
+        modelItems: [
+          { id: 'deepseek-chat', contextWindow: 128_000, maxOutputTokens: 8_192 },
+          { id: 'deepseek-v4-pro', contextWindow: 1_000_000, reasoningEffort: true },
+        ],
+      }),
+    })
+  })
+
+  it('探测回来没有能力字段时清掉旧缓存，避免界面长期显示过期的上限', async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: 'c1',
+        tenantId: 'space-alpha',
+        name: 'deepseek',
+        type: 'LLM',
+        authType: 'API_KEY',
+        config: {
+          models: ['deepseek-chat'],
+          modelItems: [{ id: 'deepseek-chat', contextWindow: 1_000_000 }],
+        },
+        enabled: true,
+        hasCredential: true,
+        inherited: false,
+      },
+    ])
+    mocks.probeModels.mockResolvedValue({
+      ok: true,
+      models: ['deepseek-chat'],
+      items: [],
+      errorCode: null,
+    })
+
+    const wrapper = await mountView()
+    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取模型')
+    await refresh!.trigger('click')
+    await flushPromises()
+
+    const config = mocks.update.mock.calls[0][1].config
+    expect(config).not.toHaveProperty('modelItems')
+  })
+
   it('列表里模型连接标注模型数，并提供拉取入口', async () => {
     mocks.list.mockResolvedValue([
       {

@@ -17,10 +17,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
+import java.util.TreeMap;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +44,10 @@ public class ConnectorInvoker {
     private static final Logger log = LoggerFactory.getLogger(ConnectorInvoker.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_RESPONSE_BYTES = 256 * 1024;
+    private static final int MAX_MODEL_ENTRIES = 200;
+    private static final int MAX_MODEL_ID_LENGTH = 200;
+    /** 模态与参数列表都只用于展示，截断到前 16 项足够，也避免配置体积被上游撑大。 */
+    private static final int MAX_FIELD_ENTRIES = 16;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
     private static final Duration CACHE_TTL = Duration.ofHours(24);
     /** 幂等执行锁 TTL：足够覆盖一次出网，防同 callId 并发双出网（TOCTOU）。 */
@@ -78,10 +86,26 @@ public class ConnectorInvoker {
         }
     }
 
-    /** 模型清单探测结果。只回模型 id，不回上游响应体（可能含账号信息）。 */
-    public record ProbeResult(boolean ok, List<String> models, String errorCode) {
+    /**
+     * 探测回来的单个模型：只透传能做能力标注的字段。
+     *
+     * <p>字段名在网关之间并不统一（`context_length` / `context_window` / `max_model_len`…），
+     * 这里按已知别名取第一个有值的；取不到就是 null，界面据此退回按模型名推断。
+     *
+     * <p>刻意不在这里判「是不是推理型」：标签规则在引擎（Python）与前端（TS）各有一份，
+     * 再抄一份到 Java 只会让三个地方慢慢长歪。本层只做搬运——上游给什么字段就转什么字段，
+     * 一个字节的启发式都不加。
+     */
+    public record ModelItem(String id, Integer contextWindow, Integer maxOutputTokens,
+                            List<String> inputModalities, List<String> supportedParameters,
+                            boolean reasoningEffort) {
+    }
+
+    /** 模型清单探测结果。只回模型 id 与能力字段，不回上游响应体（可能含账号信息）。 */
+    public record ProbeResult(boolean ok, List<String> models, List<ModelItem> items,
+                              String errorCode) {
         static ProbeResult failure(String code) {
-            return new ProbeResult(false, List.of(), code);
+            return new ProbeResult(false, List.of(), List.of(), code);
         }
     }
 
@@ -126,7 +150,9 @@ public class ConnectorInvoker {
                     // 端点不像 OpenAI 兼容服务，或 /models 被网关改写；给出可区分的错误码
                     return ProbeResult.failure("CONN-RESPONSE-001");
                 }
-                return new ProbeResult(true, modelIds(parsed), null);
+                List<ModelItem> items = modelItems(parsed);
+                return new ProbeResult(true, items.stream().map(ModelItem::id).toList(), items,
+                        null);
             }
         } catch (SandboxPolicy.Violation e) {
             log.warn("sandbox rejected model probe for {}: {}", connector.id(), e.getMessage());
@@ -144,23 +170,116 @@ public class ConnectorInvoker {
         }
     }
 
-    /** 从 OpenAI 兼容响应里只取 {@code data[].id}，去重排序并按条数/长度截断，其余字段一律丢弃。 */
-    static List<String> modelIds(Map<String, Object> body) {
+    /**
+     * 从 OpenAI 兼容响应里取 {@code data[]}：按 id 去重排序，条数、id 长度与列表字段都截断。
+     *
+     * <p>探测结果会被写进连接配置并落库，所以这里只搬白名单字段——上游 `/models` 还有
+     * owner、created、权限等与选模型无关的内容，多搬一个就多一份会过期的数据。
+     */
+    static List<ModelItem> modelItems(Map<String, Object> body) {
         Object raw = body.get("data");
-        java.util.TreeSet<String> ids = new java.util.TreeSet<>();
-        if (raw instanceof List<?> list) {
-            for (Object item : list) {
-                if (item instanceof Map<?, ?> map && map.get("id") instanceof String text
-                        && !text.isBlank()) {
-                    String trimmed = text.trim();
-                    ids.add(trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed);
-                    if (ids.size() >= 200) {
-                        break;
-                    }
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        Map<String, ModelItem> byId = new TreeMap<>();
+        for (Object entry : list) {
+            if (!(entry instanceof Map<?, ?> map)) {
+                continue;
+            }
+            String id = modelId(map.get("id"));
+            if (id == null) {
+                continue;
+            }
+            byId.putIfAbsent(id, new ModelItem(id, contextWindow(map), maxOutputTokens(map),
+                    modalities(map), parameters(map), supportsEffort(map)));
+            if (byId.size() >= MAX_MODEL_ENTRIES) {
+                break;
+            }
+        }
+        return List.copyOf(byId.values());
+    }
+
+    private static String modelId(Object value) {
+        if (!(value instanceof String text) || text.isBlank()) {
+            return null;
+        }
+        String trimmed = text.trim();
+        return trimmed.length() > MAX_MODEL_ID_LENGTH
+                ? trimmed.substring(0, MAX_MODEL_ID_LENGTH) : trimmed;
+    }
+
+    private static Integer positiveInt(Object value) {
+        if (!(value instanceof Number number)) {
+            return null;
+        }
+        long parsed = number.longValue();
+        return parsed <= 0 ? null : (int) Math.min(parsed, Integer.MAX_VALUE);
+    }
+
+    private static Integer firstInt(Map<?, ?> source, String... names) {
+        for (String name : names) {
+            Integer found = positiveInt(source.get(name));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static Integer contextWindow(Map<?, ?> item) {
+        return firstInt(item, "context_length", "context_window", "max_context_length",
+                "max_model_len");
+    }
+
+    /** 输出上限有的端点写在顶层，有的挂在 {@code top_provider} 下。 */
+    private static Integer maxOutputTokens(Map<?, ?> item) {
+        Integer direct = firstInt(item, "max_output_tokens", "max_completion_tokens", "max_tokens");
+        if (direct != null) {
+            return direct;
+        }
+        return item.get("top_provider") instanceof Map<?, ?> top
+                ? firstInt(top, "max_completion_tokens", "max_output_tokens") : null;
+    }
+
+    /** 输入模态可能写在顶层，也可能挂在 {@code architecture} 下，两种都认。 */
+    private static List<String> modalities(Map<?, ?> item) {
+        for (Object source : new Object[] {item, item.get("architecture")}) {
+            if (source instanceof Map<?, ?> map) {
+                List<String> values = strings(map.get("input_modalities"));
+                if (!values.isEmpty()) {
+                    return values;
                 }
             }
         }
-        return List.copyOf(ids);
+        return List.of();
+    }
+
+    private static List<String> parameters(Map<?, ?> item) {
+        return strings(item.get("supported_parameters"));
+    }
+
+    /** {@code effort.supported_levels} 这类「思考强度」开关只有推理型模型才会给。 */
+    private static boolean supportsEffort(Map<?, ?> item) {
+        return item.get("effort") instanceof Map<?, ?> effort
+                && effort.get("supported_levels") instanceof List<?> levels
+                && !levels.isEmpty();
+    }
+
+    private static List<String> strings(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        Set<String> values = new LinkedHashSet<>();
+        for (Object entry : list) {
+            if (!(entry instanceof String text) || text.isBlank()) {
+                continue;
+            }
+            values.add(text.trim().toLowerCase(Locale.ROOT));
+            if (values.size() >= MAX_FIELD_ENTRIES) {
+                break;
+            }
+        }
+        return List.copyOf(values);
     }
 
     public InvokeResult invoke(InvokeCommand cmd) {
@@ -305,7 +424,7 @@ public class ConnectorInvoker {
 
     private static String methodOf(JsonNode config, String operation) {
         String method = config.path("operations").path(operation).path("method").asText("POST");
-        return method.toUpperCase(java.util.Locale.ROOT);
+        return method.toUpperCase(Locale.ROOT);
     }
 
     private static String fillPathParams(String path, Map<String, Object> params) {

@@ -74,6 +74,22 @@ class ConnectorLlmTest {
             exchange.getResponseBody().write(body);
             exchange.close();
         });
+        // 带能力字段的上游（口径照 DeepSeek 的 /models）：context_window、max_output_tokens、
+        // input_modalities、supported_parameters、effort.supported_levels 都给了
+        server.createContext("/rich/v1/models", exchange -> {
+            byte[] body = ("{\"object\":\"list\",\"data\":[{"
+                    + "\"id\":\"deepseek-v4-pro\",\"object\":\"model\","
+                    + "\"owned_by\":\"deepseek\",\"created\":1730000000,"
+                    + "\"context_window\":1000000,\"max_output_tokens\":393216,"
+                    + "\"input_modalities\":[\"text\"],"
+                    + "\"supported_parameters\":[\"reasoning\",\"response_format\"],"
+                    + "\"effort\":{\"supported_levels\":[\"low\",\"high\"]}}]}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
         server.start();
 
         repo = mock(ConnectorRepository.class);
@@ -179,8 +195,54 @@ class ConnectorLlmTest {
     }
 
     @Test
-    void modelIdsToleratesMissingDataArray() {
-        assertThat(ConnectorInvoker.modelIds(Map.of())).isEmpty();
-        assertThat(ConnectorInvoker.modelIds(Map.of("data", "not-a-list"))).isEmpty();
+    void modelItemsTolerateMissingDataArray() {
+        assertThat(ConnectorInvoker.modelItems(Map.of())).isEmpty();
+        assertThat(ConnectorInvoker.modelItems(Map.of("data", "not-a-list"))).isEmpty();
+    }
+
+    /**
+     * 能力字段按别名取第一个有值的，取不到的留 null——界面据此退回按名字推断，
+     * 而不是把「没给」当成 0 显示成「输出上限 0」。
+     */
+    @Test
+    void probeCarriesWhitelistedCapabilityFieldsOnly() throws Exception {
+        withCredential("sk-test-123");
+
+        ConnectorInvoker.ProbeResult result = invoker.probeModels(llm("/rich/v1"), 5_000);
+
+        assertThat(result.ok()).isTrue();
+        ConnectorInvoker.ModelItem item = result.items().get(0);
+        assertThat(item.id()).isEqualTo("deepseek-v4-pro");
+        assertThat(item.contextWindow()).isEqualTo(1_000_000);
+        assertThat(item.maxOutputTokens()).isEqualTo(393_216);
+        assertThat(item.inputModalities()).containsExactly("text");
+        assertThat(item.supportedParameters()).containsExactly("reasoning", "response_format");
+        assertThat(item.reasoningEffort()).isTrue();
+
+        // 上游的 owner / created 不进结果：探测结果会写进连接配置并落库
+        assertThat(JSON.writeValueAsString(result.items()))
+                .doesNotContain("owned_by")
+                .doesNotContain("created");
+    }
+
+    @Test
+    void probeCapsModelListAndFieldLength() {
+        String longId = "m".repeat(400);
+        var body = Map.<String, Object>of("data", List.of(
+                Map.of("id", longId),
+                Map.of("id", "m2", "supported_parameters", List.of("  REASONING  ", "x", "x"),
+                        "input_modalities", List.of("TEXT", "IMAGE"))));
+
+        var items = ConnectorInvoker.modelItems(body);
+
+        assertThat(items).hasSize(2);
+        // 排序按 id 字符串，`m2` 在 `mmm…` 之前，所以按 id 找而不是按下标
+        assertThat(items).allSatisfy(item -> assertThat(item.id().length()).isLessThanOrEqualTo(200));
+        ConnectorInvoker.ModelItem m2 = items.stream()
+                .filter(item -> item.id().equals("m2")).findFirst().orElseThrow();
+        assertThat(m2.supportedParameters()).containsExactly("reasoning", "x");
+        assertThat(m2.inputModalities()).containsExactly("text", "image");
+        assertThat(m2.contextWindow()).isNull();
+        assertThat(m2.reasoningEffort()).isFalse();
     }
 }

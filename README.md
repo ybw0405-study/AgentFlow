@@ -53,7 +53,7 @@ flowchart LR
 | 单节点试跑：目标节点 + 全部上游真实跑一遍，不落执行记录，结构不支持时明确拒绝 | 已实现 |
 | 运行入参表单（按变量声明渲染控件，必填前置拦截）；工作流级默认模型 `defaults.llm` | 已实现 |
 | Webhook / 定时触发：令牌入口、HMAC 签名、幂等键、限流、审计（V010） | 已实现 |
-| 模型能力标注：推理型 / 长上下文 / 支持 JSON / 输出上限，推理型给 `maxTokens` 建议 | 已实现 |
+| 模型能力标注：推理型 / 长上下文 / 支持 JSON / 输出上限，推理型给 `maxTokens` 建议；进程端点与模型连接两条来源都带 | 已实现 |
 | 用量与成本中心：执行 / 试跑分列统计、月度额度利用率、按工作流与按天分解、最近试跑明细（V011） | 已实现 |
 | 文档知识库：建库 / 导入 `.txt`·`.md` / 切片 / 本地 BM25 检索 / 租户隔离（V009） | 已实现 |
 | `retrieval` 节点：真实检索用户文档，`output.text` / `results` / `citations` 供下游引用 | 已实现 |
@@ -196,6 +196,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
 - 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板与新建节点默认用非推理的 `deepseek-chat`。
 - 模型输入框下面会带能力标签（推理型 / 长上下文 / 支持 JSON / 图像输入）与上游给的上下文长度、输出上限。标签优先取上游 `/models` 的字段；上游只回 id 时按模型名推断并标「推断」，不硬编码某家某代的能力。选到推理型而 `maxTokens` 偏小时，界面给一个「设为 4096」的一键建议。
+- 走模型连接时，探测结果里的 `context_window` / `max_output_tokens` / `input_modalities` / `supported_parameters` / `effort.supported_levels` 会随模型清单一并写进连接配置（只搬这些白名单字段），画布据此标注能力、不必每次重新出网。连接建得早、库里还没有这份缓存时，界面退回按模型名推断——点一次「拉取模型」即可补齐。
 - 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
 - `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
 

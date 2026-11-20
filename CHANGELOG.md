@@ -12,6 +12,7 @@
 - **运行入参表单化**：运行弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件（布尔勾选框、数字框、文本框，`object` / `array` 走 JSON 编辑并即时提示解析错误），右上角可切回「JSON 原文」整块编辑。必填项缺失时「触发执行」禁用，不再先落一条注定 `EXEC-INPUT-001` 的执行记录。同一份表单复用到定时触发配置。
 - **工作流级默认模型（`defaults.llm`）**：工具条「默认模型」把 `connectionId` + `model` 写进 DSL 的 `defaults.llm`，只用于新建 llm 节点的继承；可勾选批量应用到现有节点。执行始终以节点自身 `config` 为准，改默认值不会影响已经跑通的节点。
 - **用量与成本中心（试跑入账）**（`V011__preview_usage.sql`）：建 `preview_usage` 明细表，每次试跑写一行（租户 / 工作流 / 节点 / 模型 / 节点数 / token / 耗时 / 状态），同时把 token 与节点数累加进同一本 `budget_ledger`——此前试跑没有 `workflow_execution` 行，`accrue` 按 executionId 取租户的写法会静默插不进任何东西，于是「调试十次」在账面上完全隐形。新增租户自助接口 `GET /api/v1/usage/summary?days=7|30|90`：区间内的执行与试跑分列统计、本月额度利用率（与平台管理员同一口径 `UsageService.ratio`）、按工作流分解、按天补齐的序列、最近 10 次试跑明细。新增「用量」页把上述口径画成卡片 + 每日堆叠柱状图 + 两张表；执行与试跑用不同颜色，额度用尽时直接写明「新的执行会被拒绝」。记账失败不影响试跑结果（记 warn 并按审计补账），试跑的调用口径按实际跑过的节点数计，不是一个请求算一次。
+- **模型连接探测回能力字段**：`POST /api/v1/connectors/{id}/models/probe` 的返回从「只给模型 id」扩成`{ok, models, items, errorCode}`，每个模型带上游 `/models` 的 `contextWindow` / `maxOutputTokens` / `inputModalities` / `supportedParameters` / `reasoningEffort`，其余字段（owner、created、权限）一律丢弃——探测结果会被写进连接配置并落库，多搬一个就多一份会过期的数据。字段名按别名取第一个有值（`context_length` / `context_window` / `max_model_len`…，`top_provider` 下的输出上限也认），取不到留 null 而不是 0。前端把这些字段随模型清单一并写回 `config.modelItems`，画布标注能力时**连接自己的探测结果优先**、引擎清单只补连接里没有的模型——两条来源可能指向不同端点，同名模型的上下文长度未必相同。探测没回能力字段时整段清掉旧缓存，不留过期上限。标签规则不在 Java 里再写一份：服务端只做白名单搬运，`factsFromProbe` 在前端统一算。
 - **模型能力标注**：`/internal/llm/models` 与 `/api/v1/llm/models` 增加 `items`，按上游 `/models` 的 `context_window` / `max_output_tokens` / `input_modalities` / `effort.supported_levels` / `supported_parameters` 标注推理型、长上下文、支持 JSON、图像输入；上游只回 id 时按模型名推断并标 `source=inferred`，不硬编码某家某代的能力。画布模型输入框下展示标签与上下文 / 输出上限，选到推理型而 `maxTokens` 偏小时给「设为 4096」的一键建议。
 
 - **文档知识库 / 真实文档检索**：`V009__knowledge.sql` 建 `knowledge_base` / `knowledge_document` / `knowledge_chunk` 三表。新增「知识库」页：建库、粘贴或选择 `.txt` / `.md` 导入文档（写入时按标点/段落切片，中文按单字与相邻二元组建词项）、文档列表与删除、检索自测。引擎新增 `retrieval` 执行器与 `KnowledgeSearchClient`，经网关 `/internal/knowledge/search` 调控制面本地 BM25 打分，返回带出处的原文片段（`output.text` / `results` / `citations`），阶段门正式放行；画布可勾选知识库并配置 `queryTemplate` / `topK` / `minScore`，校验要求至少选一个，也可一键生成「文档检索 → 模型作答」工作流。跨租户 kbId 由服务端逐条复核后静默忽略，不泄露存在性。
@@ -43,6 +44,7 @@
 
 ### 文档
 
+- README「接入真实模型」补一段：模型连接探测会把能力字段随清单写进连接配置，连接建得早时点一次「拉取模型」即可补齐；功能矩阵与已知限制同步。`docs/architecture.md` 新增 §23，记录「Java 只搬运、标签只在前端算」的取舍与连接优先于引擎清单的原因。
 - README 新增「用量与成本」章节（数据来自哪张表、试跑为什么计入额度、调用口径按实际跑过的节点数），功能矩阵、界面与已知限制同步：试跑不再被写成「不计成本」，定时触发改写为三层防线，限流注明是固定窗口；`docs/architecture.md` 新增 §22，记录试跑记账的漏洞、`accrueByTenant` 的必要性，以及扫描租约 / claim / 幂等键的分工。
 - README 新增「调试与触发」章节：单节点试跑的语义与限制、运行入参表单、工作流默认模型、Webhook 签名 / 幂等 / 限流与定时触发口径（含可直接粘的 curl）；功能矩阵补 4 行，已知限制补定时单实例扫描、试跑不计成本、能力标签非权威数据三条。`docs/architecture.md` 新增 §21，记录试跑裁剪语义、外部触发的凭据模型与信任边界、`defaults.llm` 只影响新建节点、能力标注的来源分级与错误展示的 detail 补充行。
 - README 功能矩阵、界面、接入真实模型、已知限制同步更新，并新增「文档检索（知识库）」章节；`docs/architecture.md` 新增 §20，记录 V009 数据模型、BM25 口径、内部端点信任边界与「运行按草稿」的版本语义。内置示例升级 v4 与真实模型接入方式一并写入。
