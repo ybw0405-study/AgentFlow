@@ -101,7 +101,7 @@ async function mountView(status: ExecutionDto['status'], nodeStatus: string, las
   mocks.events.mockResolvedValue({ events: [], lastSeq })
   mocks.nodeIo.mockResolvedValue({ in: null, out: null })
   const wrapper = mount(ExecutionDetailView, {
-    global: { plugins: [createPinia()], stubs: { 'router-link': true } },
+    global: { plugins: [createPinia()] },
   })
   await flushPromises()
   await flushPromises()

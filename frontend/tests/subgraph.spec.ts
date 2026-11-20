@@ -496,9 +496,7 @@ async function mountCanvas(dsl: WorkflowDsl) {
     },
     versions: [],
   })
-  const wrapper = mount(CanvasEditorView, {
-    global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
-  })
+  const wrapper = mount(CanvasEditorView)
   await flushPromises()
   return wrapper
 }
