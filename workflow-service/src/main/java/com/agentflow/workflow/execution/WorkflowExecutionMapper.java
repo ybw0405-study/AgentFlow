@@ -60,7 +60,7 @@ public interface WorkflowExecutionMapper {
                                     @Param("limit") int limit);
 
     /** 投影器写入（事件是唯一真相，此处只是查询索引）。按事件类型定向更新。 */
-    @Update("UPDATE workflow_execution SET status = #{status}, started_at = NOW(3)"
+    @Update("UPDATE workflow_execution SET status = #{status}, started_at = IFNULL(started_at, NOW(3))"
             + " WHERE id = #{id} AND status = 'PENDING'")
     int markRunning(@Param("id") String id, @Param("status") String status);
 
@@ -96,6 +96,30 @@ public interface WorkflowExecutionMapper {
             + " WHERE id = #{id}")
     int markFailedDispatch(@Param("id") String id, @Param("status") String status,
                            @Param("errorCode") String errorCode);
+
+    /**
+     * 看护候选：仍停在 PENDING / RUNNING，却「按承诺早该结束」的执行。
+     *
+     * <p>两个条件各自对应一种卡死：{@code deadline_at} 已过却还没落终态（引擎侧超时事件
+     * 没到，或者引擎已经不在）；或者一直是 PENDING 且创建已久（派发在「插入」与「提交」
+     * 之间断了，这一行永远不会有人来推进）。两条都有余量阈值，由调用方传入，SQL 不猜。
+     *
+     * <p>按 seq 升序取：最老的先收口，积压时先解决躺得最久的那批。
+     */
+    @Select("SELECT seq, id, definition_id AS definitionId, version_id AS versionId,"
+            + " tenant_id AS tenantId, triggered_by AS triggeredBy, status, idempotency_key"
+            + " AS idempotencyKey, trace_id AS traceId, token_budget AS tokenBudget,"
+            + " max_steps AS maxSteps, deadline_at AS deadlineAt, token_used AS tokenUsed,"
+            + " steps_used AS stepsUsed, error_code AS errorCode, started_at AS startedAt,"
+            + " finished_at AS finishedAt, created_at AS createdAt"
+            + " FROM workflow_execution"
+            + " WHERE status IN ('PENDING', 'RUNNING')"
+            + " AND ((deadline_at IS NOT NULL AND deadline_at < #{deadlineCutoff})"
+            + "   OR (status = 'PENDING' AND created_at < #{pendingCutoff}))"
+            + " ORDER BY seq ASC LIMIT #{limit}")
+    List<ExecutionRow> findStale(@Param("deadlineCutoff") Timestamp deadlineCutoff,
+                                 @Param("pendingCutoff") Timestamp pendingCutoff,
+                                 @Param("limit") int limit);
 
     /**
      * 管理端：本账期内各租户的执行数与失败数。

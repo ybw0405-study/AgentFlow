@@ -4,17 +4,22 @@ import { adminApi } from '@/api'
 import type {
   AdminAuditRow,
   AdminModelUsage,
+  AdminSweepReport,
+  AdminStaleExecution,
   AdminTenantUsage,
   AdminTotals,
   AdminUsage,
 } from '@/api'
 import { describeError, type DescribedError } from '@/api/errors'
 
-const tab = ref<'usage' | 'audit'>('usage')
+const tab = ref<'usage' | 'audit' | 'ops'>('usage')
 const usage = ref<AdminUsage | null>(null)
 const period = ref(currentMonth())
 const auditItems = ref<AdminAuditRow[]>([])
 const auditCursor = ref<string | null>(null)
+const stale = ref<AdminStaleExecution[]>([])
+const sweepReport = ref<AdminSweepReport | null>(null)
+const sweeping = ref(false)
 const error = ref<DescribedError | null>(null)
 const loading = ref(false)
 
@@ -129,6 +134,56 @@ function modelShare(tokens: number): string {
   return `${Math.round((tokens / modelTotal.value) * 100)}%`
 }
 
+/** 拉取看护候选：与看护实际会处理的同一套口径，只是不落任何状态。 */
+async function loadStale(): Promise<void> {
+  try {
+    stale.value = await adminApi.staleExecutions(20)
+  } catch (e) {
+    error.value = describeError(e)
+  }
+}
+
+/**
+ * 手动跑一轮看护。
+ *
+ * 定时任务 60 秒一次，排查时等一轮比点一下难受，所以给一个「现在就跑」；
+ * 后端的看护是幂等的（按引擎状态补投影 / 落终态），重复点没有副作用。
+ */
+async function sweepNow(): Promise<void> {
+  sweeping.value = true
+  error.value = null
+  try {
+    sweepReport.value = await adminApi.sweepExecutions()
+    await loadStale()
+  } catch (e) {
+    error.value = describeError(e)
+  } finally {
+    sweeping.value = false
+  }
+}
+
+function openOps(): void {
+  tab.value = 'ops'
+  void loadStale()
+}
+
+/** 卡了多久：给人看的时间单位，超过一天就只说「天」。 */
+function durationText(seconds: number): string {
+  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`
+  return `${Math.floor(seconds / 86400)} 天`
+}
+
+/** 卡住的原因：派发丢了 vs 跑了但没人收口，处置完全不同（重新运行 / 查引擎）。 */
+function staleReason(row: AdminStaleExecution): string {
+  return row.neverStarted ? '派发丢失，引擎从未收到' : '超过 deadline，未收到终态事件'
+}
+
+function shortId(id: string): string {
+  return id.slice(0, 8)
+}
+
 onMounted(() => loadUsage())
 </script>
 
@@ -151,6 +206,13 @@ onMounted(() => loadUsage())
         @click="tab = 'audit'; loadAudit()"
       >
         审计
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        :class="{ 'af-btn--primary': tab === 'ops' }"
+        @click="openOps()"
+      >
+        看护
       </button>
     </div>
 
@@ -480,7 +542,7 @@ onMounted(() => loadUsage())
     </div>
 
     <div
-      v-else
+      v-else-if="tab === 'audit'"
       class="af-panel"
     >
       <table class="af-table">
@@ -529,6 +591,106 @@ onMounted(() => loadUsage())
         >
           加载更多
         </button>
+      </div>
+    </div>
+
+    <div v-else>
+      <div
+        class="af-panel"
+        style="padding: 12px 14px; margin-bottom: 14px"
+      >
+        <div
+          class="af-admin-section"
+          style="padding: 0 0 8px"
+        >
+          执行看护
+          <span class="af-faint">卡在「运行中」的执行：引擎没发出终态事件，或者派发那一步就断了</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+          <button
+            class="af-btn af-btn--sm af-btn--primary"
+            :disabled="sweeping"
+            @click="sweepNow"
+          >
+            {{ sweeping ? '巡检中…' : '立即巡检' }}
+          </button>
+          <span
+            class="af-faint"
+            style="font-size: 11px"
+          >后台每 60 秒自动巡检一次；巡检按引擎侧状态补投影或落终态，可重复执行</span>
+        </div>
+        <div
+          v-if="sweepReport"
+          class="af-faint"
+          style="font-size: 11px; margin-top: 8px"
+        >
+          本轮：扫描 {{ sweepReport.scanned }} 条，自愈 {{ sweepReport.reconciled }}、
+          收口 {{ sweepReport.reaped }}、仍在运行 {{ sweepReport.alive }}、
+          异常 {{ sweepReport.failed }}
+        </div>
+      </div>
+
+      <div class="af-panel">
+        <div class="af-admin-section">
+          候选 {{ stale.length }} 条
+          <span class="af-faint">按「卡得最久」排序，最多列 20 条</span>
+        </div>
+        <table class="af-table">
+          <thead>
+            <tr>
+              <th>执行</th>
+              <th>租户</th>
+              <th>工作流</th>
+              <th>状态</th>
+              <th>已卡</th>
+              <th>原因</th>
+              <th>创建时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="row in stale"
+              :key="row.executionId"
+            >
+              <td class="mono">
+                {{ shortId(row.executionId) }}
+              </td>
+              <td class="mono af-dim">
+                {{ shortId(row.tenantId) }}
+              </td>
+              <td class="mono af-dim">
+                {{ shortId(row.definitionId) }}
+              </td>
+              <td>
+                <span
+                  class="af-status"
+                  :class="row.neverStarted ? 'af-status--failed' : 'af-status--running'"
+                >{{ row.status }}</span>
+              </td>
+              <td class="mono">
+                {{ durationText(row.overdueSeconds) }}
+              </td>
+              <td
+                class="af-faint"
+                style="font-size: 11px"
+              >
+                {{ staleReason(row) }}
+              </td>
+              <td class="mono af-dim">
+                {{ row.createdAt?.slice(0, 19).replace('T', ' ') }}
+              </td>
+            </tr>
+            <tr v-if="!stale.length">
+              <td
+                colspan="7"
+                class="af-faint"
+                style="text-align: center; padding: 20px"
+              >
+                没有卡住的执行
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

@@ -1,8 +1,8 @@
 package com.agentflow.workflow.trigger;
 
+import com.agentflow.workflow.lease.RedisLease;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,15 +37,13 @@ public class TriggerScheduler {
     private static final Duration LEASE_TTL = Duration.ofSeconds(60);
 
     private final TriggerService service;
-    private final StringRedisTemplate redis;
+    private final RedisLease lease;
     private final boolean enabled;
-    /** 每个进程一个 id：续租时用它判断「这把锁是不是我自己持有的」。 */
-    private final String instanceId = UUID.randomUUID().toString();
 
     public TriggerScheduler(TriggerService service, StringRedisTemplate redis,
                             @Value("${agentflow.trigger.enabled:true}") boolean enabled) {
         this.service = service;
-        this.redis = redis;
+        this.lease = new RedisLease(redis);
         this.enabled = enabled;
     }
 
@@ -55,7 +53,7 @@ public class TriggerScheduler {
         if (!enabled) {
             return;
         }
-        if (!holdLease()) {
+        if (!lease.hold(LEASE_KEY, LEASE_TTL)) {
             log.debug("schedule lease held by another replica; skip this round");
             return;
         }
@@ -87,28 +85,6 @@ public class TriggerScheduler {
                 log.warn("schedule trigger {} failed: {}", row.id(), e.getMessage());
                 log.debug("schedule trigger failed", e);
             }
-        }
-    }
-
-    /**
-     * 拿/续扫描租约：自己持有就续期，否则抢一次。
-     *
-     * <p>GET 与 SETNX 之间有一个极小的窗口，抢输的一方可能也认为自己拿到了——所以它只是
-     * 减少重复劳动的优化；真正的「只跑一次」由 claim 与幂等键保证。
-     */
-    private boolean holdLease() {
-        try {
-            String holder = redis.opsForValue().get(LEASE_KEY);
-            if (instanceId.equals(holder)) {
-                redis.expire(LEASE_KEY, LEASE_TTL);
-                return true;
-            }
-            return Boolean.TRUE.equals(redis.opsForValue()
-                    .setIfAbsent(LEASE_KEY, instanceId, LEASE_TTL));
-        } catch (Exception e) {
-            // Redis 不可用时宁可每个副本都扫：漏跑比重复扫描严重得多
-            log.warn("schedule lease unavailable, scan anyway: {}", e.toString());
-            return true;
         }
     }
 }

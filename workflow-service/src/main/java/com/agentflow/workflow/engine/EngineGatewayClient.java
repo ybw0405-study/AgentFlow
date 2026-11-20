@@ -5,6 +5,7 @@ import com.agentflow.common.error.ErrorCode;
 import com.agentflow.common.trace.TraceIdContext;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -192,15 +193,32 @@ public class EngineGatewayClient {
     }
 
     /** 执行当前状态与 result（评测取 actual 用）。 */
-    @SuppressWarnings("unchecked")
     public Map<String, Object> executionState(String executionId) {
+        return findExecutionState(executionId).orElseThrow(
+                () -> new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine state failed"));
+    }
+
+    /**
+     * 执行在引擎侧的真实状态；{@code Optional.empty()} 表示引擎<strong>明确不认识</strong>这条执行
+     * （从没收到过，或者事件已被清理）。
+     *
+     * <p>与 {@link #executionState} 的差别只在这一种情况：那个方法把 404 也当上游故障抛出，
+     * 详情页据此返回 null 是够用的；看护（{@code ExecutionReaper}）需要区分「不认识」与「连不上」，
+     * 因为处置不同——前者不会再有事件来了，后者可能只是抖动，得再看一轮。
+     */
+    public Optional<Map<String, Object>> findExecutionState(String executionId) {
         try {
             Map<String, Object> body = http.get()
                     .uri("/executions/{id}/state", executionId)
                     .headers(this::applyInternal)
                     .retrieve()
                     .body(Map.class);
-            return body == null ? Map.of() : body;
+            return Optional.ofNullable(body);
+        } catch (RestClientResponseException e) {
+            if (e.getStatusCode().value() == 404) {
+                return Optional.empty();
+            }
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine state failed");
         } catch (RestClientException e) {
             throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine state failed");
         }

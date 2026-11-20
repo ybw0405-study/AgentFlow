@@ -252,11 +252,42 @@ export interface AdminAuditRow {
   createdAt: string
 }
 
+/**
+ * 一条「卡住不动的执行」。
+ *
+ * `neverStarted` 区分两种卡法：`true` 是派发就丢了（PENDING，引擎从没收到），
+ * `false` 是跑过但没落终态（已经超过自己的 deadline）。两者的处置不同，
+ * 界面上也不该混成同一句话。
+ */
+export interface AdminStaleExecution {
+  executionId: string
+  tenantId: string
+  definitionId: string
+  status: string
+  createdAt: string | null
+  deadlineAt: string | null
+  overdueSeconds: number
+  neverStarted: boolean
+}
+
+export interface AdminSweepReport {
+  scanned: number
+  reconciled: number
+  reaped: number
+  alive: number
+  failed: number
+}
+
 export const adminApi = {
   usage: (period?: string) =>
     get<AdminUsage>('/admin/usage', period ? { period } : undefined),
   audit: (params: { traceId?: string; eventType?: string; cursor?: string; limit?: number }) =>
     get<PageResult<AdminAuditRow>>('/admin/audit', params),
+  /** 执行看护的候选：与看护实际会处理的同一套口径（只读）。 */
+  staleExecutions: (limit?: number) =>
+    get<AdminStaleExecution[]>('/admin/executions/stale', limit ? { limit } : undefined),
+  /** 立刻跑一轮看护（幂等，可重复点）。 */
+  sweepExecutions: () => post<AdminSweepReport>('/admin/executions/sweep'),
 }
 
 export const llmApi = {

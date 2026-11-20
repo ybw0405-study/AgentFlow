@@ -53,6 +53,7 @@ const MESSAGES: Record<string, { text: string; hint?: string }> = {
   'EXEC-BUDGET_EXHAUSTED': { text: 'Token 预算已用尽', hint: '可在工作流策略中调高预算' },
   'EXEC-CANCELLED': { text: '执行已取消' },
   'EXEC-DEADLINE_EXCEEDED': { text: '执行超时', hint: '可拆分流程或调高超时时间' },
+  'EXEC-DISPATCH-LOST': { text: '执行没有送达引擎', hint: '请重新运行一次' },
   'EXEC-LOOP_LIMIT_EXCEEDED': { text: '循环次数超过上限', hint: '请检查循环终止条件' },
   'EXEC-MAX_STEPS_EXCEEDED': { text: '执行步数超过上限', hint: '请检查是否存在异常循环' },
   'NODE-INTERNAL-001': { text: '执行引擎内部错误', hint: '请稍后重试；持续出现请联系运维' },

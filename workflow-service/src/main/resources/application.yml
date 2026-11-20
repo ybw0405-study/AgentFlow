@@ -53,6 +53,17 @@ agentflow:
   eval:
     # 评测/AB 结果收口轮询间隔（用例执行落终态后才断言）
     poll-interval-ms: ${AF_EVAL_POLL_INTERVAL_MS:3000}
+  execution:
+    # 执行看护：把「永远停在运行中」的执行收口（引擎没发终态事件 / 派发丢失）
+    reap:
+      enabled: ${AF_REAP_ENABLED:true}
+      interval-ms: ${AF_REAP_INTERVAL_MS:60000}
+      initial-delay-ms: ${AF_REAP_INITIAL_DELAY_MS:45000}
+      # 过了 deadline 还要等多久：给引擎自己的超时事件留出投递余量
+      grace-ms: ${AF_REAP_GRACE_MS:120000}
+      # PENDING 超过这么久还不动，按「派发丢失」处理
+      pending-grace-ms: ${AF_REAP_PENDING_GRACE_MS:180000}
+      batch: ${AF_REAP_BATCH:50}
   audit:
     # 出口：auto（MQ 开则走 MQ，否则直写审计表）/ mq / direct
     sink: ${AF_AUDIT_SINK:auto}

@@ -5,11 +5,24 @@ import { ApiError } from '@/api/http'
 import AdminView from '@/views/AdminView.vue'
 import type { AdminTenantUsage, AdminUsage } from '@/api'
 
-const mocks = vi.hoisted(() => ({ usage: vi.fn(), audit: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  usage: vi.fn(),
+  audit: vi.fn(),
+  staleExecutions: vi.fn(),
+  sweepExecutions: vi.fn(),
+}))
 
 vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
-  return { ...actual, adminApi: { usage: mocks.usage, audit: mocks.audit } }
+  return {
+    ...actual,
+    adminApi: {
+      usage: mocks.usage,
+      audit: mocks.audit,
+      staleExecutions: mocks.staleExecutions,
+      sweepExecutions: mocks.sweepExecutions,
+    },
+  }
 })
 
 function tenant(overrides: Partial<AdminTenantUsage> = {}): AdminTenantUsage {
@@ -76,6 +89,10 @@ describe('管理端成本中心', () => {
     vi.clearAllMocks()
     mocks.usage.mockResolvedValue(usage())
     mocks.audit.mockResolvedValue({ items: [], nextCursor: null })
+    mocks.staleExecutions.mockResolvedValue([])
+    mocks.sweepExecutions.mockResolvedValue({
+      scanned: 0, reconciled: 0, reaped: 0, alive: 0, failed: 0,
+    })
   })
 
   it('租户行给出有效限额并标出是被谁卡住的', async () => {
@@ -312,5 +329,83 @@ describe('管理端成本中心', () => {
     await more!.trigger('click')
     await flushPromises()
     expect(mocks.audit).toHaveBeenLastCalledWith({ cursor: 'cursor-2' })
+  })
+})
+
+describe('管理端执行看护', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.usage.mockResolvedValue(usage())
+    mocks.audit.mockResolvedValue({ items: [], nextCursor: null })
+    mocks.sweepExecutions.mockResolvedValue({
+      scanned: 2, reconciled: 1, reaped: 1, alive: 0, failed: 0,
+    })
+  })
+
+  async function openOps(): Promise<ReturnType<typeof mount>> {
+    const wrapper = await mountView()
+    const opsTab = wrapper.findAll('button').find((b) => b.text() === '看护')
+    await opsTab!.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('列出卡住的执行，并区分「派发丢了」与「没人收口」', async () => {
+    mocks.staleExecutions.mockResolvedValue([
+      {
+        executionId: 'e-11111111-0000-0000-0000-000000000000',
+        tenantId: 't-space-a',
+        definitionId: 'wf-demo',
+        status: 'RUNNING',
+        createdAt: '2026-11-20T09:00:00Z',
+        deadlineAt: '2026-11-20T09:02:00Z',
+        overdueSeconds: 7200,
+        neverStarted: false,
+      },
+      {
+        executionId: 'e-22222222-0000-0000-0000-000000000000',
+        tenantId: 't-space-b',
+        definitionId: 'wf-check',
+        status: 'PENDING',
+        createdAt: '2026-11-20T10:00:00Z',
+        deadlineAt: null,
+        overdueSeconds: 300,
+        neverStarted: true,
+      },
+    ])
+    const wrapper = await openOps()
+    const text = wrapper.text()
+
+    expect(text).toContain('超过 deadline，未收到终态事件')
+    expect(text).toContain('派发丢失，引擎从未收到')
+    // 时长按人读得懂的单位写：7200 秒是 2 小时，300 秒是 5 分钟
+    expect(text).toContain('2 小时')
+    expect(text).toContain('5 分钟')
+    expect(text).toContain('e-111111')
+  })
+
+  it('立即巡检回报本轮结果并重新拉取候选', async () => {
+    mocks.staleExecutions.mockResolvedValue([])
+    const wrapper = await openOps()
+    mocks.staleExecutions.mockClear()
+
+    const sweep = wrapper.findAll('button').find((b) => b.text() === '立即巡检')
+    await sweep!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.sweepExecutions).toHaveBeenCalled()
+    // 巡检之后候选必须重拉：刚被收口的行不该继续留在列表里
+    expect(mocks.staleExecutions).toHaveBeenCalledTimes(1)
+    const text = wrapper.text()
+    expect(text).toContain('扫描 2 条')
+    expect(text).toContain('自愈 1')
+    expect(text).toContain('收口 1')
+  })
+
+  it('没有卡住的执行时给出空态', async () => {
+    mocks.staleExecutions.mockResolvedValue([])
+    const wrapper = await openOps()
+
+    expect(wrapper.text()).toContain('没有卡住的执行')
   })
 })
