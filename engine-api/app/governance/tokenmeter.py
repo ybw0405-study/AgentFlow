@@ -1,4 +1,4 @@
-"""token 计量。真实 provider 用其返回的 usage；mock/估算用 4 字符≈1 token。"""
+"""token 计量。真实 provider 用其返回的 usage；缺失时按 4 字符≈1 token 估算。"""
 
 from __future__ import annotations
 

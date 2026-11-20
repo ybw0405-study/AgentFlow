@@ -34,7 +34,7 @@ export interface DslDefaults {
 }
 
 export interface LlmConfig {
-  provider?: 'mock' | 'openai-compatible'
+  provider?: 'openai-compatible'
   /** 模型连接 id：端点与密钥由服务端托管，DSL 里只留这个引用。 */
   connectionId?: string
   model: string
@@ -91,11 +91,11 @@ export interface NodeTypeMeta {
   branches?: readonly string[]
 }
 
-/** 画布可添加的节点类型。retrieval 引擎未实现执行器，不放进面板，避免建出必失败的节点。 */
+/** 画布可添加的节点类型。 */
 export const NODE_TYPE_METAS: NodeTypeMeta[] = [
   { type: 'start', label: 'Start', description: '入口：校验并合并初始变量' },
   { type: 'llm', label: 'LLM', description: '模型调用（连接器或进程级端点）' },
-  { type: 'tool', label: 'Tool', description: '连接器工具调用（内置 mock.*）' },
+  { type: 'tool', label: 'Tool', description: '连接器工具调用（经 connector-service 出网）' },
   { type: 'retrieval', label: 'Retrieval', description: '从导入的文档里检索真实片段' },
   {
     type: 'condition',

@@ -5,7 +5,7 @@
   若二次脱敏后仍检出 PII（不应发生）则 PII-BLOCKED-001 永久失败。
 - 预算硬停止（D11）：reserve 失败即 BudgetExhaustedError，Command 绝不发出；
   发出的 Command maxTokens 被钳到预占额度，保证 tokenUsed ≤ budget。
-- 崩溃恢复：callId 确定性派生；mock provider 对同 (seed,prompt) 输出确定，
+- 崩溃恢复：callId 确定性派生；外部模型调用是非确定性的，重放需防重复计费，
   重发安全。
 """
 
@@ -61,7 +61,7 @@ class LlmExecutor:
     ) -> None:
         self._providers = providers
         # 连接器托管的模型：按 connectionId 懒加载 provider。为 None 表示当前部署未接连接器
-        # （例如只跑离线单测），此时引用模型的节点会给出明确错误而不是静默回落 mock。
+        # （例如只跑离线单测），此时引用模型的节点会给出明确错误而不是静默回落。
         self._connector_llms = connector_llms
 
     def _provider_for(self, cfg: Any) -> LLMProvider:
@@ -77,7 +77,7 @@ class LlmExecutor:
         return provider
 
     async def aclose(self) -> None:
-        """释放真实 provider 持有的 httpx 连接池（mock provider 无此资源）。"""
+        """释放真实 provider 持有的 httpx 连接池。"""
         for provider in self._providers.values():
             closer = getattr(provider, "aclose", None)
             if closer is not None:
@@ -172,7 +172,7 @@ class LlmExecutor:
             error_cls = TransientNodeError if result.transient else PermanentNodeError
             raise error_cls(result.error_code or "LLM-UNKNOWN", "llm command failed")
 
-        # provider 可能把 mock-* 占位名回落到服务端默认模型；审计需记录真实下发的模型名
+        # provider 可能把占位模型名回落到服务端默认模型；审计需记录真实下发的模型名
         resolved_model = str(result.extra.get("model") or cfg.model)
         await ctx.emit(
             EventType.COMMAND_COMPLETED,

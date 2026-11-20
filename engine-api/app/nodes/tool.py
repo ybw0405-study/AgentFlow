@@ -1,7 +1,7 @@
 """tool 节点：参数渲染 → 授权校验 → ToolCommand（经连接器，callId 幂等）。
 
-P2：连接器注册表同时支持内置 mock.*（离线演示）与真实连接器 —— 后者经
-gateway → connector-service 执行，凭据只在 connector-service 解密。
+连接器只有一条来源：gateway → connector-service。凭据只在 connector-service 解密，
+引擎拿不到明文；未授权的 connectorId 在授权校验处直接拒绝。
 """
 
 from __future__ import annotations
@@ -33,14 +33,12 @@ class ToolConnector(Protocol):
 
 
 class ConnectorRegistry:
-    """按 connectorId 解析连接器：mock.* 内置，其余交给远端连接器服务。"""
+    """按 connectorId 解析连接器，全部交给远端连接器服务。"""
 
     def __init__(
         self,
-        mock_factory: Callable[[str], ToolConnector],
         remote_factory: Callable[[str], ToolConnector] | None = None,
     ) -> None:
-        self._mock_factory = mock_factory
         self._remote_factory = remote_factory
         # 缓存已创建的连接器实例：避免每次 resolve 新建 AsyncClient 造成句柄泄漏，
         # 并在关停时统一释放底层资源。
@@ -55,9 +53,7 @@ class ConnectorRegistry:
         cached = self._cache.get(connector_id)
         if cached is not None:
             return cached
-        if connector_id.startswith("mock."):
-            connector = self._mock_factory(connector_id)
-        elif self._remote_factory is not None:
+        if self._remote_factory is not None:
             connector = self._remote_factory(connector_id)
         else:
             raise PermanentNodeError("CONN-NOT_FOUND-001", f"connector '{connector_id}' not found")

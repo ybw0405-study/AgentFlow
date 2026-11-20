@@ -303,7 +303,6 @@ async def test_end_to_end_execution_uses_real_provider(settings, fake_redis, mem
         return httpx.Response(200, json=_ok_body("来自真实模型的答案"))
 
     real = _provider(handler)
-    from app.commands.providers.mock_llm import MockLLMProvider
 
     for node in demo_dsl["nodes"]:
         if node["type"] == "llm":
@@ -312,7 +311,7 @@ async def test_end_to_end_execution_uses_real_provider(settings, fake_redis, mem
         settings,
         fake_redis,
         mem_store,
-        llm_providers={"mock": MockLLMProvider(), real.name: real},
+        llm_providers={real.name: real},
     )
     req = ExecuteRequest.model_validate(make_execute_request(demo_dsl))
     await dispatcher.submit(req)

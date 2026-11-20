@@ -150,7 +150,7 @@ def demo_dsl() -> dict[str, Any]:
                 "key": "enrich",
                 "type": "tool",
                 "config": {
-                    "connectorId": "mock.search",
+                    "connectorId": "test.search",
                     "operation": "search",
                     "paramsMapping": {"q": "{{ vars.question }}"},
                 },
@@ -183,18 +183,24 @@ def demo_dsl() -> dict[str, Any]:
 
 
 def make_stack(settings, redis, store, *, llm_providers=None, subworkflow_resolver=None):
-    """组装 dispatcher 全套（内存 store + fakeredis）。"""
-    from app.commands.providers.mock_llm import MockLLMProvider
+    """组装 dispatcher 全套（内存 store + fakeredis）。
+
+    单测没有 connector-service，tool 节点用离线夹具顶替；被测的是调度、重试与幂等，
+    不是连接器的真实出网行为（那部分由 test_connector_remote 覆盖）。
+    """
     from app.engine.dispatcher import Dispatcher
     from app.events.log import EventLog
     from app.governance.budget import BudgetLedger
     from app.nodes import build_executors
+    from app.nodes.tool import ConnectorRegistry, ToolExecutor
+    from tests.support.mocks import FakeLLMProvider, FakeToolConnector
 
     event_log = EventLog(store, NullPublisher())
     budget = BudgetLedger(redis)
     executors = build_executors(
-        redis, llm_providers or {"mock": MockLLMProvider()}, subworkflow_resolver
+        redis, llm_providers or {"openai-compatible": FakeLLMProvider()}, subworkflow_resolver
     )
+    executors["tool"] = ToolExecutor(ConnectorRegistry(lambda cid: FakeToolConnector(redis, cid)))
     dispatcher = Dispatcher(settings, store, event_log, redis, executors, budget)
     return dispatcher, event_log, budget
 
@@ -209,7 +215,7 @@ def make_execute_request(demo_dsl: dict, **overrides) -> dict[str, Any]:
         "triggeredBy": "user-1",
         "idempotencyKey": uuid.uuid4().hex,
         "versionSnapshot": demo_dsl,
-        "authorizedConnectorIds": ["mock.search", "mock.echo", "mock.flaky"],
+        "authorizedConnectorIds": ["test.search", "test.echo", "test.flaky"],
         "initialVariables": {"question": "AgentFlow 如何保证恰好一次？"},
         "policy": {"tokenBudget": 8000, "maxSteps": 30, "deadlineMs": 60000},
         "traceId": uuid.uuid4().hex,

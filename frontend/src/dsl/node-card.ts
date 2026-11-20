@@ -1,5 +1,5 @@
 import type { NodeType } from './types'
-import { displayModelName, isBuiltinDemoModel } from './model-presets'
+import { displayModelName, isLegacyOfflineModel } from './model-presets'
 
 /** 节点卡片的呈现规则集中在这里：编排画布与执行态画布共用同一套口径。
  *  颜色一律返回设计令牌，不出现原始色值（design-redlines 守卫）。 */
@@ -153,9 +153,9 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
 export function nodeSummary(type: string, config: Record<string, unknown>): string {
   switch (type) {
     case 'llm':
-      // 历史草稿里若仍是演示模型，卡片给出下一步，避免看起来像「没配好」。
-      return isBuiltinDemoModel(config) || !text(config.model)
-        ? '点击「模型」可接入真实服务'
+      // 旧草稿里若还是已移除的离线模型，卡片直接给出下一步。
+      return isLegacyOfflineModel(config) || !text(config.model)
+        ? '点击「模型」接入真实服务'
         : ''
     case 'retrieval':
       return `${count(config.knowledgeBaseIds)} 个知识库 · 真实文档检索 · TopK ${text(config.topK) || '5'}`

@@ -21,15 +21,15 @@ describe('节点卡片内联编辑', () => {
   it('渲染标题、类型与内联字段；模型是选择器而不是裸文本框', () => {
     const wrapper = mountNode()
     expect(wrapper.text()).toContain('分诊')
-    // 模板里的 mock-* 不再显示成占位符，而是说明性的中文名
-    expect(wrapper.find('.af-node__picker').text()).toContain('内置演示模型')
+    // 旧草稿里的离线模型名不再显示成占位符，而是说明性的中文名
+    expect(wrapper.find('.af-node__picker').text()).toContain('旧版离线模型')
     expect((wrapper.find('input').element as HTMLInputElement).value).toBe('{{ vars.ticket }}')
     expect(wrapper.findAll('input')).toHaveLength(1)
   })
 
-  it('演示模型给出下一步提示，避免看起来像没配好', () => {
+  it('旧版离线模型给出下一步提示，避免看起来像没配好', () => {
     const wrapper = mountNode()
-    expect(wrapper.text()).toContain('点击「模型」可接入真实服务')
+    expect(wrapper.text()).toContain('点击「模型」接入真实服务')
   })
 
   it('预设模型显示中文名而不是一串 id', () => {

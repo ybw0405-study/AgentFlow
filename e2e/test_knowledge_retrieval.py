@@ -1,12 +1,13 @@
 """E2E：文档知识库 → retrieval 节点真实检索 → 下游节点引用原文。
 
-与 mock.search 的关键区别：这里断言命中的片段来自用户导入的文档，且工作流执行
-产出里能看到这段原文，而不是固定模板拼出来的假语料。
+检索片段来自用户导入的文档，执行产出里能看到这段原文；下游回答由真实模型生成。
 """
 
 from __future__ import annotations
 
 import uuid
+
+import pytest
 
 from .conftest import (
     INTERNAL_TOKEN, REAL_LLM, REAL_LLM_MODEL, SPACE_A, SPACE_B,
@@ -37,10 +38,10 @@ def _rag_dsl(kb_id: str) -> dict:
                 "minScore": 0,
             }},
             {"key": "answer", "type": "llm", "config": {
-                "provider": "openai-compatible" if REAL_LLM else "mock",
-                "model": REAL_LLM_MODEL if REAL_LLM else "mock-large",
+                "provider": "openai-compatible",
+                "model": REAL_LLM_MODEL,
                 "promptTemplate": "依据文档回答：{{ nodes.retrieve.output.text }}\n问题：{{ vars.question }}",
-                "maxTokens": 128,
+                "maxTokens": 512,
             }},
             {"key": "end", "type": "end", "config": {
                 "resultMapping": {
@@ -105,6 +106,7 @@ def test_knowledge_crud_search_and_tenant_isolation(client, admin_token, beta_to
         client.delete(f"/api/v1/knowledge/bases/{kb_id}", headers=headers(admin_token, SPACE_A))
 
 
+@pytest.mark.skipif(not REAL_LLM, reason="需要真实模型端点：设置 AF_E2E_REAL_LLM=1 并注入 AF_LLM_*")
 def test_retrieval_node_returns_real_document_text(client, admin_token, editor_token):
     kb_id = _create_base(client, admin_token, f"e2e-rag-{uuid.uuid4().hex[:8]}")
     try:
@@ -140,8 +142,8 @@ def test_retrieval_node_returns_real_document_text(client, admin_token, editor_t
         detail = wait_terminal(client, editor_token, SPACE_A, execution_id, timeout_s=40)
         assert detail["execution"]["status"] == "SUCCEEDED", detail
         assert REFUND_LINE in detail["result"]["sources"], detail["result"]
-        if REAL_LLM:
-            assert "[mock-llm:" not in str(detail["result"]["answer"]), detail["result"]
+        answer = str(detail["result"]["answer"])
+        assert "[mock-llm:" not in answer and "[fake-llm:" not in answer, detail["result"]
 
         # 节点 IO 端点只保留输入快照；产出通过 resultMapping 与下游节点输入验证。
         io = client.get(f"/api/v1/executions/{execution_id}/nodes/retrieve/io",
@@ -155,7 +157,7 @@ def test_retrieval_node_returns_real_document_text(client, admin_token, editor_t
         assert answer_io.status_code == 200, answer_io.text
         prompt = str(answer_io.json()["data"]["in"]["payload"]["prompt"])
         assert REFUND_LINE in prompt, prompt
-        assert "mock 语料片段" not in prompt, prompt
+        assert "测试语料片段" not in prompt, prompt
     finally:
         client.delete(f"/api/v1/knowledge/bases/{kb_id}", headers=headers(admin_token, SPACE_A))
 

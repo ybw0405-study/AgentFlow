@@ -219,17 +219,16 @@ export function findPresetByModel(model: string): ModelPreset | null {
   )
 }
 
-/** 模板里的 mock-* 是离线演示模型，不该显示成一串看起来「没配好」的占位符。 */
-export function isBuiltinDemoModel(config: Record<string, unknown>): boolean {
+/** 历史草稿里残留的离线模型名（mock-*）：这类节点执行会直接失败，需要重新选择模型。 */
+export function isLegacyOfflineModel(config: Record<string, unknown>): boolean {
   const model = String(config.model ?? '').trim().toLowerCase()
-  const provider = String(config.provider ?? '')
-  return model.startsWith('mock') || provider === 'mock'
+  return model.startsWith('mock') || String(config.provider ?? '') === 'mock'
 }
 
-/** 卡片上的「模型」字段展示值：演示模型给中文说明，预设模型给中文名，其余显示原值。 */
+/** 卡片上的「模型」字段展示值：预设模型给中文名，其余显示原值。 */
 export function displayModelName(config: Record<string, unknown>): string {
   const model = String(config.model ?? '').trim()
-  if (isBuiltinDemoModel(config)) return '内置演示模型 · 离线可跑'
+  if (isLegacyOfflineModel(config)) return '旧版离线模型（需重新选择）'
   if (!model) return '未选择模型'
   return findPresetByModel(model)?.label ?? model
 }

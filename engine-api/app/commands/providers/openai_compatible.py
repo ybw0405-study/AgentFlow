@@ -6,7 +6,7 @@
 - 不重试：重试由引擎 RetryPolicy 统一治理（§8.4），避免双层重试导致重复计费；
   provider 只负责把上游状态精确分类为 transient / permanent，让引擎决定是否重放。
 
-崩溃恢复语义：与内置 mock 不同，真实模型调用是外部副作用且非确定性，重放时可能重复计费
+崩溃恢复语义：真实模型调用是外部副作用且非确定性，重放时可能重复计费
 （at-least-once）。可通过 AF_LLM_SEND_SEED=true 向上游传递确定性 seed（仅部分厂商支持）。
 """
 
@@ -192,7 +192,7 @@ class OpenAICompatibleProvider:
         return bool(self._base_url and self._api_key)
 
     def _resolve_model(self, model: str) -> str:
-        """画布从 mock 切到真实 provider 时，沿用 mock-* 占位模型名会 400，回落到默认模型。"""
+        """历史草稿里的占位模型名不能在真实端点上下发，回落到默认模型。"""
         if not model or model.lower().startswith("mock"):
             return self._default_model
         return model

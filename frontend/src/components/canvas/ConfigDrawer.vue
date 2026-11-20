@@ -433,12 +433,6 @@ function editBody(): void {
           :value="cfg('provider', 'openai-compatible')"
           @change="setCfg('provider', ($event.target as HTMLSelectElement).value)"
         >
-          <option
-            v-if="cfg<string>('provider', '') === 'mock'"
-            value="mock"
-          >
-            mock（遗留节点 · 建议改为真实模型）
-          </option>
           <option value="openai-compatible">
             openai-compatible（真实模型）
           </option>
@@ -462,11 +456,8 @@ function editBody(): void {
           class="af-faint"
           style="font-size: 11px; line-height: 1.6; margin: 4px 0 0"
         >
-          <template v-if="cfg<string>('provider', '') === 'mock'">
-            mock 离线运行，不发起网络请求；换到 openai-compatible 才会真正调用模型。
-          </template>
-          <template v-else-if="modelWillFallback">
-            <span class="af-accent">→ 实际下发：服务端默认模型（AF_LLM_MODEL）</span>；mock-* 名字不会被发送。
+          <template v-if="modelWillFallback">
+            <span class="af-accent">→ 实际下发：服务端默认模型（AF_LLM_MODEL）</span>；占位模型名不会被发送。
           </template>
           <template v-else>
             → 实际下发：<span class="mono af-accent">{{ cfg('model', '') }}</span>
@@ -593,7 +584,7 @@ function editBody(): void {
       <label class="af-label">connectorId</label>
       <input
         class="af-input mono"
-        :value="cfg('connectorId', 'mock.search')"
+        :value="cfg('connectorId', '')"
         @input="setCfg('connectorId', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">operation</label>

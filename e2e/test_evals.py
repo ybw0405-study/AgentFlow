@@ -108,7 +108,7 @@ def test_ab_experiment_compares_two_versions(client, editor_token, admin_token):
     _add_case(client, editor_token, dataset_id, "case-1",
               {"mode": "EXISTS", "path": "answer"})
     _add_case(client, editor_token, dataset_id, "case-2",
-              {"mode": "CONTAINS"}, expected="生成结果")
+              {"mode": "EXISTS", "path": "answer"})
 
     wf = client.post("/api/v1/workflows", headers=headers(editor_token, SPACE_A),
                      json={"name": f"e2e-ab-{uuid.uuid4().hex[:8]}"})
@@ -128,7 +128,7 @@ def test_ab_experiment_compares_two_versions(client, editor_token, admin_token):
 
     version_a = _publish(DEMO_DSL)
     tweaked = copy.deepcopy(DEMO_DSL)
-    tweaked["nodes"][3]["config"]["maxTokens"] = 64
+    tweaked["nodes"][3]["config"]["maxTokens"] = 512
     version_b = _publish(tweaked)
 
     started = client.post("/api/v1/evals/experiments", json={

@@ -47,10 +47,10 @@ describe('节点卡片呈现规则', () => {
       .toBe(true)
   })
 
-  it('llm 模型字段是选择器，演示模型显示中文说明', () => {
+  it('llm 模型字段是选择器，旧版离线模型给出重新选择提示', () => {
     const fields = inlineFields('llm', { provider: 'mock', model: 'mock-large' })
     expect(fields[0].kind).toBe('picker')
-    expect(fields[0].value).toContain('内置演示模型')
+    expect(fields[0].value).toContain('旧版离线模型')
     expect(nodeSummary('llm', { provider: 'mock', model: 'mock-large' }))
       .toContain('接入真实服务')
     expect(nodeSummary('llm', { provider: 'openai-compatible', model: 'hy4' })).toBe('')

@@ -160,7 +160,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 验证不通过会就地给出可操作的原因（改 URL / 换 Key / 检查沙箱放行），并删掉刚建的临时连接，不会在列表里留下连不上的记录；上游没有 `/models` 时可在「高级选项」勾选「仍按预填模型名保存」。端点与模型名都可编辑，服务商控制台才是最终依据。
 
-**接入后怎么确认真的生效**：引擎触发只认版本快照，所以「运行」会先保存画布当前草稿，复用或冻结一份同 checksum 的版本快照并显式带 `versionId` 触发——跑的就是刚改过的那张图，不会执行旧的已发布版本；已发布版本与灰度配置都不受影响，「冻结并发布」才会改动正式版本。内置示例、模板与新建节点默认走真实端点：模型由 `AF_LLM_*` 或模型连接提供，检索读知识库文档。若导入了旧版演示 DSL（llm 节点仍是 `provider: mock`），画布顶部会出现提示条，可一键把整层节点切到现有连接。
+**接入后怎么确认真的生效**：引擎触发只认版本快照，所以「运行」会先保存画布当前草稿，复用或冻结一份同 checksum 的版本快照并显式带 `versionId` 触发——跑的就是刚改过的那张图，不会执行旧的已发布版本；已发布版本与灰度配置都不受影响，「冻结并发布」才会改动正式版本。内置示例、模板与新建节点默认走真实端点：模型由 `AF_LLM_*` 或模型连接提供，检索读知识库文档。若导入了旧版 DSL（llm 节点仍是已移除的 `provider: mock`），画布顶部会出现提示条，可一键把整层节点切到现有连接；不切的话执行会在该节点明确报错，不会产出示例文本。
 
 ![连接失败时的反馈](docs/images/model-connect-error.png)
 
@@ -187,7 +187,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
 - 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板与新建节点默认用非推理的 `deepseek-chat`。
-- 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）；内置 mock 才是确定性的。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
+- 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
 - `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
 
 ## 文档检索（知识库）
@@ -301,7 +301,7 @@ git add docs/openapi/engine-api.json
 | `AF_ROCKETMQ_GATE_TOPIC` | af-gate-decision | 裁决广播 topic（控制面发布，引擎消费；`start-dev` 与 CI 会预建） |
 | `AF_MQ_CONSUME` / `AF_MQ_GATE_TOPIC` / `AF_MQ_GATE_GROUP` | true / af-gate-decision / af-engine-gate-consumer | 引擎是否消费 MQ 裁决、消费的 topic、消费组名 |
 | `AF_DEFAULT_TOKEN_BUDGET` / `AF_DEFAULT_MAX_STEPS` / `AF_DEFAULT_DEADLINE_MS` | 50000 / 50 / 120000 | 租户政策上限（触发时钳制） |
-| `AF_AUTHORIZED_CONNECTORS` | mock.search,mock.echo,mock.flaky | 离线测试桩的授权名单；真实连接器由 connector-service 目录自动授权 |
+| `AF_AUTHORIZED_CONNECTORS` | 空 | 额外授权的 connectorId（逗号分隔）；真实连接器由 connector-service 目录按空间自动授权 |
 | `AF_CONNECTOR_SERVICE` | http://127.0.0.1:8085 | gateway → connector-service 路由目标 |
 | `AF_CRED_MASTER_KEY` | 本地 dev 值（base64 32B） | 凭据主密钥；生产必须经 KMS/环境注入 |
 | `AF_CRED_MASTER_KEY_PREVIOUS` | 空 | 轮换窗口内的旧主密钥（base64，逗号分隔），用于解密历史密文；全量重加密后清空 |

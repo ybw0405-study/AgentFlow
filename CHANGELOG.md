@@ -8,9 +8,9 @@
 ### 新增
 
 - **文档知识库 / 真实文档检索**：`V009__knowledge.sql` 建 `knowledge_base` / `knowledge_document` / `knowledge_chunk` 三表。新增「知识库」页：建库、粘贴或选择 `.txt` / `.md` 导入文档（写入时按标点/段落切片，中文按单字与相邻二元组建词项）、文档列表与删除、检索自测。引擎新增 `retrieval` 执行器与 `KnowledgeSearchClient`，经网关 `/internal/knowledge/search` 调控制面本地 BM25 打分，返回带出处的原文片段（`output.text` / `results` / `citations`），阶段门正式放行；画布可勾选知识库并配置 `queryTemplate` / `topK` / `minScore`，校验要求至少选一个，也可一键生成「文档检索 → 模型作答」工作流。跨租户 kbId 由服务端逐条复核后静默忽略，不泄露存在性。
-- **内置示例与模板改走真实链路**：种子里的两条示例升级为 v4，llm 节点指向 OpenAI 兼容端点，工具节点换成 `retrieval` 并引用预置知识库 `kb-demo`（含三份真实文档切片）；模板、新建节点与知识库一键生成的工作流同样默认走真实端点。未注入 `AF_LLM_*` 时执行报 `LLM-NOT_CONFIGURED-001`，不再静默产出确定性示例文本。引擎里的 mock provider 与 `mock.*` 连接器只保留为单元测试与离线故障注入的测试桩。
+- **内置示例与模板改走真实链路**：种子里的两条示例升级为 v4，llm 节点指向 OpenAI 兼容端点，工具节点换成 `retrieval` 并引用预置知识库 `kb-demo`（含三份真实文档切片）；模板、新建节点与知识库一键生成的工作流同样默认走真实端点。未注入 `AF_LLM_*` 时执行报 `LLM-NOT_CONFIGURED-001`，不再静默产出确定性示例文本。
 - **模型清单 + 一键接入**：LLM 节点卡片上的「模型」从裸文本框改为可点开的常见模型清单（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 / Step / OpenAI / 本地 Ollama，带分组、搜索、厂商标识与标签）。选中即弹出预填 Base URL 与模型名的连接表单，只需填 API Key；「测试并连接」复用 `create → authorize → probeModels` 做真实出网校验，通过后自动写回 `connectionId` / `model`，节点立即可用，失败自动删掉临时连接并给出人话原因。清单外的服务走「自定义 OpenAI 兼容端点」。
-- **模型清单补充进程默认端点**：选择器里的「内置演示」入口改为「进程默认端点（AF_LLM_*）」，指向启动脚本注入的真实端点；`displayModelName` 仍把历史草稿里的 `mock-*` 标注为演示模型。
+- **模型清单补充进程默认端点**：选择器里的「内置演示」入口改为「进程默认端点（AF_LLM_*）」，指向启动脚本注入的真实端点；`displayModelName` 把历史草稿里的占位模型名标注为「旧版离线模型（需重新选择）」。
 - 连接器页的模型连接构造逻辑抽到 `model-connection.ts`，与画布快速接入共用同一份规则；端点与密钥仍只在 connector-service 解密注入。
 - **ComfyUI 式节点画布**：`WorkflowNode` 改为带分类色标题栏的卡片，模型 / 表达式 / 分支 / 超时等高频参数内联可编辑，端口按类别着色；`ConfigDrawer`（全字段配置）与 `DslSourcePanel`（JSON 视图）原样保留，收进「展开完整配置 / DSL」高级入口，字段逻辑一行未重写。
 - **快速编排**：双击画布或按空格唤起中文节点搜索，落位时自动补连线；三个经过 `validateDslLocal` 校验的模板骨架（只替换草稿，不影响已发布版本）；「整理布局」按依赖层级折行排布；`Ctrl+C` / `Ctrl+V` 复制粘贴、`Shift` 框选；落线前即时拦下自连、`end` 往外连与重复连线。
@@ -20,6 +20,7 @@
 ### 修复
 
 - **运行执行的是已发布版本而非当前草稿**：引擎触发只认版本快照，此前「运行」直接触发会执行**已发布版本**，而接入向导只改当前草稿，两者不是同一份 DSL。现在运行先保存草稿，再复用（或冻结）同 checksum 的版本快照并显式带 `versionId` 触发，按画布所见执行；不改已发布版本、不走灰度分流、同内容草稿不重复冻结。画布与运行弹窗均写明该语义。
+- **移除产品侧的离线 provider 与内置测试连接器**：`LlmConfig.provider` 的默认值与唯一取值改为 `openai-compatible`，`app/main.py` 不再注册离线 provider，`ConnectorRegistry` 只走 connector-service，`AF_AUTHORIZED_CONNECTORS` 默认为空；配置抽屉去掉 provider 的离线选项，tool 节点不再预填 `mock.*`。旧 DSL 的 `provider: mock` 会在校验期直接报错，并提示改为模型连接或进程端点。确定性夹具移到 `tests/support/`，单测与故障注入照常覆盖。
 - **真实模型节点偶发空正文**：`deepseek-flash` 是推理模型，`max_tokens` 同时覆盖思维链与正文，给到 1024 时思维链把预算吃光、`content` 为空，节点以 `LLM-RESPONSE-001` 失败。内置示例、模板与新建节点默认改用非推理的 `deepseek-chat`，种子版本升到 v4；provider 在 `content` 为空且响应带 `reasoning_content` 时给出「调大 maxTokens」的明确原因，模型清单同时把默认模型并入下拉（它是上游接受的别名，不一定出现在 `/models` 里）。
 - **知识库列表实机 500**：`findBase` 只查 6 列而 `BaseRow` 有 8 个字段，MyBatis 构造器映射失败。`BASE_SELECT` 统一补齐 `documentCount` / `chunkCount` 两个统计列，并加单测守住列数契约。
 - **阶段门单测随 `retrieval` 放开更新**：默认白名单接受由 `test_retrieval.py` 守住；旧断言改为用自定义 `Settings` 摘掉白名单来验证「拒绝」逻辑本身，不再把已实现的节点写成未实现。

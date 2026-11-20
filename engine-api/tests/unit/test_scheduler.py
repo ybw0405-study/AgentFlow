@@ -115,14 +115,14 @@ async def test_crash_recovery_completes_and_side_effects_exactly_once(
     status = await wait_terminal(mem_store, eid)
     assert status == "SUCCEEDED"
 
-    # 恰好一次：mock.search 副作用计数 == 1
-    count = await fake_redis.get("af:mockcount:mock.search:search")
+    # 恰好一次：检索副作用计数 == 1
+    count = await fake_redis.get("af:fakecount:test.search:search")
     assert int(count) == 1
 
 
 async def test_cancel_running_execution(settings, fake_redis, mem_store, demo_dsl):
     class SlowLLM:
-        name = "mock"
+        name = "openai-compatible"
 
         async def complete(self, **kwargs):
             await asyncio.sleep(0.3)
@@ -131,7 +131,7 @@ async def test_cancel_running_execution(settings, fake_redis, mem_store, demo_ds
             )
 
     dispatcher, _, _ = make_stack(
-        settings, fake_redis, mem_store, llm_providers={"mock": SlowLLM()}
+        settings, fake_redis, mem_store, llm_providers={"openai-compatible": SlowLLM()}
     )
     req = ExecuteRequest.model_validate(make_execute_request(demo_dsl))
     await dispatcher.submit(req)
@@ -146,7 +146,7 @@ async def test_unauthorized_connector_fails_permanently(settings, fake_redis, me
     dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
     req = ExecuteRequest.model_validate(
         make_execute_request(demo_dsl, authorizedConnectorIds=[])
-    )  # 未授权 mock.search
+    )  # 未授权 test.search
     await dispatcher.submit(req)
     status = await wait_terminal(mem_store, req.execution_id)
     assert status == "FAILED"

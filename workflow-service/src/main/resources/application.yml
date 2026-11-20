@@ -34,7 +34,8 @@ agentflow:
     base-url: ${AF_GATEWAY_BASE:http://127.0.0.1:8080}
     internal-token: ${AF_INTERNAL_TOKEN:dev-internal-token}
   engine:
-    authorized-connectors: ${AF_AUTHORIZED_CONNECTORS:mock.search,mock.echo,mock.flaky}
+    # 默认不预置任何 connectorId：真实连接器由 connector-service 目录按空间发现后并入授权集合。
+    authorized-connectors: ${AF_AUTHORIZED_CONNECTORS:}
     poll-interval-ms: ${AF_ENGINE_POLL_INTERVAL_MS:500}
   # 登录页的演示账号提示（凭据与种子数据一致）。生产守护开启时无论此值如何都不会下发。
   demo:

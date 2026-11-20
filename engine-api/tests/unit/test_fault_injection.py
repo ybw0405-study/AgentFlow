@@ -35,7 +35,7 @@ def _sleep_node(key: str, sleep_ms: int, *, timeout_ms: int | None = None) -> di
         "key": key,
         "type": "tool",
         "config": {
-            "connectorId": "mock.echo",
+            "connectorId": "test.echo",
             "operation": "sleep",
             "paramsMapping": {"sleepMs": str(sleep_ms)},
         },
@@ -113,7 +113,7 @@ async def test_node_timeout_fails_execution(settings, fake_redis, mem_store):
 class _FlakyOnceProvider:
     """首次调用抛瞬时错误，第二次成功——验证重试后成功路径。"""
 
-    name = "mock"
+    name = "openai-compatible"
 
     def __init__(self) -> None:
         self.calls = 0
@@ -158,7 +158,9 @@ async def test_transient_error_retried_then_succeeds(settings, fake_redis, mem_s
             "retry": {"maxAttempts": 3, "backoffMs": 100, "backoffMultiplier": 2},
         },
     )
-    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store, llm_providers={"mock": provider})
+    dispatcher, _, _ = make_stack(
+        settings, fake_redis, mem_store, llm_providers={"openai-compatible": provider}
+    )
     req = _req(dsl, initialVariables={})
     await dispatcher.submit(req)
     await _await_task(dispatcher, req.execution_id)
@@ -174,7 +176,7 @@ async def test_transient_error_retried_then_succeeds(settings, fake_redis, mem_s
 
 
 class _AlwaysTransientProvider:
-    name = "mock"
+    name = "openai-compatible"
 
     def __init__(self) -> None:
         self.calls = 0
@@ -217,7 +219,9 @@ async def test_transient_error_exhausts_retries(settings, fake_redis, mem_store)
             "retry": {"maxAttempts": 2, "backoffMs": 100, "backoffMultiplier": 2},
         },
     )
-    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store, llm_providers={"mock": provider})
+    dispatcher, _, _ = make_stack(
+        settings, fake_redis, mem_store, llm_providers={"openai-compatible": provider}
+    )
     req = _req(dsl, initialVariables={})
     await dispatcher.submit(req)
     await _await_task(dispatcher, req.execution_id)
@@ -282,7 +286,7 @@ async def test_event_append_conflict_fails_execution(settings, fake_redis):
 class _ConcurrencyTrackingProvider:
     """记录并发峰值，验证 maxParallelism 硬约束。"""
 
-    name = "mock"
+    name = "openai-compatible"
 
     def __init__(self, delay_s: float = 0.1) -> None:
         self.delay_s = delay_s
@@ -330,7 +334,7 @@ async def test_max_parallelism_caps_concurrency(settings, fake_redis, mem_store)
             "key": "slow",
             "type": "tool",
             "config": {
-                "connectorId": "mock.echo",
+                "connectorId": "test.echo",
                 "operation": "sleep",
                 "paramsMapping": {"sleepMs": "50"},
             },
@@ -341,7 +345,9 @@ async def test_max_parallelism_caps_concurrency(settings, fake_redis, mem_store)
     edges.append({"from": "slow", "to": "end"})
 
     dsl = _dsl(nodes, edges, defaults={"timeoutMs": 5000, "maxParallelism": 2})
-    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store, llm_providers={"mock": provider})
+    dispatcher, _, _ = make_stack(
+        settings, fake_redis, mem_store, llm_providers={"openai-compatible": provider}
+    )
     req = _req(dsl, initialVariables={})
     await dispatcher.submit(req)
     await _await_task(dispatcher, req.execution_id)

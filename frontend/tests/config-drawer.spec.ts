@@ -57,19 +57,15 @@ describe('节点配置抽屉', () => {
     expect(wrapper.text()).not.toContain('服务端默认模型')
   })
 
-  it('mock provider 说明离线语义', () => {
-    const wrapper = mountDrawer(llm({ provider: 'mock', model: 'mock-large' }))
-    expect(wrapper.text()).toContain('不发起网络请求')
-  })
-
-  it('provider 下拉不再提供 mock 选项', () => {
+  it('provider 下拉只提供真实模型', () => {
     const wrapper = mountDrawer(llm({ provider: 'openai-compatible', model: 'deepseek-chat' }))
     expect(providerOptions(wrapper)).toEqual(['openai-compatible'])
   })
 
-  it('遗留 mock 节点仍能显示自身取值，便于改回真实模型', () => {
+  it('旧版离线节点仍能读出自身取值，方便改回真实模型', () => {
     const wrapper = mountDrawer(llm({ provider: 'mock', model: 'mock-large' }))
-    expect(providerOptions(wrapper)).toEqual(['mock', 'openai-compatible'])
+    expect(providerOptions(wrapper)).toEqual(['openai-compatible'])
+    expect(wrapper.text()).toContain('mock-large')
   })
 
   it('模型清单渲染为 datalist 候选', () => {

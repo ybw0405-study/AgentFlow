@@ -608,15 +608,16 @@ stateDiagram-v2
 
 发出 Command 前：`remaining = tokenBudget - tokenUsed`；`remaining ≤ 0` → `ExecutionFailed{errorCode: EXEC-BUDGET_EXHAUSTED}`，不再发任何 Command；否则该 Command 的 `maxTokens := min(node.maxTokens, remaining)`，Redis 预占；完成时按实际 `tokenUsed` 结算回冲。MySQL `budget_ledger` 由 projector 异步对账。
 
-### 5.7 LLM Provider（mock / 真实模型）
+### 5.7 LLM Provider（真实模型）
 
 `LlmExecutor` 只依赖 `LLMProvider` 协议（`complete(...) -> CommandResult`），注册表在应用装配期注入：
 
 | provider | 端点来源 | 语义 |
 |---|---|---|
-| `mock`（默认） | 内置，无网络 | 对 `(seed, prompt)` 确定性生成，重放安全，用于 P0 离线验收 |
 | `openai-compatible` | 仅来自 `AF_LLM_*` 环境变量 | 任意 OpenAI 兼容 `/chat/completions`（DeepSeek / Qwen / OpenAI / 本地 Ollama 等） |
 | `connector` | 节点配置 `connectionId` 指向的模型连接 | 引擎 → connector-service `/internal/connectors/{id}/invoke` 的 `chat` 操作；端点与密钥由服务端解密注入 |
+
+产品装配只注册上面两条路径；离线 provider 已从 `app/` 移除，单元测试用 `tests/support/` 里的夹具自行注入。
 
 **模型连接（三路径中的首选）**：`tool_connector` 里 `type=LLM` 的一条记录即一条模型连接，
 `config` 声明 `baseUrl` / `allowedHosts` / `auth{headerName,valuePrefix}` /
@@ -637,7 +638,7 @@ stateDiagram-v2
   密钥仅出现在 `Authorization` 头，日志/错误体/事件载荷一律脱敏（单测覆盖）。
 - `AF_PRODUCTION=true` 时强制要求 https 端点（`AF_LLM_ALLOW_INSECURE_HTTP` 仅本地调试例外）。
 - PII 第二层脱敏仍在 `LlmExecutor` 内先于 provider 执行；provider 不感知原始 prompt 之外的任何租户数据。
-- 输入侧 `mock-*` 占位模型名自动回落（进程级回落到 `AF_LLM_MODEL`，连接回落到该连接的 `defaultModel`），避免历史草稿切到真实端点时上游 400。
+- 输入侧历史占位模型名自动回落（进程级回落到 `AF_LLM_MODEL`，连接回落到该连接的 `defaultModel`），避免旧草稿切到真实端点时上游 400。
 - 回落只改变实际下发的模型名，不改变审计事实：`output.model` 与 `CommandCompleted` 记录**真实**模型名；声明值与实际值不一致时另存 `requestedModel`，事后可追「配了什么、跑了什么」。
 - 连接器错误码在执行详情里翻译成模型语义（`CONN-CREDENTIAL-*` → `LLM-CREDENTIAL-001`、`CONN-NOT_FOUND/DISABLED/SANDBOX` → `LLM-CONNECTION-001`、`CONN-HTTP-5XX/TIMEOUT` → 瞬时），避免把内部编码暴露给使用者，同时保证瞬时性判定正确。
 
@@ -754,7 +755,7 @@ stateDiagram-v2
           "then": { "properties": { "config": {
             "type": "object", "required": ["model","promptTemplate"], "additionalProperties": false,
             "properties": {
-              "provider": { "enum": ["mock","openai-compatible"], "default": "mock" },
+              "provider": { "const": "openai-compatible", "default": "openai-compatible" },
               "connectionId": { "type": "string", "minLength": 1,
                 "description": "tool_connector 中 type=LLM 的记录 id；端点与密钥只在 connector-service，DSL 不含 URL/Key" },
               "model": { "type": "string", "minLength": 1 },
@@ -903,14 +904,14 @@ stateDiagram-v2
   "nodes": [
     { "key": "start", "type": "start", "config": {} },
     { "key": "draft", "type": "llm", "config": {
-        "provider": "mock", "model": "mock-large",
+        "provider": "openai-compatible", "model": "deepseek-chat",
         "promptTemplate": "请根据问题起草答案要点：{{ vars.question }}",
-        "outputMode": "text", "maxTokens": 800 } },
-    { "key": "enrich", "type": "tool", "config": {
-        "connectorId": "mock.search", "operation": "search",
-        "paramsMapping": { "q": "{{ vars.question }}" }, "timeoutMs": 10000 } },
+        "outputMode": "text", "maxTokens": 1024 } },
+    { "key": "enrich", "type": "retrieval", "config": {
+        "knowledgeBaseIds": ["kb-demo"],
+        "queryTemplate": "{{ vars.question }}", "topK": 5, "minScore": 0 } },
     { "key": "final", "type": "llm", "config": {
-        "provider": "mock", "model": "mock-large",
+        "provider": "openai-compatible", "model": "deepseek-chat",
         "promptTemplate": "结合要点与检索给出最终回答。\n要点：{{ nodes.draft.output.text }}\n检索：{{ nodes.enrich.output.result }}\n问题：{{ vars.question }}",
         "outputMode": "text", "maxTokens": 1200 } },
     { "key": "end", "type": "end", "config": {
@@ -1063,7 +1064,7 @@ AgentFlow/
 │       ├── nodes/          # registry.py, base.py, subgraph.py, subworkflow_resolver.py
 │       │                   # start/end/llm/tool/condition/loop/parallel/transform/
 │       │                   # subworkflow/human_gate
-│       ├── commands/       # base.py + providers/{mock_llm,mock_tool,http_tool}.py
+│       ├── commands/       # base.py + providers/{connector_llm,openai_compatible,http_tool}.py
 │       ├── events/         # store.py, log.py, types.py, publisher.py
 │       ├── governance/     # budget.py, tokenmeter.py, pii.py
 │       ├── expression/     # safeexpr.py, template.py
@@ -1110,7 +1111,7 @@ AgentFlow/
 │   ├── seed-demo.sql                       # 演示租户/用户/示例工作流
 │   ├── gen-seed.py                         # 生成密码哈希写入 seed
 │   ├── dump-openapi.py                     # 导出引擎 OpenAPI 基线
-│   └── demo-recovery.py                    # 崩溃恢复现场演示（US-04）
+│   └── gen-seed.py                         # 生成幂等种子 SQL
 └── .github/workflows/
     ├── java-ci.yml         # mvn verify + ArchUnit + Checkstyle
     ├── python-ci.yml       # ruff check + ruff format --check + pytest
@@ -1172,9 +1173,9 @@ AgentFlow/
 4. **连接器调用路径**：`engine → gateway /internal/connectors/{id}/invoke → connector-service`，
    与 `subworkflow` 走同一条「Python 只经 gateway」的边界；`callId` 在连接器服务侧再做一次
    Redis 幂等缓存（24h），崩溃重发返回首次结果。
-5. **授权清单来源**：workflow-service 触发时合并「内置 mock 清单」+「connector-service 目录
-   中该空间可见且启用的连接器 id」；连接器服务不可用时降级为仅 mock（真实连接器节点会在
-   授权校验处 `CONN-FORBIDDEN-001`）。
+5. **授权清单来源**：workflow-service 触发时取「connector-service 目录中该空间可见且启用的
+   连接器 id」；连接器服务不可用时集合为空，真实连接器节点会在授权校验处
+   `CONN-FORBIDDEN-001`（不再有内置兜底清单）。
 6. **成本中心**：`budget_ledger` 由投影器在 `NodeCompleted` 时累加（与游标同事务，重放不重复）；
    `/admin/usage` 额外返回 `effectiveLimits`（沿祖先链取最小限额）。**预占泄漏**由
    `BudgetLedger.reconcile` 在恢复与 checkpoint 时按事件流 `tokenUsed` 校准。
@@ -1506,7 +1507,7 @@ build / design-redlines 全绿。实机验证覆盖：模型清单渲染、预�
 `connectionId` 路径经网关到 connector-service，由后者解密注入凭据并做出网校验。
 内置示例与模板现在默认指向这条链路，检索节点读用户导入的文档；未注入
 `AF_LLM_*` 时节点返回 `LLM-NOT_CONFIGURED-001`，不再回落到确定性示例文本。
-引擎里的 mock provider 与 `mock.*` 连接器只作为单元测试与离线故障注入的测试桩保留。
+离线 provider 已从 `app/` 移除，离线夹具移到 `tests/support/`，产品装配不再注册；历史 DSL 里的 `provider: mock` 会在 schema 校验阶段给出「请设置 connectionId 或改用进程端点」。
 
 ### 20.1 V009：知识库 / 文档 / 切片
 
@@ -1594,6 +1595,6 @@ llm 节点切到指定连接，`confirmTemplate` 用 `bindConnectionToLlmNodes` 
   `canvas-editor.spec.ts`（运行带 `versionId` 触发）；typecheck / lint /
   228 passed / build 全绿。
 - E2E：`e2e/test_knowledge_retrieval.py` 覆盖建库→导入→检索→跨租户隔离→删除清切片，
-  以及 retrieval 节点产出里出现导入原文且不含「mock 语料片段」；`e2e/test_subworkflow.py`
+  以及 retrieval 节点产出里出现导入原文且不含「测试语料片段」；`e2e/test_subworkflow.py`
   用自建子流程验证 `sub#run#` 前缀与 `outputMapping`，不把模型可用性耦合进来。先起全栈
   （`scripts/start-dev.*`）后，`AF_E2E_REAL_LLM=1 pytest e2e -q` 全量通过。

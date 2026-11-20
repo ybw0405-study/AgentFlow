@@ -33,22 +33,24 @@ SPACE_B = "t-space-beta"
 DEMO_DSL = {
     "dslVersion": "1.0",
     "variables": {"question": {"type": "string", "required": True, "pii": True}},
-    "defaults": {"timeoutMs": 30000, "maxParallelism": 4},
+    "defaults": {"timeoutMs": 60000, "maxParallelism": 4},
     "nodes": [
         {"key": "start", "type": "start", "config": {}},
         {"key": "draft", "type": "llm", "config": {
-            "model": "mock-large",
+            "provider": "openai-compatible",
+            "model": REAL_LLM_MODEL,
             "promptTemplate": "请根据问题起草答案要点：{{ vars.question }}",
-            "maxTokens": 128}},
-        {"key": "enrich", "type": "tool", "config": {
-            "connectorId": "mock.search", "operation": "search",
-            "paramsMapping": {"q": "{{ vars.question }}"}}},
+            "maxTokens": 512}},
+        {"key": "enrich", "type": "transform", "config": {
+            "mappings": [{"target": "vars.enrich_text",
+                          "template": "检索上下文：{{ vars.question }}"}]}},
         {"key": "final", "type": "llm", "config": {
-            "model": "mock-large",
+            "provider": "openai-compatible",
+            "model": REAL_LLM_MODEL,
             "promptTemplate": "要点：{{ nodes.draft.output.text }}\n"
-                              "检索：{{ nodes.enrich.output.result }}\n"
+                              "检索：{{ nodes.enrich.output.enrich_text }}\n"
                               "问题：{{ vars.question }}",
-            "maxTokens": 128}},
+            "maxTokens": 512}},
         {"key": "end", "type": "end", "config": {
             "resultMapping": {"answer": "{{ nodes.final.output.text }}"}}},
     ],

@@ -89,7 +89,7 @@ class ConnectorLlmProvider:
         return True
 
     def _resolve_model(self, model: str) -> str:
-        """历史草稿里残留的 mock-* 占位名不能在真实端点上下发，回落到连接声明的默认模型。"""
+        """历史草稿里残留的占位模型名不能在真实端点上下发，回落到连接声明的默认模型。"""
         if (not model or model.lower().startswith("mock")) and self._default_model:
             return self._default_model
         return model

@@ -4,7 +4,7 @@ import {
   MODEL_PRESET_GROUPS,
   displayModelName,
   findPresetByModel,
-  isBuiltinDemoModel,
+  isLegacyOfflineModel,
   searchModelPresets,
 } from '@/dsl/model-presets'
 
@@ -57,10 +57,10 @@ describe('常见模型预设清单', () => {
 })
 
 describe('卡片上的模型展示', () => {
-  it('模板里的 mock 占位显示成中文说明', () => {
+  it('旧版离线模型给出需要重新选择的提示', () => {
     const cfg = { provider: 'mock', model: 'mock-large' }
-    expect(isBuiltinDemoModel(cfg)).toBe(true)
-    expect(displayModelName(cfg)).toContain('内置演示模型')
+    expect(isLegacyOfflineModel(cfg)).toBe(true)
+    expect(displayModelName(cfg)).toContain('旧版离线模型')
   })
 
   it('预设模型显示中文名，自定义模型保留原值', () => {

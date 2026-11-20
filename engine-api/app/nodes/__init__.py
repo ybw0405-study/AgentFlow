@@ -9,7 +9,6 @@ import redis.asyncio as aioredis
 from ..commands.providers.connector_llm import ConnectorLlmFactory
 from ..commands.providers.http_tool import HttpToolConnector
 from ..commands.providers.knowledge_search import KnowledgeSearchClient
-from ..commands.providers.mock_tool import MockToolConnector
 from .condition import ConditionExecutor
 from .end import EndExecutor
 from .human_gate import HumanGateExecutor
@@ -49,7 +48,7 @@ def build_executors(
         if connector_gateway
         else None
     )
-    connectors = ConnectorRegistry(lambda cid: MockToolConnector(redis, cid), remote)
+    connectors = ConnectorRegistry(remote)
     knowledge = (
         KnowledgeSearchClient(knowledge_gateway[0], knowledge_gateway[1])
         if knowledge_gateway

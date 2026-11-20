@@ -8,7 +8,7 @@ import { Controls } from '@vue-flow/controls'
 import { workflowApi, executionApi, llmApi, connectorApi, knowledgeApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
-import { bindConnectionToLlmNodes, inspectDemo } from '@/dsl/demo-state'
+import { bindConnectionToLlmNodes, inspectLegacyDsl } from '@/dsl/legacy-dsl'
 import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-convert'
 import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge, setEdgeBranch } from '@/dsl/graph-ops'
 import type { CanvasEdge } from '@/dsl/graph-ops'
@@ -174,7 +174,7 @@ function layerDsl(): WorkflowDsl {
 }
 
 /** 演示态：整图没有真实模型 / 文档检索时，把「输出是示例文本」摆在明面上。 */
-const demoState = computed(() => inspectDemo(layerDsl()))
+const legacyState = computed(() => inspectLegacyDsl(layerDsl()))
 
 /**
  * 把「画布当前层」合并回整份 DSL。
@@ -1067,11 +1067,11 @@ onUnmounted(() => {
     </div>
 
     <div
-      v-if="demoState?.demoOnly"
+      v-if="legacyState?.blocked"
       class="af-panel"
       style="margin: 8px 12px 0; padding: 8px 12px; border-color: var(--af-accent-border); font-size: 12px; line-height: 1.6"
     >
-      <span class="af-accent">演示态</span> · {{ demoState.summary }}
+      <span class="af-accent">旧版配置</span> · {{ legacyState.summary }}
       <button
         v-if="llmConnections.length"
         class="af-btn af-btn--sm af-btn--primary"
@@ -1231,11 +1231,11 @@ onUnmounted(() => {
           运行工作流
         </div>
         <div
-          v-if="demoState?.demoOnly"
+          v-if="legacyState?.blocked"
           class="af-error-box"
           style="margin-bottom: 10px; line-height: 1.6; font-size: 12px"
         >
-          <strong>这是演示运行</strong> · {{ demoState.summary }}
+          <strong>这条流程跑不起来</strong> · {{ legacyState.summary }}
         </div>
         <label class="af-label">initialVariables（JSON）</label>
         <p

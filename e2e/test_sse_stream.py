@@ -91,4 +91,4 @@ def test_stream_requires_ownership(client, beta_token) -> None:
 def test_demo_dsl_is_unchanged() -> None:
     """demo DSL 是全部 e2e 的基线，任何改动都应显式体现在这里而非悄悄漂移。"""
     assert DEMO_DSL["dslVersion"] == "1.0"
-    assert {n["type"] for n in DEMO_DSL["nodes"]} == {"start", "llm", "tool", "end"}
+    assert {n["type"] for n in DEMO_DSL["nodes"]} == {"start", "llm", "transform", "end"}

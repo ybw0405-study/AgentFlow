@@ -98,23 +98,17 @@ async def test_remote_failure_body_maps_to_result():
     assert not result.transient
 
 
-def test_registry_routes_mock_and_remote_separately():
-    mock_calls: list[str] = []
-    remote_calls: list[str] = []
-    registry = ConnectorRegistry(
-        lambda cid: mock_calls.append(cid) or object(),
-        lambda cid: remote_calls.append(cid) or object(),
-    )
+def test_registry_resolves_remote_connector():
+    factory_calls: list[str] = []
+    registry = ConnectorRegistry(lambda cid: factory_calls.append(cid) or object())
 
-    registry.resolve("mock.search", frozenset({"mock.search"}))
     registry.resolve("c-real", frozenset({"c-real"}))
 
-    assert mock_calls == ["mock.search"]
-    assert remote_calls == ["c-real"]
+    assert factory_calls == ["c-real"]
 
 
 def test_registry_rejects_unauthorized_connector():
-    registry = ConnectorRegistry(lambda cid: object(), lambda cid: object())
+    registry = ConnectorRegistry(lambda cid: object())
     with pytest.raises(PermanentNodeError) as exc:
         registry.resolve("c-real", frozenset())
     assert exc.value.code == "CONN-FORBIDDEN-001"
@@ -134,10 +128,7 @@ async def test_registry_caches_connector_and_aclose_closes_resources():
             closed.append(self.connector_id)
 
     created: list[str] = []
-    registry = ConnectorRegistry(
-        lambda cid: object(),
-        lambda cid: created.append(cid) or ClosableConnector(cid),
-    )
+    registry = ConnectorRegistry(lambda cid: created.append(cid) or ClosableConnector(cid))
     authorized = frozenset({"c-remote"})
     first = registry.resolve("c-remote", authorized)
     second = registry.resolve("c-remote", authorized)

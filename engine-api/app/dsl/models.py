@@ -68,9 +68,9 @@ class EndConfig(CamelModel):
 
 class LlmConfig(CamelModel):
     # 模型连接（tool_connector 中 type=LLM 的一条记录）的 id。给了它就走连接器托管的
-    # 端点与凭据，provider 与进程级 AF_LLM_* 都不再生效；为空时回落到 provider 语义。
+    # 端点与凭据；为空时走进程级 AF_LLM_* 端点。两条路径都只调用真实模型。
     connection_id: str | None = None
-    provider: Literal["mock", "openai-compatible"] = "mock"
+    provider: Literal["openai-compatible"] = "openai-compatible"
     model: str = Field(min_length=1)
     prompt_template: str = Field(min_length=1)
     system_prompt: str | None = None
@@ -78,6 +78,16 @@ class LlmConfig(CamelModel):
     max_tokens: int = Field(1024, ge=1, le=32_000)
     output_mode: Literal["text", "json"] = "text"
     output_schema: dict[str, Any] | None = None
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _reject_offline_provider(cls, value: Any) -> Any:
+        """离线 provider 已从产品中移除，历史 DSL 直接给出可操作的错误。"""
+        if isinstance(value, str) and value.strip().lower() == "mock":
+            raise ValueError(
+                "离线 mock 模型已移除：请为节点设置 connectionId，或改用进程端点 AF_LLM_*"
+            )
+        return value
 
     @field_validator("connection_id")
     @classmethod
