@@ -194,6 +194,58 @@ def test_cron_preview_is_tenant_scoped(client, editor_token, beta_token, admin_t
     assert resp.status_code == 404, resp.text
 
 
+def test_misfire_policy_round_trips(client, editor_token, admin_token):
+    """补跑策略是触发器自己的属性：建、改、读回都该是同一个值。"""
+    wf_id = _published_workflow(client, editor_token, admin_token)
+    hdrs = headers(editor_token, SPACE_A)
+
+    resp = client.post(f"/api/v1/workflows/{wf_id}/triggers",
+                       json={"type": "SCHEDULE", "cron": "0 9 * * *",
+                             "misfirePolicy": "SKIP"},
+                       headers=hdrs)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["misfirePolicy"] == "SKIP", data
+    trigger_id = data["id"]
+    try:
+        resp = client.patch(f"/api/v1/triggers/{trigger_id}",
+                            json={"misfirePolicy": "CATCH_UP_ALL"}, headers=hdrs)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["misfirePolicy"] == "CATCH_UP_ALL", resp.text
+
+        listed = client.get(f"/api/v1/workflows/{wf_id}/triggers", headers=hdrs)
+        one = next(t for t in listed.json()["data"] if t["id"] == trigger_id)
+        assert one["misfirePolicy"] == "CATCH_UP_ALL", one
+    finally:
+        client.delete(f"/api/v1/triggers/{trigger_id}", headers=hdrs)
+
+
+def test_default_misfire_policy_keeps_previous_behaviour(client, editor_token, admin_token):
+    """不传策略时是「只补最近一档」：升级不该悄悄改掉既有触发器的补跑方式。"""
+    wf_id = _published_workflow(client, editor_token, admin_token)
+    hdrs = headers(editor_token, SPACE_A)
+
+    resp = client.post(f"/api/v1/workflows/{wf_id}/triggers",
+                       json={"type": "SCHEDULE", "cron": "0 9 * * *"}, headers=hdrs)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    try:
+        assert data["misfirePolicy"] == "CATCH_UP_LATEST", data
+    finally:
+        client.delete(f"/api/v1/triggers/{data['id']}", headers=hdrs)
+
+
+def test_unknown_misfire_policy_is_rejected(client, editor_token, admin_token):
+    """拼错的策略直接 409：静默退回默认值会让用户以为「跳过了」，实际却在补跑。"""
+    wf_id = _published_workflow(client, editor_token, admin_token)
+    resp = client.post(f"/api/v1/workflows/{wf_id}/triggers",
+                       json={"type": "SCHEDULE", "cron": "0 9 * * *",
+                             "misfirePolicy": "CATCHUP"},
+                       headers=headers(editor_token, SPACE_A))
+    assert resp.status_code == 409, resp.text
+    assert "misfirePolicy" in resp.json()["detail"], resp.text
+
+
 @pytest.mark.skipif(os.environ.get("AF_E2E_SCHEDULE", "") != "1",
                     reason="定时触发按分钟触发，设置 AF_E2E_SCHEDULE=1 才跑这段等待")
 def test_schedule_fires_within_a_minute(client, editor_token, admin_token):

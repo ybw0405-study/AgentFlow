@@ -16,6 +16,7 @@ import type {
   LoginData,
   MeData,
   LlmModelsDto,
+  MisfirePolicy,
   ModelProbeDto,
   KnowledgeBaseDto,
   KnowledgeDocumentDto,
@@ -267,11 +268,21 @@ export const triggerApi = {
   list: (definitionId: string) => get<TriggerDto[]>(`/workflows/${definitionId}/triggers`),
   create: (
     definitionId: string,
-    body: { type: TriggerType; cron?: string; variables?: Record<string, unknown> },
+    body: {
+      type: TriggerType
+      cron?: string
+      misfirePolicy?: MisfirePolicy
+      variables?: Record<string, unknown>
+    },
   ) => post<TriggerDto>(`/workflows/${definitionId}/triggers`, body),
   patch: (
     triggerId: string,
-    body: { enabled?: boolean; cron?: string; variables?: Record<string, unknown> },
+    body: {
+      enabled?: boolean
+      cron?: string
+      misfirePolicy?: MisfirePolicy
+      variables?: Record<string, unknown>
+    },
   ) => patch<TriggerDto>(`/triggers/${triggerId}`, body),
   rotate: (triggerId: string) => post<TriggerDto>(`/triggers/${triggerId}/rotate`),
   previewCron: (

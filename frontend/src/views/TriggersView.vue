@@ -6,7 +6,12 @@ import { describeError, type DescribedError } from '@/api/errors'
 import { initialVariables } from '@/dsl/run-defaults'
 import RunVariablesForm from '@/components/canvas/RunVariablesForm.vue'
 import type { VariableSpec, WorkflowDsl } from '@/dsl/types'
-import type { CronPreviewDto, TriggerDto, WorkflowDefinitionDto } from '@/types/api'
+import type {
+  CronPreviewDto,
+  MisfirePolicy,
+  TriggerDto,
+  WorkflowDefinitionDto,
+} from '@/types/api'
 
 const route = useRoute()
 const workflowId = route.params.id as string
@@ -19,6 +24,7 @@ const notice = ref<string | null>(null)
 const busy = ref(false)
 const showSecret = ref(false)
 const cronDraft = ref('0 9 * * *')
+const misfirePolicy = ref<MisfirePolicy>('CATCH_UP_LATEST')
 const scheduleValues = ref<Record<string, unknown>>({})
 const preview = ref<CronPreviewDto | null>(null)
 const previewError = ref<string | null>(null)
@@ -38,6 +44,28 @@ const CRON_PRESETS = [
   { label: '每 15 分钟', value: '*/15 * * * *' },
 ]
 
+/**
+ * 三种策略不是「补跑开关的三档力度」，而是三件不同的事：探活要跳过、对账要补齐、
+ * 提醒不要迟到。所以每个选项都写清代价，而不是用「激进 / 保守」这种词。
+ */
+const MISFIRE_POLICIES: { value: MisfirePolicy; label: string; hint: string }[] = [
+  {
+    value: 'CATCH_UP_LATEST',
+    label: '只补最近一档',
+    hint: '停机再久也只跑一次——每分钟的任务不会瞬间补出上百条',
+  },
+  {
+    value: 'CATCH_UP_ALL',
+    label: '补齐错过的档位',
+    hint: '按时间顺序回放最近 20 档，更老的丢弃并记审计——按小时对账不会缺一段',
+  },
+  {
+    value: 'SKIP',
+    label: '错过就跳过',
+    hint: '只推游标、留一条审计，不补跑——下午补发早晨的提醒是噪音',
+  },
+]
+
 async function load(): Promise<void> {
   const detail = await workflowApi.detail(workflowId)
   def.value = detail.definition
@@ -49,6 +77,7 @@ async function load(): Promise<void> {
   }
   triggers.value = await triggerApi.list(workflowId)
   if (schedule.value?.cron) cronDraft.value = schedule.value.cron
+  misfirePolicy.value = schedule.value?.misfirePolicy ?? 'CATCH_UP_LATEST'
   scheduleValues.value = schedule.value
     ? { ...initialVariables(dslVariables.value), ...schedule.value.variables }
     : initialVariables(dslVariables.value)
@@ -118,6 +147,7 @@ function createSchedule(): void {
     () => triggerApi.create(workflowId, {
       type: 'SCHEDULE',
       cron: cronDraft.value,
+      misfirePolicy: misfirePolicy.value,
       variables: scheduleValues.value,
     }),
     '定时触发已创建',
@@ -130,6 +160,7 @@ function saveSchedule(): void {
   void run(
     () => triggerApi.patch(current.id, {
       cron: cronDraft.value,
+      misfirePolicy: misfirePolicy.value,
       variables: scheduleValues.value,
     }),
     '定时触发已更新',
@@ -338,7 +369,7 @@ onMounted(() => {
         <span
           class="af-faint"
           style="font-size: 12px"
-        >按 cron 自动跑，精度到分钟；停机恢复后补跑最近一档（只看 24 小时内）</span>
+        >按 cron 自动跑，精度到分钟；停机恢复后怎么补，看下面的策略（只看 24 小时内）</span>
       </div>
 
       <label class="af-label">cron（5 段：分 时 日 月 周）</label>
@@ -373,6 +404,30 @@ onMounted(() => {
       >
         接下来：<span class="mono">{{ preview.times.join(' · ') }}</span>
         <span>（{{ preview.timezone }}，{{ preview.cron }}）</span>
+      </div>
+
+      <div class="af-label">
+        错过档位时
+      </div>
+      <div style="display: grid; gap: 5px; margin-bottom: 4px">
+        <label
+          v-for="item in MISFIRE_POLICIES"
+          :key="item.value"
+          class="af-faint"
+          style="display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 1.6"
+        >
+          <input
+            v-model="misfirePolicy"
+            type="radio"
+            :value="item.value"
+            :disabled="busy"
+            style="margin-top: 3px"
+          >
+          <span>
+            <span :class="misfirePolicy === item.value ? 'af-accent' : ''">{{ item.label }}</span>
+            <span class="af-faint"> · {{ item.hint }}</span>
+          </span>
+        </label>
       </div>
 
       <RunVariablesForm
@@ -413,8 +468,13 @@ onMounted(() => {
             class="mono af-faint"
             style="font-size: 11px"
           >
-            上次触发 {{ instantText(schedule.lastFiredAt) }}<template v-if="schedule.lastSlotAt">
-              （{{ schedule.lastSlotAt }} 档 · {{ schedule.timezone }}）</template>
+            <template v-if="schedule.lastOutcome === 'SKIP'">
+              上次扫描跳过 {{ schedule.lastSlotAt ?? '—' }} 档（未执行）
+            </template>
+            <template v-else>
+              上次触发 {{ instantText(schedule.lastFiredAt) }}<template v-if="schedule.lastSlotAt">
+                （{{ schedule.lastSlotAt }} 档 · {{ schedule.timezone }}）</template>
+            </template>
           </span>
           <span
             v-if="schedule.nextFireAt"

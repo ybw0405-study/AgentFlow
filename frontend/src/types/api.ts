@@ -374,6 +374,14 @@ export interface NodePreviewResult {
 
 export type TriggerType = 'WEBHOOK' | 'SCHEDULE'
 
+/**
+ * 停机期间错过的档位怎么处理。
+ *
+ * 三档语义不同：`CATCH_UP_LATEST` 只补最近一档（默认），`CATCH_UP_ALL` 按时间顺序补齐
+ * 最近若干档，`SKIP` 一档都不补、只推游标（适合「提醒」类，下午补发早晨的提醒是噪音）。
+ */
+export type MisfirePolicy = 'CATCH_UP_LATEST' | 'CATCH_UP_ALL' | 'SKIP'
+
 /** 工作流外部触发器；token 即入口凭据，secret 用于校验 X-AF-Signature。 */
 export interface TriggerDto {
   id: string
@@ -383,6 +391,8 @@ export interface TriggerDto {
   cron: string | null
   timezone: string
   enabled: boolean
+  /** 老数据可能缺失这个键（后端 `non_null` 序列化），回落到默认策略。 */
+  misfirePolicy?: MisfirePolicy
   variables: Record<string, unknown>
   versionId: string | null
   /** 真实跑起来的瞬间（ISO），前端按浏览器时区渲染。 */
@@ -392,6 +402,11 @@ export interface TriggerDto {
    * 未触发过时后端不下发这个键（`non_null` 序列化），所以是可选的。
    */
   lastSlotAt?: string | null
+  /**
+   * 上一次扫描的结局：`FIRE` 真跑了，`SKIP` 整批档位被放弃。
+   * 跳过时 `lastFiredAt` 不变——所以界面不能把跳过写成「上次触发」。
+   */
+  lastOutcome?: 'FIRE' | 'SKIP' | null
   /** 下一档，与 `nextFireTimes[0]` 相同；同样按触发器时区格式化。 */
   nextFireAt?: string | null
   nextFireTimes?: string[]

@@ -219,8 +219,8 @@ class TriggerServiceTest {
     void scheduledRowKeepsItsVariables() {
         // 触发器上配的固定入参要随每次触发一起下发，不能被空 payload 覆盖
         var row = new WorkflowTriggerMapper.Row("tr-1", "d-1", "t-1", "SCHEDULE", "tok", "sec",
-                "0 9 * * *", "Asia/Shanghai", "{\"question\":\"日报\"}", null, true, null, null,
-                "u-1", null, null);
+                "0 9 * * *", "Asia/Shanghai", "{\"question\":\"日报\"}", null, true,
+                "CATCH_UP_LATEST", null, null, null, "u-1", null, null);
         when(executions.triggerFromExternal(anyString(), anyString(), anyString(), isNull(),
                 anyString(), any(), anyString()))
                 .thenReturn(new ExecutionService.TriggerResult("e-1", "PENDING", false));
@@ -234,10 +234,109 @@ class TriggerServiceTest {
         assertEquals("日报", captor.getValue().get("question"));
     }
 
+    @Test
+    void skipPolicyConsumesTheMissedSlotsWithoutFiringAny() {
+        // 每 15 分钟一档、停机 45 分钟：三档全放弃，游标推到最近一档
+        var row = schedule("tr-1", "*/15 * * * *", MisfirePolicy.SKIP,
+                Timestamp.from(Instant.parse("2026-11-20T00:15:00Z")), null);
+
+        var plan = service.dueSlots(row, Instant.parse("2026-11-20T01:01:00Z"));
+
+        assertTrue(plan.slots().isEmpty());
+        assertEquals(Instant.parse("2026-11-20T01:00:00Z"), plan.consumeTo());
+        assertEquals(3, plan.skipped());
+        assertFalse(plan.isEmpty());
+    }
+
+    @Test
+    void skipAdvancesTheCursorSoTheSameSlotsAreNotReplayedEveryRound() {
+        // 跳过一次之后，last_slot_at 停在 01:00；下一轮不该再把 01:00 之前那些档位算一遍
+        var row = schedule("tr-1", "*/15 * * * *", MisfirePolicy.SKIP,
+                Timestamp.from(Instant.parse("2026-11-20T00:15:00Z")),
+                Timestamp.from(Instant.parse("2026-11-20T01:00:00Z")));
+
+        assertTrue(service.dueSlots(row, Instant.parse("2026-11-20T01:05:00Z")).isEmpty());
+    }
+
+    @Test
+    void skipWritesOnlyTheSlotCursorNotTheFiredAt() {
+        var row = schedule("tr-1", "* * * * *", MisfirePolicy.SKIP,
+                Timestamp.from(Instant.parse("2026-11-20T00:57:00Z")), null);
+        Instant now = Instant.parse("2026-11-20T01:00:20Z");
+        var plan = service.dueSlots(row, now);
+
+        service.skipMissed(row, now, plan);
+
+        // 跳过不是触发：不改 last_fired_at，界面上的「上次触发」才不会撒谎
+        verify(triggers).markSkipped(eq("tr-1"), eq(Timestamp.from(plan.consumeTo())));
+        verify(triggers, Mockito.never()).markFired(anyString(), any(), any());
+    }
+
+    @Test
+    void catchUpAllReplaysEveryMissedSlotInOrder() {
+        var row = schedule("tr-1", "*/15 * * * *", MisfirePolicy.CATCH_UP_ALL,
+                Timestamp.from(Instant.parse("2026-11-19T23:30:00Z")), null);
+
+        var plan = service.dueSlots(row, Instant.parse("2026-11-20T00:01:00Z"));
+
+        // 23:45 / 00:00 两档，按时间升序回放：先补老账再补新账
+        assertEquals(List.of(Instant.parse("2026-11-19T23:45:00Z"),
+                Instant.parse("2026-11-20T00:00:00Z")), plan.slots());
+        assertEquals(0, plan.skipped());
+        assertNull(plan.consumeTo());
+    }
+
+    @Test
+    void catchUpAllIsBoundedAndDropsTheOldestSlots() {
+        // 每分钟一档、停机 30 分钟：只回放最近 20 档，剩下 10 档记在 skipped 里
+        var row = schedule("tr-1", "* * * * *", MisfirePolicy.CATCH_UP_ALL,
+                Timestamp.from(Instant.parse("2026-11-20T00:30:00Z")), null);
+
+        var plan = service.dueSlots(row, Instant.parse("2026-11-20T01:00:30Z"));
+
+        assertEquals(20, plan.slots().size());
+        assertEquals(10, plan.skipped());
+        assertEquals(Instant.parse("2026-11-20T00:41:00Z"), plan.slots().get(0));
+        assertEquals(Instant.parse("2026-11-20T01:00:00Z"),
+                plan.slots().get(plan.slots().size() - 1));
+    }
+
+    @Test
+    void firstRunIgnoresSkipPolicy() {
+        // 刚建的触发器没「错过」过什么，即使选了 SKIP 也该跑当前这一档
+        var row = schedule("tr-1", "* * * * *", MisfirePolicy.SKIP, null, null);
+
+        assertEquals(List.of(Instant.parse("2026-11-20T01:00:00Z")),
+                service.dueSlots(row, Instant.parse("2026-11-20T01:00:20Z")).slots());
+    }
+
+    @Test
+    void unknownPolicyIsRejectedOnWrite() {
+        var error = assertThrows(BusinessException.class, () -> MisfirePolicy.require("CATCHUP"));
+
+        assertTrue(error.getMessage().contains("misfirePolicy"), error.getMessage());
+    }
+
+    @Test
+    void unknownPolicyFallsBackToTheDefaultOnRead() {
+        // 老数据 / 手改过的行不该把整轮扫描打断
+        assertEquals(MisfirePolicy.CATCH_UP_LATEST, MisfirePolicy.parseOrDefault("catch-up"));
+        assertEquals(MisfirePolicy.DEFAULT, MisfirePolicy.parseOrDefault(null));
+        assertEquals(MisfirePolicy.SKIP, MisfirePolicy.parseOrDefault(" skip "));
+    }
+
     private static WorkflowTriggerMapper.Row schedule(String id, String cron,
                                                       Timestamp lastFiredAt) {
+        return schedule(id, cron, MisfirePolicy.CATCH_UP_LATEST, lastFiredAt, null);
+    }
+
+    private static WorkflowTriggerMapper.Row schedule(String id, String cron,
+                                                      MisfirePolicy policy,
+                                                      Timestamp lastFiredAt,
+                                                      Timestamp lastSlotAt) {
         return new WorkflowTriggerMapper.Row(id, "d-1", "t-1", "SCHEDULE", "tok", "sec",
-                cron, "Asia/Shanghai", null, null, true, lastFiredAt, null, "u-1", null, null);
+                cron, "Asia/Shanghai", null, null, true, policy.name(), lastFiredAt, lastSlotAt,
+                null, "u-1", null, null);
     }
 
     private static WorkflowDefinitionMapper.DefinitionRow definition() {

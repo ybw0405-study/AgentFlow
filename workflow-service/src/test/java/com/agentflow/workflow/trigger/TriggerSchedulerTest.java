@@ -41,26 +41,61 @@ class TriggerSchedulerTest {
     void firesDueTrigger() {
         var row = schedule("tr-1");
         when(service.enabledSchedules()).thenReturn(List.of(row));
-        when(service.dueSlot(eq(row), any())).thenReturn(SLOT);
+        when(service.dueSlots(eq(row), any())).thenReturn(plan(SLOT));
         when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
-        when(service.fireSchedule(eq(row), any(), eq(SLOT))).thenReturn(
+        when(service.fireSchedule(eq(row), any(), eq(SLOT), eq(0))).thenReturn(
                 new TriggerService.FireResult("e-1", "PENDING", false));
 
         scheduler.poll();
 
-        verify(service).fireSchedule(eq(row), any(), eq(SLOT));
+        verify(service).fireSchedule(eq(row), any(), eq(SLOT), eq(0));
+    }
+
+    @Test
+    void firesEverySlotOfACatchUpAllPlan() {
+        var row = schedule("tr-1");
+        var second = SLOT.plusSeconds(900);
+        when(service.enabledSchedules()).thenReturn(List.of(row));
+        when(service.dueSlots(eq(row), any()))
+                .thenReturn(new TriggerService.SlotPlan(List.of(SLOT, second), null, 2));
+        when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
+        when(service.fireSchedule(eq(row), any(), any(), eq(2))).thenReturn(
+                new TriggerService.FireResult("e-1", "PENDING", false));
+
+        scheduler.poll();
+
+        // 补齐策略：一档一轮扫描跑完，其他副本被同一分钟的 claim 挡住
+        verify(service).fireSchedule(eq(row), any(), eq(SLOT), eq(2));
+        verify(service).fireSchedule(eq(row), any(), eq(second), eq(2));
+        verify(service).claimFire(eq("tr-1"), any());
+    }
+
+    @Test
+    void skipPlanConsumesWithoutFiring() {
+        var row = schedule("tr-1");
+        when(service.enabledSchedules()).thenReturn(List.of(row));
+        when(service.dueSlots(eq(row), any()))
+                .thenReturn(new TriggerService.SlotPlan(List.of(), SLOT, 3));
+        when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
+
+        scheduler.poll();
+
+        verify(service).skipMissed(eq(row), any(),
+                eq(new TriggerService.SlotPlan(List.of(), SLOT, 3)));
+        verify(service, never()).fireSchedule(any(), any(), any(), Mockito.anyInt());
     }
 
     @Test
     void skipsTriggerThatAnotherReplicaAlreadyClaimed() {
         var row = schedule("tr-1");
         when(service.enabledSchedules()).thenReturn(List.of(row));
-        when(service.dueSlot(eq(row), any())).thenReturn(SLOT);
+        when(service.dueSlots(eq(row), any())).thenReturn(plan(SLOT));
         when(service.claimFire(eq("tr-1"), any())).thenReturn(false);
 
         scheduler.poll();
 
-        verify(service, never()).fireSchedule(any(), any(), any());
+        verify(service, never()).fireSchedule(any(), any(), any(), Mockito.anyInt());
+        verify(service, never()).skipMissed(any(), any(), any());
     }
 
     @Test
@@ -90,15 +125,15 @@ class TriggerSchedulerTest {
         var first = schedule("tr-1");
         var second = schedule("tr-2");
         when(service.enabledSchedules()).thenReturn(List.of(first, second));
-        when(service.dueSlot(eq(first), any())).thenThrow(new IllegalStateException("boom"));
-        when(service.dueSlot(eq(second), any())).thenReturn(SLOT);
+        when(service.dueSlots(eq(first), any())).thenThrow(new IllegalStateException("boom"));
+        when(service.dueSlots(eq(second), any())).thenReturn(plan(SLOT));
         when(service.claimFire(eq("tr-2"), any())).thenReturn(true);
-        when(service.fireSchedule(eq(second), any(), eq(SLOT))).thenReturn(
+        when(service.fireSchedule(eq(second), any(), eq(SLOT), eq(0))).thenReturn(
                 new TriggerService.FireResult("e-2", "PENDING", false));
 
         scheduler.poll();
 
-        verify(service).fireSchedule(eq(second), any(), eq(SLOT));
+        verify(service).fireSchedule(eq(second), any(), eq(SLOT), eq(0));
     }
 
     @Test
@@ -121,8 +156,13 @@ class TriggerSchedulerTest {
         verify(service, never()).enabledSchedules();
     }
 
+    private static TriggerService.SlotPlan plan(java.time.Instant slot) {
+        return new TriggerService.SlotPlan(List.of(slot), null, 0);
+    }
+
     private static WorkflowTriggerMapper.Row schedule(String id) {
         return new WorkflowTriggerMapper.Row(id, "d-" + id, "t-1", "SCHEDULE", "tok", "sec",
-                "0 9 * * *", "Asia/Shanghai", null, null, true, null, null, "u-1", null, null);
+                "0 9 * * *", "Asia/Shanghai", null, null, true, "CATCH_UP_LATEST", null, null,
+                null, "u-1", null, null);
     }
 }

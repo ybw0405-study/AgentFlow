@@ -57,6 +57,13 @@ public class TriggerService {
     private static final Duration CATCHUP_WINDOW = Duration.ofHours(24);
     /** 兜底上界，防止窗口与 MAX 不一致时退化成死循环。 */
     private static final int MAX_SLOTS_PER_SCAN = 1500;
+    /**
+     * {@code CATCH_UP_ALL} 一轮最多回放多少档。
+     *
+     * <p>「全部补齐」必须有界：每分钟一档的任务停机 3 小时就是 180 次执行，瞬间打满并发与额度。
+     * 超出部分丢弃并记审计（{@code skipped}），补的是最近的这一段——最近的数据通常更要紧。
+     */
+    private static final int MAX_CATCHUP_SLOTS = 20;
     /** 超过 1 分钟就算补偿跑，落审计时带上延迟秒数。 */
     private static final long LATE_THRESHOLD_SECONDS = 60;
     private static final DateTimeFormatter SLOT_FORMAT =
@@ -87,15 +94,34 @@ public class TriggerService {
      * 用 ISO-8601（UTC）交给前端按浏览器时区渲染；{@code lastSlotAt} / {@code nextFireAt} /
      * {@code nextFireTimes} 是 **cron 的墙钟档位**，按触发器自己的时区格式化，调用方要连
      * {@code timezone} 一起看——「每天 09:00」指的是那个时区的 09:00，不是 UTC 的。
+     *
+     * <p>{@code lastOutcome} 回答「上一次扫描到底跑了没有」：{@code SKIP} 时
+     * {@code lastFiredAt} 保持不变（跳过不是触发），只有 {@code lastSlotAt} 前进。
      */
     public record TriggerView(String id, String type, String token, String secret, String cron,
-                              String timezone, boolean enabled, Map<String, Object> variables,
-                              String versionId, String lastFiredAt, String lastSlotAt,
+                              String timezone, boolean enabled, String misfirePolicy,
+                              Map<String, Object> variables, String versionId,
+                              String lastFiredAt, String lastSlotAt, String lastOutcome,
                               String nextFireAt, List<String> nextFireTimes, String createdAt) {
     }
 
     /** cron 预览：不改任何状态，只回答「这条 cron 接下来会在这几个时间点跑」。 */
     public record CronPreview(String cron, String timezone, List<String> times) {
+    }
+
+    /**
+     * 一轮扫描该干什么。
+     *
+     * <p>{@code slots} 是要派发的档位（按时间升序）；{@code consumeTo} 非空表示「一档都不跑，
+     * 只把游标推到这一档」（SKIP 策略）；{@code skipped} 是这一批里没有派发的档数，用于审计与
+     * 自我解释——用户问「为什么只跑了一次」，答案就在这个数字里。
+     */
+    public record SlotPlan(List<Instant> slots, Instant consumeTo, int skipped) {
+        public static final SlotPlan NONE = new SlotPlan(List.of(), null, 0);
+
+        public boolean isEmpty() {
+            return slots.isEmpty() && consumeTo == null;
+        }
     }
 
     public record FireResult(String executionId, String status, boolean idempotentReplay) {
@@ -109,7 +135,7 @@ public class TriggerService {
     }
 
     public TriggerView create(TenantInfo tenant, String definitionId, String type, String cron,
-                              Map<String, Object> variables) {
+                              String misfirePolicy, Map<String, Object> variables) {
         if (!tenant.atLeast("EDITOR")) {
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "insufficient role");
         }
@@ -119,19 +145,24 @@ public class TriggerService {
             throw new BusinessException(ErrorCode.WF_STATE_001, "type must be WEBHOOK or SCHEDULE");
         }
         String normalized = kind.equals("SCHEDULE") ? requireCron(cron) : null;
+        String policy = kind.equals("SCHEDULE")
+                ? MisfirePolicy.require(misfirePolicy).name()
+                : MisfirePolicy.DEFAULT.name();
         String id = java.util.UUID.randomUUID().toString();
         var row = new WorkflowTriggerMapper.Row(id, definitionId, tenant.tenantId(), kind,
                 newToken(), newSecret(), normalized, "Asia/Shanghai",
-                writeJson(variables), null, true, null, null, tenant.userId(), null, null);
+                writeJson(variables), null, true, policy, null, null, null, tenant.userId(),
+                null, null);
         triggers.insert(row);
         audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
                 "TRIGGER_CREATED", Map.of("definitionId", definitionId, "triggerId", id,
-                        "type", kind, "cron", normalized == null ? "" : normalized)));
+                        "type", kind, "cron", normalized == null ? "" : normalized,
+                        "misfirePolicy", policy)));
         return toView(triggers.findByIdAndTenant(id, tenant.tenantId()));
     }
 
     public TriggerView patch(TenantInfo tenant, String triggerId, Boolean enabled, String cron,
-                             Map<String, Object> variables) {
+                             String misfirePolicy, Map<String, Object> variables) {
         if (!tenant.atLeast("EDITOR")) {
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "insufficient role");
         }
@@ -139,9 +170,14 @@ public class TriggerService {
         String nextCron = cron != null ? requireCron(cron) : row.cronExpr();
         String nextVariables = variables != null ? writeJson(variables) : row.variablesJson();
         boolean nextEnabled = enabled != null ? enabled : row.enabled();
-        triggers.update(triggerId, tenant.tenantId(), nextEnabled, nextCron, nextVariables);
+        String nextPolicy = misfirePolicy != null
+                ? MisfirePolicy.require(misfirePolicy).name()
+                : MisfirePolicy.parseOrDefault(row.misfirePolicy()).name();
+        triggers.update(triggerId, tenant.tenantId(), nextEnabled, nextCron, nextPolicy,
+                nextVariables);
         audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
-                "TRIGGER_UPDATED", Map.of("triggerId", triggerId, "enabled", nextEnabled)));
+                "TRIGGER_UPDATED", Map.of("triggerId", triggerId, "enabled", nextEnabled,
+                        "misfirePolicy", nextPolicy)));
         return toView(triggers.findByIdAndTenant(triggerId, tenant.tenantId()));
     }
 
@@ -222,6 +258,12 @@ public class TriggerService {
      * 于是走幂等回放（{@code idempotentReplay=true}）而不是再跑一遍。
      */
     public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now, Instant slot) {
+        return fireSchedule(row, now, slot, 0);
+    }
+
+    /** {@code skipped} 是这一批补跑里被放弃的档数：写进审计，事后能解释「为什么只跑了几次」。 */
+    public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now, Instant slot,
+                                   int skipped) {
         Objects.requireNonNull(slot, "slot");
         String slotStamp = minuteOf(row.timezone(), slot);
         long lateSeconds = Math.max(0, Duration.between(slot, now).getSeconds());
@@ -235,12 +277,35 @@ public class TriggerService {
                         "cron", row.cronExpr() == null ? "" : row.cronExpr(),
                         "slot", slotStamp,
                         "lateSeconds", lateSeconds,
+                        "skipped", skipped,
+                        "policy", MisfirePolicy.parseOrDefault(row.misfirePolicy()).name(),
                         "compensated", lateSeconds >= LATE_THRESHOLD_SECONDS)));
         if (lateSeconds >= LATE_THRESHOLD_SECONDS) {
             log.info("schedule trigger {} fired late: slot={} late={}s idempotentReplay={}",
                     row.id(), slotStamp, lateSeconds, result.idempotentReplay());
         }
         return new FireResult(result.executionId(), result.status(), result.idempotentReplay());
+    }
+
+    /**
+     * {@code SKIP} 策略：一档都不跑，只把游标推到最新错过的那一档。
+     *
+     * <p>不推游标会让每轮扫描都重新算出同一批过期档位，等于永远卡在「本该跳过」的状态里；
+     * 而 {@code lastFiredAt} 必须原样保留——它是「真的跑过一次」的事实，跳过不是触发。
+     */
+    public void skipMissed(WorkflowTriggerMapper.Row row, Instant now, SlotPlan plan) {
+        Instant latest = plan.consumeTo();
+        Objects.requireNonNull(latest, "consumeTo");
+        String slotStamp = minuteOf(row.timezone(), latest);
+        triggers.markSkipped(row.id(), Timestamp.from(latest));
+        audit.publish(AuditMessage.of(row.tenantId(), null, "system:schedule", "TRIGGER_SKIPPED",
+                Map.of("triggerId", row.id(), "type", "SCHEDULE",
+                        "cron", row.cronExpr() == null ? "" : row.cronExpr(),
+                        "slot", slotStamp,
+                        "missed", plan.skipped(),
+                        "policy", MisfirePolicy.SKIP.name())));
+        log.info("schedule trigger {} skipped {} missed slot(s): latest={} scanAt={}",
+                row.id(), plan.skipped(), slotStamp, now);
     }
 
     /**
@@ -274,39 +339,81 @@ public class TriggerService {
     }
 
     /**
-     * 该跑但还没跑的那一档：不到点返回 null。
+     * 该跑但还没跑的那些档：不到点返回 {@link SlotPlan#NONE}。
      *
-     * <p>起点是 {@code last_fired_at}（新触发器则是一分钟前，所以创建后不会立刻炸一次），
-     * 但起点早于补跑窗口时截到窗口边界。之后一路向后找**最近**的一档——停机期间错过多次时，
-     * 补的是最近那一次，而不是最老的那一次：日报迟到 3 天，用户要的是今天的日报。
+     * <p>起点是「游标」——{@code last_fired_at} 与 {@code last_slot_at} 里较新的那个（新触发器则是
+     * 一分钟前，所以创建后不会立刻炸一次）。用两者较大者而不是只看 {@code last_fired_at}，是因为
+     * {@code SKIP} 只推进档位、不改「真的跑过」的时间戳，否则跳过一次后每轮都会重算出同一批档位。
+     * 起点早于补跑窗口时截到窗口边界。
+     *
+     * <p>之后按 {@link MisfirePolicy} 决定交出去哪些档：只补最近一档、补齐最近 N 档，或者一档都不补
+     * 只推游标。三种策略共用同一段扫描，差别仅在收尾——这样「哪一档算错过」的口径只有一份。
      */
-    public Instant dueSlot(WorkflowTriggerMapper.Row row, Instant now) {
+    public SlotPlan dueSlots(WorkflowTriggerMapper.Row row, Instant now) {
         if (row.cronExpr() == null || row.cronExpr().isBlank()) {
-            return null;
+            return SlotPlan.NONE;
         }
         final CronExpression cron;
         try {
             cron = parseCron(row.cronExpr());
         } catch (IllegalArgumentException e) {
-            return null;
+            return SlotPlan.NONE;
         }
         Instant floor = now.minus(CATCHUP_WINDOW);
-        Instant base = row.lastFiredAt() == null ? now.minusSeconds(60) : row.lastFiredAt().toInstant();
+        Instant base = cursorOf(row, now);
         if (base.isBefore(floor)) {
             base = floor;
         }
         ZoneId zone = ZoneId.of(row.timezone());
-        Instant slot = null;
+        List<Instant> missed = new ArrayList<>();
         ZonedDateTime cursor = base.atZone(zone);
         for (int i = 0; i < MAX_SLOTS_PER_SCAN; i++) {
             ZonedDateTime next = cron.next(cursor);
             if (next == null || next.toInstant().isAfter(now)) {
                 break;
             }
-            slot = next.toInstant();
+            missed.add(next.toInstant());
             cursor = next;
         }
-        return slot;
+        if (missed.isEmpty()) {
+            return SlotPlan.NONE;
+        }
+        Instant latest = missed.get(missed.size() - 1);
+        // 首次到点不算「错过」：新建的触发器无论什么策略都该跑当前这一档
+        MisfirePolicy policy = row.lastFiredAt() == null && row.lastSlotAt() == null
+                ? MisfirePolicy.CATCH_UP_LATEST
+                : MisfirePolicy.parseOrDefault(row.misfirePolicy());
+        return switch (policy) {
+            case SKIP -> new SlotPlan(List.of(), latest, missed.size());
+            case CATCH_UP_LATEST -> new SlotPlan(List.of(latest), null, missed.size() - 1);
+            case CATCH_UP_ALL -> {
+                int dropped = Math.max(0, missed.size() - MAX_CATCHUP_SLOTS);
+                yield new SlotPlan(List.copyOf(missed.subList(dropped, missed.size())), null,
+                        dropped);
+            }
+        };
+    }
+
+    /** 便捷封装：只要最近那一档（{@code SKIP} 或不到点时返回 null）。 */
+    public Instant dueSlot(WorkflowTriggerMapper.Row row, Instant now) {
+        List<Instant> slots = dueSlots(row, now).slots();
+        return slots.isEmpty() ? null : slots.get(slots.size() - 1);
+    }
+
+    /** 扫描游标：两个时间戳里较新的那个；都为 null 视作「一分钟前刚创建」。 */
+    private static Instant cursorOf(WorkflowTriggerMapper.Row row, Instant now) {
+        Instant fired = row.lastFiredAt() == null ? null : row.lastFiredAt().toInstant();
+        Instant slot = row.lastSlotAt() == null ? null : row.lastSlotAt().toInstant();
+        if (fired == null && slot == null) {
+            return now.minusSeconds(60);
+        }
+        if (fired == null) {
+            return slot;
+        }
+        if (slot == null) {
+            return fired;
+        }
+        return fired.isAfter(slot) ? fired : slot;
     }
 
     /** 接下来 count 个触发点（触发器时区的墙钟串）；cron 非法时返回空表而不是抛错。 */
@@ -478,10 +585,13 @@ public class TriggerService {
         List<String> next = scheduled
                 ? nextSlots(row.cronExpr(), row.timezone(), Instant.now(), 3) : List.of();
         return new TriggerView(row.id(), row.triggerType(), row.token(), row.secret(),
-                row.cronExpr(), row.timezone(), row.enabled(), readJsonObject(row.variablesJson()),
+                row.cronExpr(), row.timezone(), row.enabled(),
+                MisfirePolicy.parseOrDefault(row.misfirePolicy()).name(),
+                readJsonObject(row.variablesJson()),
                 row.versionId(),
                 row.lastFiredAt() == null ? null : row.lastFiredAt().toInstant().toString(),
                 row.lastSlotAt() == null ? null : slotText(row.timezone(), row.lastSlotAt()),
+                row.lastOutcome(),
                 next.isEmpty() ? null : next.get(0), next,
                 row.createdAt() == null ? null : row.createdAt().toInstant().toString());
     }

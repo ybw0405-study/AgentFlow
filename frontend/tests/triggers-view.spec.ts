@@ -62,8 +62,10 @@ const WEBHOOK = {
 
 const SCHEDULE = {
   id: 'tr-2', type: 'SCHEDULE' as const, token: 'tok-sch', secret: 'sec-sch',
-  cron: '0 0 9 * * *', timezone: 'Asia/Shanghai', enabled: true, variables: {},
+  cron: '0 0 9 * * *', timezone: 'Asia/Shanghai', enabled: true,
+  misfirePolicy: 'CATCH_UP_LATEST' as const, variables: {},
   versionId: null, lastFiredAt: '2026-11-20T01:37:00Z', lastSlotAt: '2026-11-20 09:00',
+  lastOutcome: 'FIRE' as const,
   nextFireAt: '2026-11-21 09:00', nextFireTimes: ['2026-11-21 09:00', '2026-11-22 09:00'],
   createdAt: '2026-01-01T00:00:00Z',
 }
@@ -139,6 +141,35 @@ describe('触发页', () => {
     // 上次触发区分「真正跑的时间」与「代表哪一档」
     expect(wrapper.text()).toContain('2026-11-20 09:00 档')
     expect(wrapper.text()).toContain('下次 2026-11-21 09:00')
+  })
+
+  it('默认选中「只补最近一档」并允许换成补齐', async () => {
+    mocks.list.mockResolvedValue([SCHEDULE])
+    mocks.patch.mockResolvedValue(SCHEDULE)
+    const wrapper = await mountView()
+    const radios = wrapper.findAll('input[type="radio"]')
+    expect(radios).toHaveLength(3)
+    expect((radios[0].element as HTMLInputElement).checked).toBe(true)
+
+    await radios[1].setValue()
+    const save = wrapper.findAll('button').find((b) => b.text() === '保存')
+    await save!.trigger('click')
+    await flushPromises()
+
+    // 策略随 cron 一起保存：用户改的是「这条触发器错过时怎么办」，不是全局设置
+    expect(mocks.patch).toHaveBeenCalledWith('tr-2', expect.objectContaining({
+      misfirePolicy: 'CATCH_UP_ALL',
+    }))
+  })
+
+  it('跳过后显示「上次扫描跳过」，不冒充一次触发', async () => {
+    mocks.list.mockResolvedValue([{ ...SCHEDULE, lastOutcome: 'SKIP' as const }])
+    const wrapper = await mountView()
+
+    // lastFiredAt 原样保留着两天前的时间：跳过没跑，界面就不能说「上次触发」
+    expect(wrapper.text()).toContain('上次扫描跳过')
+    expect(wrapper.text()).toContain('档（未执行）')
+    expect(wrapper.text()).not.toContain('上次触发')
   })
 
   it('预览失败时把后端原因就地显示', async () => {

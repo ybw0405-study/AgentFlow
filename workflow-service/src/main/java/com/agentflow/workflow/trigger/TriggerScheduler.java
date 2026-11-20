@@ -23,9 +23,10 @@ import org.springframework.stereotype.Component;
  *       {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一分钟也只会有一条执行。</li>
  * </ol>
  *
- * <p>到点判断以 last_fired_at 为基准：正常运行时每轮最多只有一档到期，停机恢复时会补跑
- * 最近的一档（窗口 24 小时，见 {@link TriggerService#dueSlot}）。补跑的是「最近那一次」，
- * 不是把错过的每一档都重放一遍——停机 3 小时的每分钟任务不会瞬间炸出 180 条执行。
+ * <p>到点判断以「扫描游标」为基准（{@code last_fired_at} 与 {@code last_slot_at} 里较新的那个）：
+ * 正常运行时每轮最多只有一档到期，停机恢复时按触发器的 {@link MisfirePolicy} 处理错过的档位
+ * （窗口 24 小时，见 {@link TriggerService#dueSlots}）——只补最近一档、补齐最近若干档、
+ * 或者整批跳过。三种策略都不做「无限重放」：每分钟任务停机 3 小时不会瞬间炸出 180 条执行。
  */
 @Component
 public class TriggerScheduler {
@@ -61,19 +62,28 @@ public class TriggerScheduler {
         Instant now = Instant.now();
         for (WorkflowTriggerMapper.Row row : service.enabledSchedules()) {
             try {
-                Instant slot = service.dueSlot(row, now);
-                if (slot == null) {
+                var plan = service.dueSlots(row, now);
+                if (plan.isEmpty()) {
                     continue;
                 }
                 if (!service.claimFire(row.id(), now)) {
                     log.debug("schedule trigger {} already claimed this minute", row.id());
                     continue;
                 }
-                var result = service.fireSchedule(row, now, slot);
-                log.info("schedule trigger {} fired slot={} execution={} status={}",
-                        row.id(), slot, result.executionId(), result.status());
+                if (plan.slots().isEmpty()) {
+                    // SKIP 策略：这一批档位整个放弃，只推游标
+                    service.skipMissed(row, now, plan);
+                    continue;
+                }
+                for (Instant slot : plan.slots()) {
+                    var result = service.fireSchedule(row, now, slot, plan.skipped());
+                    log.info("schedule trigger {} fired slot={} execution={} status={}"
+                                    + " skipped={}", row.id(), slot, result.executionId(),
+                            result.status(), plan.skipped());
+                }
             } catch (Exception e) {
-                // 一个触发器失败不该拖垮整轮扫描：记录后继续下一个
+                // 一个触发器失败不该拖垮整轮扫描，也不该吞掉同一触发器后面还没跑的档位：
+                // 已派发的档位都已记账，下一轮从这里继续（未派发的档位幂等键还没用过）
                 log.warn("schedule trigger {} failed: {}", row.id(), e.getMessage());
                 log.debug("schedule trigger failed", e);
             }

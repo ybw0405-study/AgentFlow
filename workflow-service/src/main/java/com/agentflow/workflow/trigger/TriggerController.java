@@ -23,10 +23,12 @@ public class TriggerController {
         this.service = service;
     }
 
-    public record CreateRequest(String type, String cron, Map<String, Object> variables) {
+    public record CreateRequest(String type, String cron, String misfirePolicy,
+                                Map<String, Object> variables) {
     }
 
-    public record PatchRequest(Boolean enabled, String cron, Map<String, Object> variables) {
+    public record PatchRequest(Boolean enabled, String cron, String misfirePolicy,
+                               Map<String, Object> variables) {
     }
 
     public record CronPreviewRequest(String cron, String timezone, Integer count) {
@@ -50,9 +52,10 @@ public class TriggerController {
     public ApiResponse<TriggerService.TriggerView> create(@PathVariable String id,
                                                           @RequestBody(required = false)
                                                           CreateRequest body) {
-        CreateRequest request = body == null ? new CreateRequest("WEBHOOK", null, null) : body;
+        CreateRequest request = body == null
+                ? new CreateRequest("WEBHOOK", null, null, null) : body;
         return ApiResponse.ok(service.create(TenantContext.require(), id, request.type(),
-                request.cron(), request.variables()));
+                request.cron(), request.misfirePolicy(), request.variables()));
     }
 
     @PatchMapping("/api/v1/triggers/{triggerId}")
@@ -60,7 +63,7 @@ public class TriggerController {
                                                          @Validated @RequestBody
                                                          PatchRequest body) {
         return ApiResponse.ok(service.patch(TenantContext.require(), triggerId, body.enabled(),
-                body.cron(), body.variables()));
+                body.cron(), body.misfirePolicy(), body.variables()));
     }
 
     @PostMapping("/api/v1/triggers/{triggerId}/rotate")
