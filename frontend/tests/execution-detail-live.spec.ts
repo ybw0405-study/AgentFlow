@@ -23,6 +23,11 @@ vi.mock('@/api', async (importOriginal) => {
       nodeIo: mocks.nodeIo,
       cancel: vi.fn(),
     },
+    workflowApi: {
+      ...actual.workflowApi,
+      // 该用例聚焦 SSE 实时合并：没有版本 DSL 时页面回退到节点列表，断言保持不变。
+      detail: vi.fn(async () => ({ definition: {}, versions: [] })),
+    },
   }
 })
 

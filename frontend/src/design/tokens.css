@@ -33,6 +33,10 @@
   /* 中性/完成 */
   --af-neutral: #8B8B9E;
 
+  /* 节点分类色：只用于画布节点标题栏细条与端口圆点，不参与状态表达。
+     状态色仍严格保持强调 / 危险 / 中性三种，避免语义混淆。 */
+  --af-node-control: #E8A33D;
+
   /* 字体 */
   --af-font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --af-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;

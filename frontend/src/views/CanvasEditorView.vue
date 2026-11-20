@@ -15,6 +15,11 @@ import type { FlowNodeLike } from '@/dsl/flow-convert'
 import { validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
 import { initialVariables } from '@/dsl/run-defaults'
+import { connectionProblem } from '@/dsl/connection'
+import { autoLayout } from '@/dsl/auto-layout'
+import NodeSearch from '@/components/canvas/NodeSearch.vue'
+import { WORKFLOW_TEMPLATES } from '@/dsl/templates'
+import type { WorkflowTemplate } from '@/dsl/templates'
 import {
   readSubgraphPath,
   subgraphRemovalError,
@@ -56,6 +61,11 @@ const error = ref<string | null>(null)
 const runDialog = ref(false)
 const runVariablesText = ref('{}')
 const busy = ref(false)
+/** 双击画布 / 空格唤起的节点搜索，以及单节点复制粘贴。 */
+const searchOpen = ref(false)
+const clipboardNode = ref<FlowNodeLike | null>(null)
+const templateOpen = ref(false)
+const pendingTemplate = ref<WorkflowTemplate | null>(null)
 /** 运行弹窗里标出必填项，其余是流程内部变量，保持默认即可。 */
 const requiredVariableNames = computed(() =>
   Object.entries(variables.value)
@@ -351,6 +361,11 @@ function addNode(type: NodeType): void {
 }
 
 function onConnect(conn: Connection): void {
+  const problem = connectionProblem(nodes.value, edges.value, conn, inSubgraph.value)
+  if (problem) {
+    notice.value = problem
+    return
+  }
   const next = addEdge(edges.value, conn.source, conn.target)
   if (!next) {
     notice.value = `连线 ${conn.source} → ${conn.target} 已存在`
@@ -405,6 +420,108 @@ function updateNode(updated: DslNode): void {
         }
       : n,
   )
+}
+
+/** 节点卡片内联编辑：只改顶层字段，不重建节点，也不触碰嵌套结构。 */
+function patchNodeConfig(id: string, patch: Record<string, unknown>): void {
+  nodes.value = nodes.value.map((n) =>
+    n.id === id
+      ? { ...n, data: { ...n.data, config: { ...(n.data.config ?? {}), ...patch } } }
+      : n,
+  )
+}
+
+/** 卡片上的「展开完整配置」把右侧抽屉带到该节点（抽屉与 DSL 视图保持原样）。 */
+function openFullConfig(id: string): void {
+  selectNode(id)
+}
+
+/** 搜索落位：新建后按需自动接到落位前选中的节点，省掉一次手动连线。 */
+function addFromSearch(type: NodeType, connect: boolean): void {
+  const anchor = selectedKey.value
+  addNode(type)
+  const created = selectedKey.value
+  if (connect && anchor && created && anchor !== created) {
+    const problem = connectionProblem(
+      nodes.value,
+      edges.value,
+      { source: anchor, target: created },
+      inSubgraph.value,
+    )
+    if (!problem) {
+      const next = addEdge(edges.value, anchor, created)
+      if (next) edges.value = next
+    } else {
+      notice.value = problem
+    }
+  }
+  searchOpen.value = false
+}
+
+function tidyLayout(): void {
+  nodes.value = autoLayout(nodes.value, edges.value)
+  fitViewSoon()
+  notice.value = '已按依赖层级整理布局'
+}
+
+function copySelected(): void {
+  const node = nodes.value.find((n) => n.id === selectedKey.value)
+  if (!node) {
+    notice.value = '先选中一个节点再复制'
+    return
+  }
+  clipboardNode.value = JSON.parse(JSON.stringify(node)) as FlowNodeLike
+  notice.value = `已复制节点 ${node.id}`
+}
+
+function pasteNode(): void {
+  const source = clipboardNode.value
+  if (!source) {
+    notice.value = '剪贴板里没有节点'
+    return
+  }
+  if (source.data.nodeType === 'start') {
+    notice.value = 'start 节点只能有一个，不能粘贴'
+    return
+  }
+  let key = `${source.data.nodeType}_${++keyCounter}`
+  while (nodes.value.some((n) => n.id === key)) key = `${source.data.nodeType}_${++keyCounter}`
+  nodes.value = [
+    ...nodes.value,
+    {
+      ...(JSON.parse(JSON.stringify(source)) as FlowNodeLike),
+      id: key,
+      position: { x: source.position.x + 48, y: source.position.y + 48 },
+      data: { ...source.data, label: key },
+    },
+  ]
+  selectNode(key)
+}
+
+function onPaneDblClick(e: MouseEvent): void {
+  const target = e.target as HTMLElement | null
+  if (target?.classList?.contains('vue-flow__pane')) searchOpen.value = true
+}
+
+function openTemplates(): void {
+  pendingTemplate.value = null
+  templateOpen.value = true
+}
+
+function closeTemplates(): void {
+  templateOpen.value = false
+  pendingTemplate.value = null
+}
+
+/** 模板只替换草稿：已冻结/发布的版本是不可变的，不受影响。 */
+function confirmTemplate(): void {
+  const template = pendingTemplate.value
+  if (!template) return
+  applyDsl(JSON.parse(JSON.stringify(template.dsl)) as WorkflowDsl)
+  void saveNow()
+  closeTemplates()
+  notice.value = `已应用模板「${template.name}」，草稿已保存`
+  fitViewSoon()
 }
 
 function removeNode(key: string): void {
@@ -507,9 +624,27 @@ function isTextEntry(target: EventTarget | null): boolean {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+  if (searchOpen.value) {
+    if (e.key === 'Escape') searchOpen.value = false
+    return
+  }
+  if (templateOpen.value) {
+    if (e.key === 'Escape') closeTemplates()
+    return
+  }
+  const mod = e.ctrlKey || e.metaKey
+  if (mod && e.key === 's') {
     e.preventDefault()
     void saveNow()
+  } else if (mod && e.key.toLowerCase() === 'c' && !isTextEntry(e.target)) {
+    e.preventDefault()
+    copySelected()
+  } else if (mod && e.key.toLowerCase() === 'v' && !isTextEntry(e.target)) {
+    e.preventDefault()
+    pasteNode()
+  } else if (e.key === ' ' && !isTextEntry(e.target) && !runDialog.value) {
+    e.preventDefault()
+    searchOpen.value = true
   } else if (e.key === 'Escape') {
     clearSelection()
     sourceMode.value = false
@@ -634,6 +769,41 @@ onUnmounted(() => {
       </span>
       <button
         class="af-btn af-btn--sm"
+        title="从常用流程骨架开始"
+        @click="openTemplates"
+      >
+        模板
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        title="双击画布或按空格唤起"
+        @click="searchOpen = true"
+      >
+        搜索节点
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        title="按依赖层级自动排布"
+        @click="tidyLayout"
+      >
+        整理布局
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        title="Ctrl+C 复制选中节点"
+        @click="copySelected"
+      >
+        复制
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        title="Ctrl+V 粘贴"
+        @click="pasteNode"
+      >
+        粘贴
+      </button>
+      <button
+        class="af-btn af-btn--sm"
         @click="sourceMode = !sourceMode"
       >
         DSL
@@ -718,13 +888,19 @@ onUnmounted(() => {
         :in-subgraph="inSubgraph"
         @add="addNode"
       />
-      <div style="flex: 1; position: relative">
+      <div
+        style="flex: 1; position: relative"
+        @dblclick="onPaneDblClick"
+      >
         <VueFlow
           ref="flowRef"
           v-model:nodes="nodesForFlow"
           v-model:edges="edgesForFlow"
           class="af-flow"
           :delete-key-code="null"
+          :selection-key-code="'Shift'"
+          :multi-selection-key-code="'Control'"
+          :connection-radius="26"
           :fit-view-on-init="true"
           @nodes-initialized="fitViewSoon"
           @connect="onConnect"
@@ -738,7 +914,11 @@ onUnmounted(() => {
           />
           <Controls />
           <template #node-af="props">
-            <WorkflowNode v-bind="props" />
+            <WorkflowNode
+              v-bind="props"
+              @update-config="(patch: Record<string, unknown>) => patchNodeConfig(props.id, patch)"
+              @expand="openFullConfig(props.id)"
+            />
           </template>
         </VueFlow>
         <div
@@ -777,6 +957,14 @@ onUnmounted(() => {
           :dsl="dslForSource"
           @apply="applyDsl"
           @close="sourceMode = false"
+        />
+        <NodeSearch
+          v-if="searchOpen"
+          :in-subgraph="inSubgraph"
+          :has-start="hasStart"
+          :anchor-id="selectedKey"
+          @add="addFromSearch"
+          @close="searchOpen = false"
         />
       </div>
       <ConfigDrawer
@@ -835,6 +1023,75 @@ onUnmounted(() => {
             @click="run"
           >
             触发执行
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="templateOpen"
+      class="af-modal-backdrop"
+      @click.self="closeTemplates"
+    >
+      <div class="af-panel af-modal">
+        <div
+          class="af-page-title"
+          style="margin-bottom: 8px"
+        >
+          {{ pendingTemplate ? '确认替换草稿' : '从模板新建' }}
+        </div>
+        <template v-if="!pendingTemplate">
+          <p
+            class="af-faint"
+            style="margin: 0 0 12px; font-size: 12px; line-height: 1.6"
+          >
+            模板只替换当前草稿，已发布版本不受影响。默认走内置 mock 模型，
+            可在「连接器」页换成真实模型。
+          </p>
+          <button
+            v-for="t in WORKFLOW_TEMPLATES"
+            :key="t.id"
+            class="af-btn af-btn--sm"
+            style="display: block; width: 100%; text-align: left; margin-bottom: 8px"
+            @click="pendingTemplate = t"
+          >
+            <span style="font-weight: 500">{{ t.name }}</span>
+            <span
+              class="af-faint"
+              style="margin-left: 8px; font-size: 11px"
+            >{{ t.description }}</span>
+          </button>
+        </template>
+        <template v-else>
+          <p
+            class="af-faint"
+            style="margin: 0; font-size: 12px; line-height: 1.6"
+          >
+            将用「{{ pendingTemplate?.name }}」替换当前草稿，包含
+            {{ pendingTemplate?.dsl.nodes.length ?? 0 }} 个节点、
+            {{ pendingTemplate?.dsl.edges.length ?? 0 }} 条连线。
+          </p>
+          <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px">
+            <button
+              class="af-btn af-btn--sm"
+              @click="pendingTemplate = null"
+            >
+              返回
+            </button>
+            <button
+              class="af-btn af-btn--sm af-btn--primary"
+              @click="confirmTemplate"
+            >
+              确认替换
+            </button>
+          </div>
+        </template>
+        <div style="margin-top: 12px">
+          <button
+            class="af-btn af-btn--sm"
+            @click="closeTemplates"
+          >
+            取消
           </button>
         </div>
       </div>

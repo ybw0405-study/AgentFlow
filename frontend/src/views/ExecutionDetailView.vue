@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { executionApi } from '@/api'
+import { executionApi, workflowApi } from '@/api'
 import { openSse } from '@/api/sse'
 import type { SseSession } from '@/api/sse'
 import { useAuthStore } from '@/stores/auth'
@@ -10,12 +10,18 @@ import type { EngineEvent, ExecutionDetail, NodeExecutionDto, NodeIo } from '@/t
 import NodeTree from '@/components/execution/NodeTree.vue'
 import IoPanel from '@/components/execution/IoPanel.vue'
 import TracePanel from '@/components/execution/TracePanel.vue'
+import ExecutionGraph from '@/components/execution/ExecutionGraph.vue'
+import type { WorkflowDsl } from '@/dsl/types'
 
 const route = useRoute()
 const auth = useAuthStore()
 const executionId = route.params.id as string
 
 const detail = ref<ExecutionDetail | null>(null)
+/** 执行当时冻结的不可变版本 DSL；图视图据此还原节点与连线。 */
+const dsl = ref<WorkflowDsl | null>(null)
+const dslLoading = ref(false)
+const viewMode = ref<'graph' | 'list'>('graph')
 const error = ref<string | null>(null)
 const selectedKey = ref<string | null>(null)
 const io = ref<NodeIo | null>(null)
@@ -58,6 +64,26 @@ function statusClass(s: string): string {
 
 async function load(): Promise<void> {
   detail.value = await executionApi.detail(executionId)
+  // 图的 DSL 是附加信息，不能阻塞 SSE 连接：实时态必须按原来的时序建立。
+  void loadDsl()
+}
+
+/** 必须取执行冻结时的版本，不能用当前草稿，否则图上的节点与执行记录对不上。
+ *  取不到时自动回退到节点列表，不让页面留白，也不丢任何执行信息。 */
+async function loadDsl(): Promise<void> {
+  const exec = detail.value?.execution
+  if (!exec) return
+  dslLoading.value = true
+  try {
+    const workflow = await workflowApi.detail(exec.definitionId)
+    const version = workflow.versions.find((v) => v.id === exec.versionId)
+    dsl.value = version ? (JSON.parse(version.dslJson) as WorkflowDsl) : null
+  } catch {
+    dsl.value = null
+  } finally {
+    dslLoading.value = false
+  }
+  if (!dsl.value) viewMode.value = 'list'
 }
 
 /**
@@ -274,17 +300,61 @@ onUnmounted(() => {
     <div
       v-if="detail"
       style="flex: 1; display: grid; min-height: 0;
-         grid-template-columns: 260px 1fr 280px"
+         grid-template-columns: minmax(0, 1fr) 340px 280px"
     >
       <div
         class="af-panel"
-        style="border-radius: 0; border-width: 0 1px 0 0"
+        style="border-radius: 0; border-width: 0 1px 0 0; display: flex; flex-direction: column; min-width: 0"
       >
-        <NodeTree
-          :nodes="nodes"
-          :selected-key="selectedKey"
-          @select="selectNode"
-        />
+        <div style="display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--af-border)">
+          <button
+            class="af-btn af-btn--sm"
+            :class="{ 'af-btn--primary': viewMode === 'graph' }"
+            @click="viewMode = 'graph'"
+          >
+            执行图
+          </button>
+          <button
+            class="af-btn af-btn--sm"
+            :class="{ 'af-btn--primary': viewMode === 'list' }"
+            @click="viewMode = 'list'"
+          >
+            节点列表
+          </button>
+          <span
+            class="af-faint mono"
+            style="margin-left: auto; font-size: 11px"
+          >{{ nodes.length }} 个节点</span>
+        </div>
+        <div style="flex: 1; min-height: 0">
+          <ExecutionGraph
+            v-if="viewMode === 'graph' && dsl"
+            :dsl="dsl"
+            :nodes="nodes"
+            :selected-key="selectedKey"
+            @select="selectNode"
+          />
+          <div
+            v-else-if="viewMode === 'graph' && dslLoading"
+            class="af-faint"
+            style="padding: 16px; font-size: 12px"
+          >
+            正在载入该版本的工作流图…
+          </div>
+          <div
+            v-else-if="viewMode === 'graph'"
+            class="af-faint"
+            style="padding: 16px; font-size: 12px"
+          >
+            该版本的 DSL 不可用，已切到节点列表；执行记录完整保留。
+          </div>
+          <NodeTree
+            v-else
+            :nodes="nodes"
+            :selected-key="selectedKey"
+            @select="selectNode"
+          />
+        </div>
       </div>
       <div
         class="af-panel"
