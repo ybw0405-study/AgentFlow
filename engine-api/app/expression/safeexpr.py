@@ -132,8 +132,14 @@ def unwrap_value(value: Any) -> Any:
     return value
 
 
+_LITERAL_ALIASES: dict[str, Any] = {"true": True, "false": False, "null": None, "none": None}
+
+
 def evaluate(expression: str, names: dict[str, Any]) -> Any:
     scoped = {k: wrap_context(v) for k, v in names.items()}
+    # `true` / `false` / `null` 是 Jinja 与 JSON 共有的写法。simpleeval 默认只认 Python 的
+    # True / False / None，用户按 JSON 习惯写 `vars.urgent == true` 会拿到 EXPR-EVAL-001。
+    scoped = {**_LITERAL_ALIASES, **scoped}
     evaluator = EvalWithCompoundTypes(names=scoped, functions=dict(ALLOWED_FUNCTIONS))
     try:
         return unwrap_value(evaluator.eval(expression))

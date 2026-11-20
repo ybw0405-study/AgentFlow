@@ -145,10 +145,19 @@ def test_loop_body_can_reference_iteration_variable(settings):
     dsl = _loop_dsl(
         body_nodes=[
             {
+                "key": "body_prep",
+                "type": "transform",
+                "config": {
+                    "mappings": [
+                        {"target": "vars.pair", "template": "{{ vars.index }}-{{ vars.item }}"}
+                    ]
+                },
+            },
+            {
                 "key": "body_end",
                 "type": "end",
-                "config": {"resultMapping": {"pair": "{{ vars.index }}-{{ vars.item }}"}},
-            }
+                "config": {"resultMapping": {"pair": "{{ vars.item }}"}},
+            },
         ]
     )
     result = validate_dsl(dsl, settings)
@@ -266,10 +275,15 @@ def test_loop_collect_into_is_definition_not_reference(settings):
     dsl = _loop_dsl(
         body_nodes=[
             {
+                "key": "body_prep",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.v", "template": "{{ vars.item }}"}]},
+            },
+            {
                 "key": "body_end",
                 "type": "end",
                 "config": {"resultMapping": {"v": "{{ vars.item }}"}},
-            }
+            },
         ]
     )
     dsl["nodes"][1]["config"]["collect"] = {"into": "collected", "item": "v"}
@@ -281,9 +295,14 @@ def test_parallel_branch_scoped_variables(settings):
     """parallel 各分支共享外层变量；分支内引用未声明变量仍然报错。"""
     branch = {
         "nodes": [
-            {"key": "b_end", "type": "end", "config": {"resultMapping": {"v": "{{ vars.tags }}"}}}
+            {
+                "key": "b_prep",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.tags", "template": "{{ vars.tags }}"}]},
+            },
+            {"key": "b_end", "type": "end", "config": {"resultMapping": {"v": "{{ vars.tags }}"}}},
         ],
-        "edges": [],
+        "edges": [{"from": "b_prep", "to": "b_end"}],
     }
     dsl = {
         "dslVersion": "1.0",
@@ -419,6 +438,95 @@ def test_expression_approver_syntax_error(settings):
     result = validate_dsl(dsl, settings)
     assert not result.ok
     assert any("not parseable" in e.message for e in result.errors)
+
+
+def test_expression_approver_accepts_json_style_literals(settings):
+    """`true` / `false` / `null` 是画布与 Java 侧都认的写法，发布期不能反而不认。
+
+    Python 的 ast 把它们解析成 Name（Python 字面量是 True/False/None），早期实现
+    直接拒掉，结果就是「画布放行、Java 能求值、发布期 422」。
+    """
+    for expr in (
+        "user.platformAdmin == true",
+        "user.platformAdmin == TRUE",
+        "user.rank > 1 and not false",
+        "user.role != null",
+        "user.role != none",
+        'user.id in ["u-1"] and user.platformAdmin == true',
+    ):
+        dsl = _gate_dsl({"type": "EXPRESSION", "expression": expr})
+        result = validate_dsl(dsl, settings)
+        assert result.ok, (expr, [e.message for e in result.errors])
+
+
+def test_expression_approver_rejects_bare_identifier(settings):
+    """`admin == true` 这类漏写 user. 的写法要挡住，别让它变成「永远为空」的审批人。"""
+    dsl = _gate_dsl({"type": "EXPRESSION", "expression": "admin == true"})
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    assert any("unknown identifier" in e.message for e in result.errors)
+
+
+def _parallel_dsl(branch_nodes: list[dict]) -> dict:
+    """start → parallel → end；branches 内容由入参决定（用于验子图规模约束）。"""
+    return {
+        "dslVersion": "1.0",
+        "variables": {},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "fan",
+                "type": "parallel",
+                "config": {
+                    "join": "all",
+                    "branches": {
+                        "a": {"nodes": branch_nodes, "edges": []},
+                        "b": {"nodes": branch_nodes, "edges": []},
+                    },
+                },
+            },
+            {"key": "end", "type": "end", "config": {"resultMapping": {"ok": "done"}}},
+        ],
+        "edges": [{"from": "start", "to": "fan"}, {"from": "fan", "to": "end"}],
+    }
+
+
+def test_single_node_subgraph_is_rejected_at_publish(settings):
+    """单节点分支发布期就该拦：引擎运行期按 WorkflowDsl 解析子图，跑起来必炸。"""
+    dsl = _parallel_dsl(
+        [
+            {
+                "key": "only",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.a", "template": "a"}]},
+            }
+        ]
+    )
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    # 两个分支的错误相同，校验结果按 (node_key, message) 去重，因此只留一条
+    assert sum("at least 2 nodes" in e.message for e in result.errors) >= 1, [
+        e.message for e in result.errors
+    ]
+
+
+def test_two_node_subgraph_passes(settings):
+    dsl = _parallel_dsl(
+        [
+            {
+                "key": "prep",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.a", "template": "a"}]},
+            },
+            {
+                "key": "tail",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.a", "template": "done"}]},
+            },
+        ]
+    )
+    result = validate_dsl(dsl, settings)
+    assert result.ok, [e.message for e in result.errors]
 
 
 def test_role_approver_untouched_by_expression_rules(settings):

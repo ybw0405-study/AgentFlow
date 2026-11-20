@@ -252,6 +252,23 @@ describe('审批人表达式', () => {
     expect(issues.some((i) => i.message.includes('表达式'))).toBe(true)
   })
 
+  it('true / null 这类字面量大小写不敏感', () => {
+    for (const expression of [
+      'user.platformAdmin == true',
+      'user.platformAdmin == TRUE',
+      'user.role != null',
+      'user.role != none',
+    ]) {
+      const issues = validateDslLocal(gate({ type: 'EXPRESSION', expression }))
+      expect(issues.filter((i) => (i.message ?? '').includes('表达式')), expression).toHaveLength(0)
+    }
+  })
+
+  it('标识符区分大小写', () => {
+    const issues = validateDslLocal(gate({ type: 'EXPRESSION', expression: 'User.id == "u-1"' }))
+    expect(issues.some((i) => i.message.includes('User'))).toBe(true)
+  })
+
   it('没填表达式要提示', () => {
     const issues = validateDslLocal(gate({ type: 'EXPRESSION' }))
     expect(issues.some((i) => i.message.includes('请填写审批人表达式'))).toBe(true)

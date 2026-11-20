@@ -236,6 +236,11 @@ _APPROVER_SCOPES: dict[str, set[str]] = {
 }
 _COMPARE_OPS = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)
 
+# 三处同文法：`true` / `false` / `null` 是字面量写法。Python 的 ast 会把它们解析成
+# Name（Python 自己的字面量是 True/False/None），若不在这里认，就会出现「画布放行、
+# Java 侧能求值、发布期却被拒」的割裂。
+_LITERAL_NAMES = {"true": True, "false": False, "null": None, "none": None}
+
 
 def _expr_problem(node: ast.AST) -> str | None:
     """返回第一个不符合子集的原因；None 表示合法。"""
@@ -281,6 +286,10 @@ def _expr_problem(node: ast.AST) -> str | None:
         if node.attr not in allowed:
             return f"unknown attribute {base.id}.{node.attr} (allowed: {sorted(allowed)})"
         return None
+    if isinstance(node, ast.Name):
+        if node.id.lower() in _LITERAL_NAMES:
+            return None
+        return f"unknown identifier '{node.id}' (allowed: user / space / true / false / null)"
     return f"syntax '{type(node).__name__}' is not supported"
 
 
@@ -406,6 +415,19 @@ def _graph_ref_errors(
             )
 
         for sub, extra in children:
+            # 引擎运行时把子图按 WorkflowDsl 解析（nodes 至少 2 个）。只有 1 个节点的
+            # 子图发布能过、跑起来必定在分支里炸成 PARALLEL-BRANCH-FAILED，必须提前拦。
+            if len(sub.nodes) < 2:
+                errors.append(
+                    DslError(
+                        code=DSL_VALIDATION,
+                        node_key=key,
+                        message=(
+                            "subgraph needs at least 2 nodes "
+                            "(a single-node branch cannot be executed)"
+                        ),
+                    )
+                )
             sub_nodes = {n.key: n for n in sub.nodes}
             sub_edges = list(sub.edges)
             errors.extend(_nested_edge_errors(sub_nodes, sub_edges))

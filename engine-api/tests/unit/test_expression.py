@@ -22,6 +22,16 @@ def test_names_access():
     assert evaluate("nodes.a.output.text", names) == "hi"
 
 
+def test_json_style_literals_in_conditions():
+    """`true` / `false` / `null` 与 Jinja 一致：按 JSON 习惯写的条件不该在运行期炸掉。"""
+    names = {"vars": {"urgent": True, "tag": None, "empty": False}}
+    assert evaluate("vars.urgent == true", names) is True
+    assert evaluate("vars.empty == false", names) is True
+    assert evaluate("vars.tag == null", names) is True
+    assert evaluate("vars.tag == none", names) is True
+    assert evaluate("vars.urgent == false", names) is False
+
+
 def test_json_get():
     obj = {"a": {"b": [{"c": 42}]}}
     assert evaluate("json_get(vars.doc, '$.a.b[0].c')", {"vars": {"doc": obj}}) == 42

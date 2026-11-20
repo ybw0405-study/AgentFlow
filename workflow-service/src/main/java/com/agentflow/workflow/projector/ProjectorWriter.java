@@ -92,18 +92,18 @@ public class ProjectorWriter {
             }
             case "ExecutionTimedOut" -> executions.markTerminal(
                     e.executionId(), "TIMED_OUT", 0, 0, "EXEC-DEADLINE_EXCEEDED");
-            case "NodeScheduled" -> upsertNode(e, "SCHEDULED", p, null, null);
-            case "NodeStarted" -> upsertNode(e, "RUNNING", p, null, null);
+            case "NodeScheduled" -> upsertNode(e, "SCHEDULED", p, null, null, null);
+            case "NodeStarted" -> upsertNode(e, "RUNNING", p, null, null, null);
             case "NodeCompleted" -> {
-                upsertNode(e, "SUCCEEDED", p, (String) p.get("outputDigest"), null);
+                upsertNode(e, "SUCCEEDED", p, (String) p.get("outputDigest"), null, null);
                 // 成本中心：节点完成的 token 消耗累加到租户月度账本（同事务，重放不重复计）
                 budgets.accrue(e.executionId(), asInt(p.get("tokenUsed")),
                         monthlyCallLimit, monthlyTokenLimit);
             }
             case "NodeFailed" -> upsertNode(e, "FAILED", p, null,
-                    (String) p.get("errorCode"));
-            case "NodeSkipped" -> upsertNode(e, "SKIPPED", p, null, null);
-            case "NodeSuspended" -> upsertNode(e, "SUSPENDED", p, null, null);
+                    (String) p.get("errorCode"), (String) p.get("message"));
+            case "NodeSkipped" -> upsertNode(e, "SKIPPED", p, null, null, null);
+            case "NodeSuspended" -> upsertNode(e, "SUSPENDED", p, null, null, null);
             case "GateSuspended" -> {
                 // 节点状态只认 NodeSuspended：GateSuspended 的 payload 是「业务载荷」
                 // （审批人/提示词/超时），不带 attempt，据此 upsert 会写出一条
@@ -164,14 +164,14 @@ public class ProjectorWriter {
     }
 
     private void upsertNode(EngineEvent e, String status, Map<String, Object> payload,
-                            String outputDigest, String errorCode) {
+                            String outputDigest, String errorCode, String errorMessage) {
         nodes.upsert(new NodeExecutionMapper.NodeRow(
                 0L, UUID.randomUUID().toString(), e.executionId(),
                 e.nodeKey(), e.aggregateVersion(), status,
                 asIntOr(payload.get("attempt"), 0),
                 (String) payload.get("inputDigest"), outputDigest,
                 asInt(payload.get("tokenUsed")), (Integer) payload.get("latencyMs"),
-                0, errorCode,
+                0, errorCode, errorMessage,
                 "RUNNING".equals(status) ? new Timestamp(System.currentTimeMillis()) : null,
                 terminal(status) ? new Timestamp(System.currentTimeMillis()) : null));
     }

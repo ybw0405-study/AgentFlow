@@ -80,6 +80,20 @@ class GateExpressionTest {
     }
 
     @Test
+    void literalKeywordsAreCaseInsensitive() {
+        // 画布与发布期都认 true / null 这类 JSON 写法，求值侧不能只认小写
+        assertTrue(GateExpression.evaluate("user.platformAdmin == TRUE", "u-1", "VIEWER", 1, true, "s-1"));
+        assertTrue(GateExpression.evaluate("user.platformAdmin == true", "u-1", "VIEWER", 1, true, "s-1"));
+        assertTrue(GateExpression.evaluate("user.role != null", "u-1", "VIEWER", 1, false, "s-1"));
+    }
+
+    @Test
+    void scopeIdentifiersAreCaseSensitive() {
+        // 标识符区分大小写：User.id 应被当成未知标识符，而不是悄悄等价于 user.id
+        assertThrows(IllegalArgumentException.class, () -> GateExpression.validate("User.id == \"u-1\""));
+    }
+
+    @Test
     void bareAttributeWithoutScopeIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> GateExpression.validate("rank >= 2"));
     }

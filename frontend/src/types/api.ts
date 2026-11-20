@@ -89,7 +89,7 @@ export interface ExecutionDto {
   id: string
   definitionId: string
   versionId: string
-  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'TIMED_OUT'
+  status: 'PENDING' | 'RUNNING' | 'SUSPENDED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'TIMED_OUT'
   triggeredBy: string
   traceId: string
   tokenBudget: number | null
@@ -113,6 +113,8 @@ export interface NodeExecutionDto {
   latencyMs: number | null
   retryCount: number
   errorCode: string | null
+  /** 失败原因（引擎 NodeFailed 的 message，最多 500 字）。 */
+  errorMessage?: string | null
   startedAt: string | null
   finishedAt: string | null
 }

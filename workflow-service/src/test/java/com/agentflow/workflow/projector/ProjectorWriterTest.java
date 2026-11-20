@@ -125,6 +125,23 @@ class ProjectorWriterTest {
     }
 
     @Test
+    void nodeFailedKeepsErrorMessage() {
+        writer.writeBatch(List.of(event(7, "NodeFailed", Map.of(
+                "attempt", 1,
+                "errorCode", "PARALLEL-BRANCH-FAILED",
+                "class", "PERMANENT",
+                "message", "branch 'kb' failed: DSL-REF-001 unknown variable"))));
+
+        ArgumentCaptor<NodeExecutionMapper.NodeRow> row =
+                ArgumentCaptor.forClass(NodeExecutionMapper.NodeRow.class);
+        verify(nodes).upsert(row.capture());
+        assertEquals("PARALLEL-BRANCH-FAILED", row.getValue().errorCode());
+        // 只有错误码的话，界面上看到的就是一串代码，排查还得回事件流翻
+        assertEquals("branch 'kb' failed: DSL-REF-001 unknown variable",
+                row.getValue().errorMessage());
+    }
+
+    @Test
     void gateResolvedMapsDecisionAndResumesExecution() {
         writer.writeBatch(List.of(gateEvent(2, "GateResolved", Map.of(
                 "decision", "TIMEOUT", "resolvedBy", "system:timeout"))));

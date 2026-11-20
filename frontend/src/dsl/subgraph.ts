@@ -185,12 +185,19 @@ export function duplicateSubgraphKeys(graph: SubgraphGraph): string[] {
 }
 
 /**
- * 删除前的子图保护：子图没有 start，必须保留一个 end 收尾。
- * 返回中文原因，null 表示可以删。
+ * 删除节点前的保护：整图必须留一个 `end` 收口。
+ *
+ * 子图不设这条限制——`loop.body` / `parallel.branches` 的出口由上层节点决定，
+ * 引擎并不要求子图里有 end（早前版本在子图上也拦，导致合法图报「子图至少需要 1 个 end」）。
  */
-export function subgraphRemovalError(graph: SubgraphGraph, key: string): string | null {
+export function subgraphRemovalError(
+  graph: SubgraphGraph,
+  key: string,
+  isRoot = false,
+): string | null {
+  if (!isRoot) return null
   const target = graph.nodes.find((n) => n.key === key)
   if (!target || target.type !== 'end') return null
   if (graph.nodes.filter((n) => n.type === 'end').length > 1) return null
-  return '子图至少要保留一个 end 节点：先新增一个 end，再删除这个'
+  return '整图至少要保留一个 end 节点：先新增一个 end，再删除这个'
 }

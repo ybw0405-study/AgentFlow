@@ -365,8 +365,10 @@ public final class GateExpression {
                 }
                 case IDENT -> {
                     next();
-                    String name = token.text().toLowerCase(Locale.ROOT);
-                    switch (name) {
+                    // 关键字大小写不敏感（true / TRUE 都认）；user / space 与属性名区分大小写，
+                    // 与发布期 ast 白名单、画布体检保持同一口径。
+                    String raw = token.text();
+                    switch (raw.toLowerCase(Locale.ROOT)) {
                         case "true" -> {
                             return new Literal(Boolean.TRUE);
                         }
@@ -377,9 +379,9 @@ public final class GateExpression {
                             return new Literal(null);
                         }
                         default -> {
-                            if (!"user".equals(name) && !"space".equals(name)) {
+                            if (!"user".equals(raw) && !"space".equals(raw)) {
                                 throw new IllegalArgumentException(
-                                        "未知标识符 " + token.text()
+                                        "未知标识符 " + raw
                                                 + "（可用 user / space / and / or / not / in）");
                             }
                             expect(Kind.DOT, ".");
@@ -388,14 +390,14 @@ public final class GateExpression {
                                 throw new IllegalArgumentException(
                                         "位置 " + attr.pos() + " 处缺少属性名");
                             }
-                            Set<String> allowed = "user".equals(name)
+                            Set<String> allowed = "user".equals(raw)
                                     ? USER_ATTRS : SPACE_ATTRS;
                             if (!allowed.contains(attr.text())) {
                                 throw new IllegalArgumentException(
-                                        "未知属性 " + token.text() + "." + attr.text()
+                                        "未知属性 " + raw + "." + attr.text()
                                                 + "（可用 " + allowed + "）");
                             }
-                            return new Attr(name, attr.text());
+                            return new Attr(raw, attr.text());
                         }
                     }
                 }

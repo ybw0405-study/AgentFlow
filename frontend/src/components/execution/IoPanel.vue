@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { NodeIo } from '@/types/api'
+import type { NodeExecutionDto, NodeIo } from '@/types/api'
 
 defineOptions({ name: 'IoPanel' })
 
@@ -7,6 +7,8 @@ defineProps<{
   io: NodeIo | null
   loading: boolean
   nodeKey: string | null
+  /** 选中行的执行记录：失败时要能就地看到错误码与原因，不必去翻事件流。 */
+  node?: NodeExecutionDto | null
 }>()
 
 function pretty(value: unknown): string {
@@ -24,6 +26,18 @@ function pretty(value: unknown): string {
         v-if="nodeKey"
         class="mono af-accent"
       >{{ nodeKey }}</span>
+    </div>
+    <div
+      v-if="node?.errorCode"
+      class="af-io__error"
+    >
+      <span class="mono af-danger">{{ node.errorCode }}</span>
+      <p
+        v-if="node.errorMessage"
+        class="af-io__error-msg"
+      >
+        {{ node.errorMessage }}
+      </p>
     </div>
     <div
       v-if="loading"
@@ -51,6 +65,23 @@ function pretty(value: unknown): string {
 </template>
 
 <style scoped>
+.af-io__error {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--af-danger);
+  border-radius: var(--af-radius-sm);
+  background: var(--af-danger-dim);
+  font-size: 11.5px;
+}
+
+.af-io__error-msg {
+  margin: 6px 0 0;
+  color: var(--af-text);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .af-io {
   background: var(--af-surface);
   border: 1px solid var(--af-border);

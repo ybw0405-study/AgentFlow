@@ -46,7 +46,7 @@ function titleFor(meta: { type: NodeType; description: string }): string {
       style="font-size: 11px; margin-top: 12px; line-height: 1.6"
     >
       <template v-if="inSubgraph">
-        当前在子图内：入口由上层节点决定，没有 start；必须保留至少一个 end。
+        当前在子图内：入口由上层节点决定，没有 start；出口也由上层节点收口，不需要 end。
       </template>
       <template v-else>
         选中节点在右侧配置；condition / human_gate 的出边分支在画布底部设置。

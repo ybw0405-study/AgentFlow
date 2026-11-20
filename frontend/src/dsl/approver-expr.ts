@@ -11,8 +11,13 @@ export const APPROVER_ATTRS: Record<string, string[]> = {
   space: ['id'],
 }
 
-const KEYWORDS = new Set(['and', 'or', 'not', 'in', 'true', 'false', 'null'])
+const LITERALS = new Set(['true', 'false', 'null', 'none'])
+const OPERATORS = new Set(['and', 'or', 'not', 'in'])
 const COMPARATORS = new Set(['==', '!=', '<', '<=', '>', '>='])
+
+/** 关键字大小写不敏感（与 Java `GateExpression` 一致）；标识符区分大小写。 */
+const isKeyword = (token: string | undefined, word: string): boolean =>
+  (token ?? '').toLowerCase() === word
 
 const TOKEN_RE = /"[^"]*"|'[^']*'|\d+|[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|[<>()[\],.]/g
 
@@ -41,7 +46,7 @@ export function approverExpressionError(expression: string): string | null {
         i += 1
         continue
       }
-      if (token === 'not') {
+      if (isKeyword(token, 'not')) {
         i += 1
         continue
       }
@@ -57,7 +62,7 @@ export function approverExpressionError(expression: string): string | null {
         i += 1
         continue
       }
-      if (KEYWORDS.has(token)) {
+      if (LITERALS.has(token.toLowerCase()) || OPERATORS.has(token.toLowerCase())) {
         expectValue = false
         i += 1
         continue
@@ -82,12 +87,12 @@ export function approverExpressionError(expression: string): string | null {
       i += 1
       continue
     }
-    if (token === 'and' || token === 'or' || token === 'in') {
+    if (isKeyword(token, 'and') || isKeyword(token, 'or') || isKeyword(token, 'in')) {
       expectValue = true
       i += 1
       continue
     }
-    if (token === 'not' && tokens[i + 1] === 'in') {
+    if (isKeyword(token, 'not') && isKeyword(tokens[i + 1], 'in')) {
       expectValue = true
       i += 2
       continue
@@ -115,7 +120,7 @@ function consumeList(tokens: string[], start: number): number {
     }
     if (needValue) {
       const isValue =
-        /^["']/.test(token) || /^\d+$/.test(token) || token === 'true' || token === 'false' || token === 'null'
+        /^["']/.test(token) || /^\d+$/.test(token) || LITERALS.has(token.toLowerCase())
       if (!isValue) return -1
       needValue = false
     } else if (token === ',') {

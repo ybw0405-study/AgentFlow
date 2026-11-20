@@ -68,8 +68,10 @@ function validateGraph(nodes: DslNode[], edges: DslEdge[], scope: GraphScope): V
     // 子图由上层节点驱动进入，start 在这里既没有入边语义也会被引擎拒绝
     at(starts[0].key, '子图内不能有 start 节点：进入子图就是它的入口')
   }
-  if (!nodes.some((n) => n.type === 'end')) {
-    at(undefined, scope.root ? '至少需要 1 个 end 节点' : '子图至少需要 1 个 end 节点')
+  if (scope.root && !nodes.some((n) => n.type === 'end')) {
+    // 只有整图需要 end 收口：子图的出口由上层节点（loop / parallel）决定，
+    // 引擎也不要求在 body / branches 里放 end。
+    at(undefined, '至少需要 1 个 end 节点')
   }
 
   for (const e of edges) {
@@ -227,6 +229,7 @@ function validateNested(
 ): ValidationIssue[] {
   if (depth >= MAX_SUBGRAPH_DEPTH) return []
   const issues: ValidationIssue[] = []
+  const keyOf = (k: string): string => (scope.prefix ? `${scope.prefix}#${k}` : k)
   const dslLike: WorkflowDsl = {
     dslVersion: '1.0',
     variables: {},
@@ -243,6 +246,14 @@ function validateNested(
       const ref = { nodeKey: node.key }
       const graph = readSubgraph(dslLike, ref)
       if (!graph) continue
+      if (graph.nodes.length < 2) {
+        // 引擎运行期按 WorkflowDsl 解析子图（nodes 至少 2 个）：单节点子图发布能过，
+        // 跑起来必炸在分支上，所以这里就当错误拦住。
+        issues.push({
+          nodeKey: keyOf(node.key),
+          message: '子图至少需要 2 个节点：只有 1 个节点的子图无法执行',
+        })
+      }
       const implicit = [cfg.itemVar, cfg.indexVar].filter(
         (v): v is string => typeof v === 'string' && v.length > 0,
       )
@@ -262,6 +273,12 @@ function validateNested(
       const ref = { nodeKey: node.key, branch }
       const graph = readSubgraph(dslLike, ref)
       if (!graph) continue
+      if (graph.nodes.length < 2) {
+        issues.push({
+          nodeKey: keyOf(node.key),
+          message: `分支「${branch}」至少需要 2 个节点：只有 1 个节点的子图无法执行`,
+        })
+      }
       const childScope: GraphScope = {
         prefix: qualify(scope.prefix, subgraphTitle(dslLike, ref)),
         vars: baseVars,

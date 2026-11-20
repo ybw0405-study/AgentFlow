@@ -80,8 +80,29 @@ function dslWithParallel(): WorkflowDsl {
           join: 'all',
           maxConcurrency: 2,
           branches: {
-            a: { nodes: [end('a_end')], edges: [] },
-            b: { nodes: [end('b_end')], edges: [] },
+            // 每个分支至少 2 个节点：引擎运行期按 WorkflowDsl 解析子图
+            a: {
+              nodes: [
+                {
+                  key: 'a_prep',
+                  type: 'transform',
+                  config: { mappings: [{ target: 'vars.a', template: 'a' }] },
+                },
+                end('a_end'),
+              ],
+              edges: [{ from: 'a_prep', to: 'a_end' }],
+            },
+            b: {
+              nodes: [
+                {
+                  key: 'b_prep',
+                  type: 'transform',
+                  config: { mappings: [{ target: 'vars.b', template: 'b' }] },
+                },
+                end('b_end'),
+              ],
+              edges: [{ from: 'b_prep', to: 'b_end' }],
+            },
           },
         },
       },
@@ -151,7 +172,7 @@ describe('子图读写', () => {
   it('parallel 按分支定位，写一个分支不影响另一个', () => {
     const dsl = dslWithParallel()
     const a = readSubgraph(dsl, { nodeKey: 'fan', branch: 'a' })
-    expect(a?.nodes.map((n) => n.key)).toEqual(['a_end'])
+    expect(a?.nodes.map((n) => n.key)).toEqual(['a_prep', 'a_end'])
     expect(subgraphTitle(dsl, { nodeKey: 'fan', branch: 'b' })).toBe('fan.b')
     expect(readSubgraph(dsl, { nodeKey: 'fan' })).toBeNull()
     expect(readSubgraph(dsl, { nodeKey: 'fan', branch: 'zzz' })).toBeNull()
@@ -253,16 +274,23 @@ describe('子图校验', () => {
     expect(issues.some((i) => i.nodeKey === 'loop_1.body#body_end' && i.message.includes('重复'))).toBe(true)
   })
 
-  it('子图缺少 end 报在子图标题上', () => {
+  it('子图没有 end 不算问题（出口由上层节点决定）', () => {
     const dsl = dslWithLoop()
     const body = readSubgraph(dsl, { nodeKey: 'loop_1' })
-    const broken = writeSubgraph(dsl, { nodeKey: 'loop_1' }, {
+    const withoutEnd = writeSubgraph(dsl, { nodeKey: 'loop_1' }, {
       nodes: (body?.nodes ?? []).filter((n) => n.type !== 'end'),
       edges: [],
     })
+    const issues = validateDslLocal(withoutEnd)
+    // 引擎只要求整图有 end；子图里强求 end 会让合法图报假错（曾出现过，见 0.3.2）
+    expect(issues.filter((i) => i.message.includes('end'))).toHaveLength(0)
+  })
+
+  it('整图缺 end 仍然报错', () => {
+    const dsl = dslWithLoop()
+    const broken = { ...dsl, nodes: dsl.nodes.filter((n) => n.type !== 'end') }
     const issues = validateDslLocal(broken)
-    const found = issues.find((i) => i.message.includes('子图至少需要 1 个 end'))
-    expect(found?.nodeKey).toBe('loop_1.body')
+    expect(issues.some((i) => i.message.includes('至少需要 1 个 end'))).toBe(true)
   })
 
   it('子图内 start 被拒绝，分支边规则同样生效', () => {
@@ -313,12 +341,19 @@ describe('子图校验', () => {
 
 // ---------- 删除保护 ----------
 
-describe('子图删除保护', () => {
-  it('最后一个 end 不能删', () => {
+describe('删除保护', () => {
+  it('子图里的 end 可以删（不设末位保护）', () => {
     const graph = readSubgraph(dslWithLoop(), { nodeKey: 'loop_1' })
     if (!graph) throw new Error('fixture 应有 body 子图')
-    expect(subgraphRemovalError(graph, 'body_end')).toContain('至少要保留一个 end')
+    expect(subgraphRemovalError(graph, 'body_end')).toBeNull()
     expect(subgraphRemovalError(graph, 'body_llm')).toBeNull()
+  })
+
+  it('整图最后一个 end 不能删', () => {
+    const dsl = dslWithLoop()
+    const graph = { nodes: dsl.nodes, edges: [] }
+    expect(subgraphRemovalError(graph, 'end', true)).toContain('至少要保留一个 end')
+    expect(subgraphRemovalError(graph, 'loop_1', true)).toBeNull()
   })
 
   it('还有其它 end 时可以删', () => {
@@ -518,7 +553,7 @@ describe('画布内进出子图', () => {
     ])
   })
 
-  it('子图内删除最后一个 end 被拒绝并给出提示', async () => {
+  it('子图内删 end 直接生效，整图删最后一个 end 被拒绝并给出提示', async () => {
     const dsl = dslWithLoop()
     const wrapper = await mountCanvas(dsl)
     await enterLoopBody(wrapper, dsl)
@@ -527,11 +562,16 @@ describe('画布内进出子图', () => {
     await flushPromises()
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))
     await flushPromises()
+    expect((flow(wrapper).props('nodes') as { id: string }[]).map((n) => n.id)).toEqual(['body_llm'])
 
-    expect((flow(wrapper).props('nodes') as { id: string }[]).map((n) => n.id)).toEqual([
-      'body_llm',
-      'body_end',
-    ])
+    // 回到整图：最后一个 end 是收口，删掉会被拒绝
+    await wrapper.findAll('.af-breadcrumb button').find((b) => b.text() === '工作流')!.trigger('click')
+    await flushPromises()
+    flow(wrapper).vm.$emit('nodeClick', { node: { id: 'end' } })
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))
+    await flushPromises()
+    expect((flow(wrapper).props('nodes') as { id: string }[]).map((n) => n.id)).toContain('end')
     expect(wrapper.text()).toContain('至少要保留一个 end')
   })
 
