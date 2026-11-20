@@ -17,6 +17,8 @@ on:
       - "db/**"
       - "e2e/**"
       - "scripts/seed-demo.sql"
+      - "scripts/dump-openapi-java.py"
+      - "docs/openapi/**"
       - "ops/docker-compose.infra.yml"
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
@@ -135,6 +137,11 @@ jobs:
         env:
           AF_E2E_BASE_URL: http://127.0.0.1:8080
         run: pytest -q e2e
+
+      # 四个 Java 服务的 spec 由 springdoc 在运行时生成；这条流水线已经把服务起好了，
+      # 直接抓 /v3/api-docs 和入库基线比对，避免再为一份文档单独起一套基础设施。
+      - name: Java OpenAPI 漂移检查
+        run: python scripts/dump-openapi-java.py --check
 
       - name: 失败时收集日志
         if: failure()

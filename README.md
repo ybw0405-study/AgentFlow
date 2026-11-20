@@ -396,6 +396,13 @@ engine-api/.venv/Scripts/python.exe scripts/dump-openapi.py
 git add docs/openapi/engine-api.json
 ```
 
+Java 侧新增或改动 Controller 后，起好全栈再刷四份 spec（漂移检查在 `e2e` 流水线里跑）：
+
+```powershell
+python scripts/dump-openapi-java.py
+git add docs/openapi/java-*.json
+```
+
 ## 安全
 
 凭据加密、出网沙箱、多租户隔离等控制的位置与已知限制见 [`SECURITY.md`](SECURITY.md)。漏洞请走私下渠道上报，不要开公开 Issue。
@@ -449,7 +456,7 @@ git add docs/openapi/engine-api.json
 2. 预算预占的崩溃泄漏窗口已由 checkpoint/恢复对账收敛（`BudgetLedger.reconcile`）；Redis 全部丢失时会从事件流重建。
 3. 沙箱做「域名白名单 + 解析期私网拦截」，未做 DNS 钉扎（rebinding 由生产 egress 代理兜底）。
 4. 引擎内置 RocketMQ 消费端（`engine-api/app/messaging/`，按 5.x remoting 协议用标准库自行实现，不依赖需要 librocketmq 的 C++ 客户端）：`AF_MQ_ENABLED` 与 `AF_MQ_CONSUME` 同为真时，与 HTTP 回调**并行**消费 `af-gate-decision`，重复裁决由引擎侧幂等吸收；HTTP 仍是主通道，`gate_resolve_outbox` 负责引擎不可达时的重投补偿。消费端只做短轮询（不发心跳、不挂起长轮询），状态见 `GET /internal/mq/status`。
-5. Java 侧 OpenAPI 生成物未入库（contract-drift 覆盖引擎侧）。
+5. Java 侧 OpenAPI 已由 springdoc 在运行时生成，四份基线（`docs/openapi/java-*.json`）由 `scripts/dump-openapi-java.py` 抓取入库，漂移检查复用 `e2e` 已经起好的全栈；因此**纯静态的 `java-ci` 不检查 spec**，只改 Controller 的改动要等 e2e 流水线给出结论。生成物会去掉 `servers`（那是按请求 Host 拼的部署地址，不是契约）并把 `info.version` 固定为项目版本，换端口或域名不会让基线漂移；改版本号则两边都要刷新，见 `CONTRIBUTING.md`。
 6. `human_gate` 的 `EXPRESSION` 审批人只认受限子集：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`，比较 `== != < <= > >=`、`in` / `not in`、`and` / `or` / `not`，字面量支持字符串、整数、布尔、null 与列表；**不支持函数调用与下标**。三处同文法——发布期在引擎侧以 `ast` 白名单静态校验、运行期由控制面逐候选求值、画布编辑时即时体检；表达式为空或非法一律 fail-closed（无人可批，记 ERROR）。子图（loop/parallel/subworkflow）内不允许 `human_gate`。
 7. 评测与 A/B 用轮询收口（默认 3s），不是事件驱动；用例数上限 50/次。
 8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、也不要求 `end`（出口由上层节点收口），画布最多下钻 4 层；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。

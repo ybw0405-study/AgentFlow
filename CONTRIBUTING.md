@@ -42,6 +42,17 @@ cd engine-api
 .venv/Scripts/python.exe ../scripts/dump-openapi.py
 ```
 
+Java 侧的 Controller 改动也要刷基线，但它需要服务在跑（springdoc 在运行时生成 spec）：
+
+```powershell
+scripts/start-dev.ps1
+python scripts/dump-openapi-java.py
+git add docs/openapi/java-*.json
+```
+
+`python scripts/dump-openapi-java.py --check` 只比对不写文件，`e2e` 流水线用它做漂移检查。
+改版本号会写进 `info.version`，四份 Java 基线与引擎侧基线要一起刷。
+
 ## 数据库迁移
 
 `db/mysql` 与 `db/postgres` 由 Flyway 管理，**已合入的迁移文件禁止修改**，只能追加新版本号。
