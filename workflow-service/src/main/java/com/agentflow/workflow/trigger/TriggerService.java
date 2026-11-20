@@ -16,12 +16,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.slf4j.Logger;
@@ -45,6 +48,19 @@ public class TriggerService {
     /** claim 的存活时间：覆盖一轮扫描 + 一次派发，过期后下一分钟自然换了 key。 */
     private static final Duration CLAIM_TTL = Duration.ofMinutes(2);
     private static final long SIGNATURE_SKEW_SECONDS = 300;
+    /**
+     * 补跑窗口：停机再久，也只往前找 24 小时内的档位。
+     *
+     * <p>它同时是循环的上界——每分钟一档的 cron 最多回看 1440 档，扫描一轮不会失控。
+     * 窗口外的错过直接放弃：业务方看到「补跑了一次最近的」，比看到几十条迟到执行更容易解释。
+     */
+    private static final Duration CATCHUP_WINDOW = Duration.ofHours(24);
+    /** 兜底上界，防止窗口与 MAX 不一致时退化成死循环。 */
+    private static final int MAX_SLOTS_PER_SCAN = 1500;
+    /** 超过 1 分钟就算补偿跑，落审计时带上延迟秒数。 */
+    private static final long LATE_THRESHOLD_SECONDS = 60;
+    private static final DateTimeFormatter SLOT_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final WorkflowTriggerMapper triggers;
     private final WorkflowDefinitionMapper definitions;
@@ -64,9 +80,22 @@ public class TriggerService {
         this.redis = redis;
     }
 
+    /**
+     * 触发器的对外视图。
+     *
+     * <p>两种时间串刻意不一样：{@code lastFiredAt} / {@code createdAt} 是**真实发生过的瞬间**，
+     * 用 ISO-8601（UTC）交给前端按浏览器时区渲染；{@code lastSlotAt} / {@code nextFireAt} /
+     * {@code nextFireTimes} 是 **cron 的墙钟档位**，按触发器自己的时区格式化，调用方要连
+     * {@code timezone} 一起看——「每天 09:00」指的是那个时区的 09:00，不是 UTC 的。
+     */
     public record TriggerView(String id, String type, String token, String secret, String cron,
                               String timezone, boolean enabled, Map<String, Object> variables,
-                              String versionId, String lastFiredAt, String createdAt) {
+                              String versionId, String lastFiredAt, String lastSlotAt,
+                              String nextFireAt, List<String> nextFireTimes, String createdAt) {
+    }
+
+    /** cron 预览：不改任何状态，只回答「这条 cron 接下来会在这几个时间点跑」。 */
+    public record CronPreview(String cron, String timezone, List<String> times) {
     }
 
     public record FireResult(String executionId, String status, boolean idempotentReplay) {
@@ -93,7 +122,7 @@ public class TriggerService {
         String id = java.util.UUID.randomUUID().toString();
         var row = new WorkflowTriggerMapper.Row(id, definitionId, tenant.tenantId(), kind,
                 newToken(), newSecret(), normalized, "Asia/Shanghai",
-                writeJson(variables), null, true, null, tenant.userId(), null, null);
+                writeJson(variables), null, true, null, null, tenant.userId(), null, null);
         triggers.insert(row);
         audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
                 "TRIGGER_CREATED", Map.of("definitionId", definitionId, "triggerId", id,
@@ -185,16 +214,32 @@ public class TriggerService {
         return body;
     }
 
-    /** 定时扫描的入口：同一分钟内重复扫描用同一个幂等键，不会重复跑。 */
-    public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now) {
+    /**
+     * 定时扫描的入口：跑的是 {@code slot} 那一档，而不是「现在」。
+     *
+     * <p>幂等键用档位（{@code sched-{id}-{档位}}）而不是当前分钟，是为了让「派发成功、
+     * 记账前进程被杀」这种中断可恢复：重启后 {@code last_fired_at} 没变，重算出的还是同一档，
+     * 于是走幂等回放（{@code idempotentReplay=true}）而不是再跑一遍。
+     */
+    public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now, Instant slot) {
+        Objects.requireNonNull(slot, "slot");
+        String slotStamp = minuteOf(row.timezone(), slot);
+        long lateSeconds = Math.max(0, Duration.between(slot, now).getSeconds());
         var result = executions.triggerFromExternal(row.tenantId(), "system:schedule",
                 row.definitionId(), row.versionId(),
-                "sched-" + row.id() + "-" + minuteOf(row.timezone(), now), merge(row, Map.of()),
+                "sched-" + row.id() + "-" + slotStamp, merge(row, Map.of()),
                 "sched-" + row.id());
-        triggers.markFired(row.id(), Timestamp.from(now));
+        triggers.markFired(row.id(), Timestamp.from(now), Timestamp.from(slot));
         audit.publish(AuditMessage.of(row.tenantId(), result.executionId(), "system:schedule",
                 "TRIGGER_FIRED", Map.of("triggerId", row.id(), "type", "SCHEDULE",
-                        "cron", row.cronExpr() == null ? "" : row.cronExpr())));
+                        "cron", row.cronExpr() == null ? "" : row.cronExpr(),
+                        "slot", slotStamp,
+                        "lateSeconds", lateSeconds,
+                        "compensated", lateSeconds >= LATE_THRESHOLD_SECONDS)));
+        if (lateSeconds >= LATE_THRESHOLD_SECONDS) {
+            log.info("schedule trigger {} fired late: slot={} late={}s idempotentReplay={}",
+                    row.id(), slotStamp, lateSeconds, result.idempotentReplay());
+        }
         return new FireResult(result.executionId(), result.status(), result.idempotentReplay());
     }
 
@@ -228,22 +273,81 @@ public class TriggerService {
         }
     }
 
-    /** cron 是否是「到点了」：用上次触发时间（或一分钟前）推算下一次。 */
-    public boolean isDue(WorkflowTriggerMapper.Row row, Instant now) {
+    /**
+     * 该跑但还没跑的那一档：不到点返回 null。
+     *
+     * <p>起点是 {@code last_fired_at}（新触发器则是一分钟前，所以创建后不会立刻炸一次），
+     * 但起点早于补跑窗口时截到窗口边界。之后一路向后找**最近**的一档——停机期间错过多次时，
+     * 补的是最近那一次，而不是最老的那一次：日报迟到 3 天，用户要的是今天的日报。
+     */
+    public Instant dueSlot(WorkflowTriggerMapper.Row row, Instant now) {
         if (row.cronExpr() == null || row.cronExpr().isBlank()) {
-            return false;
+            return null;
+        }
+        final CronExpression cron;
+        try {
+            cron = parseCron(row.cronExpr());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        Instant floor = now.minus(CATCHUP_WINDOW);
+        Instant base = row.lastFiredAt() == null ? now.minusSeconds(60) : row.lastFiredAt().toInstant();
+        if (base.isBefore(floor)) {
+            base = floor;
         }
         ZoneId zone = ZoneId.of(row.timezone());
-        Instant base = row.lastFiredAt() != null
-                ? row.lastFiredAt().toInstant()
-                : now.minusSeconds(60);
-        try {
-            ZonedDateTime next = CronExpression.parse(row.cronExpr())
-                    .next(base.atZone(zone));
-            return next != null && !next.toInstant().isAfter(now);
-        } catch (IllegalArgumentException e) {
-            return false;
+        Instant slot = null;
+        ZonedDateTime cursor = base.atZone(zone);
+        for (int i = 0; i < MAX_SLOTS_PER_SCAN; i++) {
+            ZonedDateTime next = cron.next(cursor);
+            if (next == null || next.toInstant().isAfter(now)) {
+                break;
+            }
+            slot = next.toInstant();
+            cursor = next;
         }
+        return slot;
+    }
+
+    /** 接下来 count 个触发点（触发器时区的墙钟串）；cron 非法时返回空表而不是抛错。 */
+    public static List<String> nextSlots(String cron, String timezone, Instant from, int count) {
+        List<String> times = new ArrayList<>();
+        if (cron == null || cron.isBlank() || count <= 0) {
+            return times;
+        }
+        final CronExpression expression;
+        final ZoneId zone;
+        try {
+            expression = parseCron(cron);
+            zone = ZoneId.of(timezone);
+        } catch (IllegalArgumentException | java.time.DateTimeException e) {
+            return times;
+        }
+        ZonedDateTime cursor = from.atZone(zone);
+        for (int i = 0; i < count; i++) {
+            ZonedDateTime next = expression.next(cursor);
+            if (next == null) {
+                break;
+            }
+            times.add(SLOT_FORMAT.format(next));
+            cursor = next;
+        }
+        return times;
+    }
+
+    /** 保存前先看一眼：这条 cron 接下来会在这几个时间点跑。 */
+    public CronPreview previewCron(TenantInfo tenant, String definitionId, String cron,
+                                   String timezone, Integer count) {
+        requireDefinition(tenant, definitionId);
+        String normalized = requireCron(cron);
+        String zone = timezone == null || timezone.isBlank() ? "Asia/Shanghai" : timezone;
+        try {
+            ZoneId.of(zone);
+        } catch (java.time.DateTimeException e) {
+            throw new BusinessException(ErrorCode.WF_STATE_001, "unknown timezone: " + zone);
+        }
+        int size = count == null ? 5 : Math.min(Math.max(count, 1), 20);
+        return new CronPreview(normalized, zone, nextSlots(normalized, zone, Instant.now(), size));
     }
 
     public List<WorkflowTriggerMapper.Row> enabledSchedules() {
@@ -305,7 +409,21 @@ public class TriggerService {
         }
     }
 
-    /** 接受 5 段（分 时 日 月 周）与 6 段（含秒）两种写法，统一按秒级解析。 */
+    /** Spring 的 CronExpression 只认 6 段（秒 分 时 日 月 周）：5 段写法在解析前补上秒位 0。 */
+    private static CronExpression parseCron(String cron) {
+        String normalized = cron.trim().replaceAll("\\s+", " ");
+        if (normalized.split(" ").length == 5) {
+            normalized = "0 " + normalized;
+        }
+        return CronExpression.parse(normalized);
+    }
+
+    /**
+     * 接受 5 段（分 时 日 月 周）与 6 段（含秒）两种写法，统一按 6 段解析。
+     *
+     * <p>秒位必须固定为 {@code 0}：调度器每 30 秒扫一轮、claim 与幂等键都到分钟，秒级 cron
+     * 里的第二个档位会被静默吞掉一层——与其「配了但只跑一半」，不如在这里直接拒绝。
+     */
     private static String requireCron(String cron) {
         if (cron == null || cron.isBlank()) {
             throw new BusinessException(ErrorCode.WF_STATE_001, "cron is required for SCHEDULE");
@@ -314,8 +432,14 @@ public class TriggerService {
         if (normalized.split(" ").length == 5) {
             normalized = "0 " + normalized;
         }
+        String seconds = normalized.split(" ")[0];
+        if (!"0".equals(seconds)) {
+            throw new BusinessException(ErrorCode.WF_STATE_001,
+                    "trigger granularity is one minute: cron seconds field must be 0, got "
+                            + seconds);
+        }
         try {
-            CronExpression.parse(normalized);
+            parseCron(normalized);
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.WF_STATE_001,
                     "invalid cron expression: " + e.getMessage());
@@ -350,11 +474,21 @@ public class TriggerService {
     }
 
     private TriggerView toView(WorkflowTriggerMapper.Row row) {
+        boolean scheduled = "SCHEDULE".equals(row.triggerType());
+        List<String> next = scheduled
+                ? nextSlots(row.cronExpr(), row.timezone(), Instant.now(), 3) : List.of();
         return new TriggerView(row.id(), row.triggerType(), row.token(), row.secret(),
                 row.cronExpr(), row.timezone(), row.enabled(), readJsonObject(row.variablesJson()),
                 row.versionId(),
                 row.lastFiredAt() == null ? null : row.lastFiredAt().toInstant().toString(),
+                row.lastSlotAt() == null ? null : slotText(row.timezone(), row.lastSlotAt()),
+                next.isEmpty() ? null : next.get(0), next,
                 row.createdAt() == null ? null : row.createdAt().toInstant().toString());
+    }
+
+    /** 档位按触发器时区渲染：它本来就是墙钟，换算成浏览器时区反而看不懂。 */
+    private static String slotText(String timezone, Timestamp slot) {
+        return SLOT_FORMAT.format(slot.toInstant().atZone(ZoneId.of(timezone)));
     }
 
     private String writeJson(Map<String, Object> value) {

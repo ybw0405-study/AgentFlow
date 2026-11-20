@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { triggerApi, workflowApi } from '@/api'
 import { describeError, type DescribedError } from '@/api/errors'
 import { initialVariables } from '@/dsl/run-defaults'
 import RunVariablesForm from '@/components/canvas/RunVariablesForm.vue'
 import type { VariableSpec, WorkflowDsl } from '@/dsl/types'
-import type { TriggerDto, WorkflowDefinitionDto } from '@/types/api'
+import type { CronPreviewDto, TriggerDto, WorkflowDefinitionDto } from '@/types/api'
 
 const route = useRoute()
 const workflowId = route.params.id as string
@@ -20,6 +20,9 @@ const busy = ref(false)
 const showSecret = ref(false)
 const cronDraft = ref('0 9 * * *')
 const scheduleValues = ref<Record<string, unknown>>({})
+const preview = ref<CronPreviewDto | null>(null)
+const previewError = ref<string | null>(null)
+let previewTimer: ReturnType<typeof setTimeout> | undefined
 
 const webhook = computed(() => triggers.value.find((t) => t.type === 'WEBHOOK') ?? null)
 const schedule = computed(() => triggers.value.find((t) => t.type === 'SCHEDULE') ?? null)
@@ -49,7 +52,47 @@ async function load(): Promise<void> {
   scheduleValues.value = schedule.value
     ? { ...initialVariables(dslVariables.value), ...schedule.value.variables }
     : initialVariables(dslVariables.value)
+  await loadPreview()
 }
+
+/** 「上次触发」是真实瞬间，按浏览器时区渲染；档位与下次是 cron 墙钟，原样展示。 */
+function instantText(iso: string | null): string {
+  if (!iso) return '从未'
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+/**
+ * 保存前先解析一遍：cron 写错了在这一步就能看到原因，而不是等创建后报 409。
+ * 输入停顿 350ms 才请求，避免边打字边打后端。
+ */
+function schedulePreview(): void {
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => {
+    void loadPreview()
+  }, 350)
+}
+
+async function loadPreview(): Promise<void> {
+  const cron = cronDraft.value.trim()
+  if (!cron) {
+    preview.value = null
+    previewError.value = null
+    return
+  }
+  try {
+    preview.value = await triggerApi.previewCron(workflowId, { cron, count: 3 })
+    previewError.value = null
+  } catch (e) {
+    const described = describeError(e)
+    preview.value = null
+    previewError.value = described.detail ?? described.text
+  }
+}
+
+watch(cronDraft, schedulePreview)
 
 async function run<T>(action: () => Promise<T>, message: string): Promise<void> {
   busy.value = true
@@ -295,7 +338,7 @@ onMounted(() => {
         <span
           class="af-faint"
           style="font-size: 12px"
-        >按 cron 自动跑，最小精度到分钟</span>
+        >按 cron 自动跑，精度到分钟；停机恢复后补跑最近一档（只看 24 小时内）</span>
       </div>
 
       <label class="af-label">cron（5 段：分 时 日 月 周）</label>
@@ -314,6 +357,22 @@ onMounted(() => {
         >
           {{ preset.label }}
         </button>
+      </div>
+
+      <div
+        v-if="previewError"
+        class="af-faint"
+        style="margin: 0 0 6px; font-size: 11px; line-height: 1.7; color: var(--af-danger)"
+      >
+        这条 cron 存不下来：{{ previewError }}
+      </div>
+      <div
+        v-else-if="preview && preview.times.length"
+        class="af-faint"
+        style="margin: 0 0 6px; font-size: 11px; line-height: 1.7"
+      >
+        接下来：<span class="mono">{{ preview.times.join(' · ') }}</span>
+        <span>（{{ preview.timezone }}，{{ preview.cron }}）</span>
       </div>
 
       <RunVariablesForm
@@ -354,7 +413,15 @@ onMounted(() => {
             class="mono af-faint"
             style="font-size: 11px"
           >
-            上次触发 {{ schedule.lastFiredAt?.slice(0, 19) ?? '从未' }}
+            上次触发 {{ instantText(schedule.lastFiredAt) }}<template v-if="schedule.lastSlotAt">
+              （{{ schedule.lastSlotAt }} 档 · {{ schedule.timezone }}）</template>
+          </span>
+          <span
+            v-if="schedule.nextFireAt"
+            class="mono af-faint"
+            style="font-size: 11px"
+          >
+            下次 {{ schedule.nextFireAt }}（{{ schedule.timezone }}）
           </span>
           <div class="af-spacer" />
           <button

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   patch: vi.fn(),
   rotate: vi.fn(),
   remove: vi.fn(),
+  previewCron: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -24,6 +25,7 @@ vi.mock('@/api', async (importOriginal) => {
       patch: mocks.patch,
       rotate: mocks.rotate,
       remove: mocks.remove,
+      previewCron: mocks.previewCron,
     },
   }
 })
@@ -54,7 +56,16 @@ function detail(published = true) {
 const WEBHOOK = {
   id: 'tr-1', type: 'WEBHOOK' as const, token: 'tok-abc', secret: 'sec-123',
   cron: null, timezone: 'Asia/Shanghai', enabled: true, variables: {},
-  versionId: null, lastFiredAt: null, createdAt: '2026-01-01T00:00:00Z',
+  versionId: null, lastFiredAt: null, lastSlotAt: null, nextFireAt: null,
+  nextFireTimes: [], createdAt: '2026-01-01T00:00:00Z',
+}
+
+const SCHEDULE = {
+  id: 'tr-2', type: 'SCHEDULE' as const, token: 'tok-sch', secret: 'sec-sch',
+  cron: '0 0 9 * * *', timezone: 'Asia/Shanghai', enabled: true, variables: {},
+  versionId: null, lastFiredAt: '2026-11-20T01:37:00Z', lastSlotAt: '2026-11-20 09:00',
+  nextFireAt: '2026-11-21 09:00', nextFireTimes: ['2026-11-21 09:00', '2026-11-22 09:00'],
+  createdAt: '2026-01-01T00:00:00Z',
 }
 
 async function mountView() {
@@ -72,6 +83,11 @@ describe('触发页', () => {
     mocks.patch.mockResolvedValue(WEBHOOK)
     mocks.rotate.mockResolvedValue(WEBHOOK)
     mocks.remove.mockResolvedValue({ ok: true })
+    mocks.previewCron.mockResolvedValue({
+      cron: '0 0 9 * * *',
+      timezone: 'Asia/Shanghai',
+      times: ['2026-11-21 09:00', '2026-11-22 09:00', '2026-11-23 09:00'],
+    })
   })
 
   it('没有 webhook 时给出创建入口', async () => {
@@ -110,6 +126,33 @@ describe('触发页', () => {
     await checkbox.setValue(false)
     await flushPromises()
     expect(mocks.patch).toHaveBeenCalledWith('tr-1', { enabled: false })
+  })
+
+  it('展示 cron 预览、上次档位与下次触发', async () => {
+    mocks.list.mockResolvedValue([SCHEDULE])
+    const wrapper = await mountView()
+
+    // 预览来自服务端解析：保存前就能确认「这条 cron 接下来跑在哪」
+    expect(wrapper.text()).toContain('接下来')
+    expect(wrapper.text()).toContain('2026-11-21 09:00')
+    expect(wrapper.text()).toContain('Asia/Shanghai')
+    // 上次触发区分「真正跑的时间」与「代表哪一档」
+    expect(wrapper.text()).toContain('2026-11-20 09:00 档')
+    expect(wrapper.text()).toContain('下次 2026-11-21 09:00')
+  })
+
+  it('预览失败时把后端原因就地显示', async () => {
+    mocks.previewCron.mockRejectedValue(new ApiError({
+      status: 409,
+      title: 'Conflict',
+      detail: 'trigger granularity is one minute: cron seconds field must be 0, got */5',
+      code: 'WF-STATE-001',
+      traceId: 'trace-10',
+    } as never))
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('这条 cron 存不下来')
+    expect(wrapper.text()).toContain('seconds field must be 0')
   })
 
   it('cron 填错时把后端原因显示出来', async () => {

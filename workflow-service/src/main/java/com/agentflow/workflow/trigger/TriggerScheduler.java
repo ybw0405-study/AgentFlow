@@ -23,7 +23,9 @@ import org.springframework.stereotype.Component;
  *       {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一分钟也只会有一条执行。</li>
  * </ol>
  *
- * <p>到点判断以 last_fired_at 为基准，所以重启不会把当天已经跑过的任务再补一遍。
+ * <p>到点判断以 last_fired_at 为基准：正常运行时每轮最多只有一档到期，停机恢复时会补跑
+ * 最近的一档（窗口 24 小时，见 {@link TriggerService#dueSlot}）。补跑的是「最近那一次」，
+ * 不是把错过的每一档都重放一遍——停机 3 小时的每分钟任务不会瞬间炸出 180 条执行。
  */
 @Component
 public class TriggerScheduler {
@@ -59,16 +61,17 @@ public class TriggerScheduler {
         Instant now = Instant.now();
         for (WorkflowTriggerMapper.Row row : service.enabledSchedules()) {
             try {
-                if (!service.isDue(row, now)) {
+                Instant slot = service.dueSlot(row, now);
+                if (slot == null) {
                     continue;
                 }
                 if (!service.claimFire(row.id(), now)) {
                     log.debug("schedule trigger {} already claimed this minute", row.id());
                     continue;
                 }
-                var result = service.fireSchedule(row, now);
-                log.info("schedule trigger {} fired execution={} status={}",
-                        row.id(), result.executionId(), result.status());
+                var result = service.fireSchedule(row, now, slot);
+                log.info("schedule trigger {} fired slot={} execution={} status={}",
+                        row.id(), slot, result.executionId(), result.status());
             } catch (Exception e) {
                 // 一个触发器失败不该拖垮整轮扫描：记录后继续下一个
                 log.warn("schedule trigger {} failed: {}", row.id(), e.getMessage());

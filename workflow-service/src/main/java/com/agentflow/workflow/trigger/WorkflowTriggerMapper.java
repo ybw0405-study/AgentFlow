@@ -24,7 +24,8 @@ public interface WorkflowTriggerMapper {
     @Select("SELECT id, definition_id AS definitionId, tenant_id AS tenantId,"
             + " trigger_type AS triggerType, token, secret, cron_expr AS cronExpr,"
             + " timezone, variables_json AS variablesJson, version_id AS versionId,"
-            + " enabled, last_fired_at AS lastFiredAt, created_by AS createdBy,"
+            + " enabled, last_fired_at AS lastFiredAt, last_slot_at AS lastSlotAt,"
+            + " created_by AS createdBy,"
             + " created_at AS createdAt, updated_at AS updatedAt"
             + " FROM workflow_trigger WHERE definition_id = #{definitionId}"
             + " AND tenant_id = #{tenantId} ORDER BY created_at")
@@ -34,7 +35,8 @@ public interface WorkflowTriggerMapper {
     @Select("SELECT id, definition_id AS definitionId, tenant_id AS tenantId,"
             + " trigger_type AS triggerType, token, secret, cron_expr AS cronExpr,"
             + " timezone, variables_json AS variablesJson, version_id AS versionId,"
-            + " enabled, last_fired_at AS lastFiredAt, created_by AS createdBy,"
+            + " enabled, last_fired_at AS lastFiredAt, last_slot_at AS lastSlotAt,"
+            + " created_by AS createdBy,"
             + " created_at AS createdAt, updated_at AS updatedAt"
             + " FROM workflow_trigger WHERE id = #{id} AND tenant_id = #{tenantId}")
     Row findByIdAndTenant(@Param("id") String id, @Param("tenantId") String tenantId);
@@ -43,7 +45,8 @@ public interface WorkflowTriggerMapper {
     @Select("SELECT id, definition_id AS definitionId, tenant_id AS tenantId,"
             + " trigger_type AS triggerType, token, secret, cron_expr AS cronExpr,"
             + " timezone, variables_json AS variablesJson, version_id AS versionId,"
-            + " enabled, last_fired_at AS lastFiredAt, created_by AS createdBy,"
+            + " enabled, last_fired_at AS lastFiredAt, last_slot_at AS lastSlotAt,"
+            + " created_by AS createdBy,"
             + " created_at AS createdAt, updated_at AS updatedAt"
             + " FROM workflow_trigger WHERE token = #{token}")
     Row findByToken(@Param("token") String token);
@@ -60,8 +63,11 @@ public interface WorkflowTriggerMapper {
     int rotate(@Param("id") String id, @Param("tenantId") String tenantId,
                @Param("token") String token, @Param("secret") String secret);
 
-    @Update("UPDATE workflow_trigger SET last_fired_at = #{at} WHERE id = #{id}")
-    int markFired(@Param("id") String id, @Param("at") Timestamp at);
+    /** 同时记下「真正跑的时间」与「代表哪一档」：两者之差就是补偿延迟。 */
+    @Update("UPDATE workflow_trigger SET last_fired_at = #{at}, last_slot_at = #{slotAt}"
+            + " WHERE id = #{id}")
+    int markFired(@Param("id") String id, @Param("at") Timestamp at,
+                  @Param("slotAt") Timestamp slotAt);
 
     @Delete("DELETE FROM workflow_trigger WHERE id = #{id} AND tenant_id = #{tenantId}")
     int delete(@Param("id") String id, @Param("tenantId") String tenantId);
@@ -69,7 +75,8 @@ public interface WorkflowTriggerMapper {
     @Select("SELECT id, definition_id AS definitionId, tenant_id AS tenantId,"
             + " trigger_type AS triggerType, token, secret, cron_expr AS cronExpr,"
             + " timezone, variables_json AS variablesJson, version_id AS versionId,"
-            + " enabled, last_fired_at AS lastFiredAt, created_by AS createdBy,"
+            + " enabled, last_fired_at AS lastFiredAt, last_slot_at AS lastSlotAt,"
+            + " created_by AS createdBy,"
             + " created_at AS createdAt, updated_at AS updatedAt"
             + " FROM workflow_trigger WHERE trigger_type = 'SCHEDULE' AND enabled = 1")
     List<Row> listEnabledSchedules();
@@ -77,7 +84,7 @@ public interface WorkflowTriggerMapper {
     record Row(String id, String definitionId, String tenantId, String triggerType,
                String token, String secret, String cronExpr, String timezone,
                String variablesJson, String versionId, boolean enabled,
-               Timestamp lastFiredAt, String createdBy, Timestamp createdAt,
-               Timestamp updatedAt) {
+               Timestamp lastFiredAt, Timestamp lastSlotAt, String createdBy,
+               Timestamp createdAt, Timestamp updatedAt) {
     }
 }

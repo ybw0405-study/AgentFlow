@@ -2,6 +2,7 @@ import { del, get, patch, post, put } from './http'
 import type {
   BootstrapData,
   ConnectorDto,
+  CronPreviewDto,
   EvalCaseDto,
   EvalDatasetDto,
   EvalRunDetail,
@@ -231,6 +232,10 @@ export const triggerApi = {
     body: { enabled?: boolean; cron?: string; variables?: Record<string, unknown> },
   ) => patch<TriggerDto>(`/triggers/${triggerId}`, body),
   rotate: (triggerId: string) => post<TriggerDto>(`/triggers/${triggerId}/rotate`),
+  previewCron: (
+    definitionId: string,
+    body: { cron: string; timezone?: string; count?: number },
+  ) => post<CronPreviewDto>(`/workflows/${definitionId}/triggers/cron-preview`, body),
   remove: (triggerId: string) => del<{ ok: boolean }>(`/triggers/${triggerId}`),
 }
 

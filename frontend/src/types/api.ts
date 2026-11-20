@@ -383,8 +383,24 @@ export interface TriggerDto {
   enabled: boolean
   variables: Record<string, unknown>
   versionId: string | null
+  /** 真实跑起来的瞬间（ISO），前端按浏览器时区渲染。 */
   lastFiredAt: string | null
+  /**
+   * 这一跑代表 cron 的哪一档，触发器时区的墙钟串（`yyyy-MM-dd HH:mm`）。
+   * 未触发过时后端不下发这个键（`non_null` 序列化），所以是可选的。
+   */
+  lastSlotAt?: string | null
+  /** 下一档，与 `nextFireTimes[0]` 相同；同样按触发器时区格式化。 */
+  nextFireAt?: string | null
+  nextFireTimes?: string[]
   createdAt: string | null
+}
+
+/** cron 预览：保存前确认「这条 cron 接下来会在这几个时间点跑」。 */
+export interface CronPreviewDto {
+  cron: string
+  timezone: string
+  times: string[]
 }
 
 /** 用量汇总：正式执行与试跑分开统计，试跑的 token 也是真金白银。 */

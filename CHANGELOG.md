@@ -7,7 +7,8 @@
 
 ### 新增
 
-- **Webhook / 定时触发**（`V010__trigger.sql`）：新增 `workflow_trigger` 表与两条外部入口。Webhook 走公开路径 `/api/v1/hooks/{token}`，token（24 字节 Base64URL）即入口凭据；可选 `X-AF-Signature: sha256=HMAC_SHA256(secret, 原始请求体)`（常量时间比较）、`X-AF-Timestamp`（±300 秒防重放）、`X-AF-Idempotency-Key`（重复投递只执行一次，回 `idempotentReplay`）。定时触发用 5 段或 6 段 cron，统一归一到秒位，调度器每 30 秒扫一轮、以 `last_fired_at` 判点、重启不补跑。两者都复用 `ExecutionService.dispatch` 的幂等、版本解析、政策钳制与 PII 脱敏，跑的是**已发布版本**；入口限流 60 次/分钟，停用返回 409，`POST /api/v1/hooks/{token}/probe` 可在不触发执行的前提下自检入口。画布工具条「触发」进入管理页，可建入口、复制地址与密钥、轮换令牌、停用、删除、配固定入参。
+- **cron 预览与触发页可预期性**：`POST /api/v1/workflows/{id}/triggers/cron-preview` 只解析不落库，回 `{cron, timezone, times[]}`（5 段回填为 6 段规范形式，时间按触发器时区格式化）；`TriggerView` 增加 `lastSlotAt` / `nextFireAt` / `nextFireTimes`。触发页在输入 cron 时防抖调预览，写错当场看到原因；已存触发器显示「上次触发（09:00 档 · Asia/Shanghai）」与「下次 2026-11-21 09:00」，时间串格式按「真实瞬间用 ISO / cron 墙钟用触发器时区」分工。
+- **Webhook / 定时触发**（`V010__trigger.sql`）：新增 `workflow_trigger` 表与两条外部入口。Webhook 走公开路径 `/api/v1/hooks/{token}`，token（24 字节 Base64URL）即入口凭据；可选 `X-AF-Signature: sha256=HMAC_SHA256(secret, 原始请求体)`（常量时间比较）、`X-AF-Timestamp`（±300 秒防重放）、`X-AF-Idempotency-Key`（重复投递只执行一次，回 `idempotentReplay`）。定时触发用 5 段或 6 段 cron（秒位必须为 0），调度器每 30 秒扫一轮、按最近到点的档位判点。两者都复用 `ExecutionService.dispatch` 的幂等、版本解析、政策钳制与 PII 脱敏，跑的是**已发布版本**；入口限流 60 次/分钟，停用返回 409，`POST /api/v1/hooks/{token}/probe` 可在不触发执行的前提下自检入口。画布工具条「触发」进入管理页，可建入口、复制地址与密钥、轮换令牌、停用、删除、配固定入参。
 - **单节点试跑**：节点卡片与配置抽屉新增「试跑」。引擎把「目标节点 + 全部上游」裁成小图（`engine-api/app/preview.py`），交给同一个调度器、同一批执行器、同一份预算与错误分类真的跑一遍，回传该节点的输入 / 输出 / token / 耗时与整条上游链路状态。试跑**不落执行记录**、不产生版本，只留 `NODE_PREVIEWED` 审计；上游含 `loop` / `parallel` / `human_gate` 时返回 422 `PREVIEW-STRUCTURE-001` 并提示改用「运行」，因为裁剪会改变迭代、分支聚合与挂起续跑的语义。
 - **运行入参表单化**：运行弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件（布尔勾选框、数字框、文本框，`object` / `array` 走 JSON 编辑并即时提示解析错误），右上角可切回「JSON 原文」整块编辑。必填项缺失时「触发执行」禁用，不再先落一条注定 `EXEC-INPUT-001` 的执行记录。同一份表单复用到定时触发配置。
 - **工作流级默认模型（`defaults.llm`）**：工具条「默认模型」把 `connectionId` + `model` 写进 DSL 的 `defaults.llm`，只用于新建 llm 节点的继承；可勾选批量应用到现有节点。执行始终以节点自身 `config` 为准，改默认值不会影响已经跑通的节点。
@@ -27,6 +28,7 @@
 
 ### 修复
 
+- **定时触发按「档位」而不是按扫描时刻**（`V012__trigger_slot.sql`）：`isDue` 只回答「有没有一档到点了」，真正派发时用的却是当前分钟，于是两个场景说不清楚——停机 37 分钟后恢复，那一跑记成 09:37 而不是「09:00 这一档迟到了 37 分钟」；派发成功但 `markFired` 前崩溃，重启后重算出新的分钟键，于是同一档跑两次。现在 `dueSlot` 返回「最近一个已到点的 cron 档位」，claim / 派发 / 幂等键 `sched-{id}-{档位}` 全部以它为准，`workflow_trigger.last_slot_at` 记下这一跑代表哪一档，审计带 `lateSeconds` / `compensated`。顺带明确了两条边界：停机恢复只**补跑最近一档**（回看 24 小时、只补一次，不会重放 180 条），秒位不为 0 的 cron 直接拒绝（分钟粒度的 claim 与幂等键注定吞掉同一分钟的第二个档位）。
 - **定时触发在多副本下会重复执行**：`fireSchedule` 的幂等键用 `LocalDateTime.toString()`（含秒），两个副本在不同秒扫到同一条触发器时会得到两个不同的键，于是各派发一次——用户只配了一条 cron，账面却是两次执行。现在分钟键先截断到分钟；调度器再加两层：扫描租约（`af:sched:leader`，60 秒 TTL，续租按持有者判断）只让一个副本扫表，分钟 claim（`af:sched:claim:{id}:{分钟}`，2 分钟 TTL）只让一个副本派发。三层都 fail-open，Redis 不可用时退化为依赖幂等键，宁可多扫一轮也不漏跑。
 - **运行执行的是已发布版本而非当前草稿**：引擎触发只认版本快照，此前「运行」直接触发会执行**已发布版本**，而接入向导只改当前草稿，两者不是同一份 DSL。现在运行先保存草稿，再复用（或冻结）同 checksum 的版本快照并显式带 `versionId` 触发，按画布所见执行；不改已发布版本、不走灰度分流、同内容草稿不重复冻结。画布与运行弹窗均写明该语义。
 - **移除产品侧的离线 provider 与内置测试连接器**：`LlmConfig.provider` 的默认值与唯一取值改为 `openai-compatible`，`app/main.py` 不再注册离线 provider，`ConnectorRegistry` 只走 connector-service，`AF_AUTHORIZED_CONNECTORS` 默认为空；配置抽屉去掉 provider 的离线选项，tool 节点不再预填 `mock.*`。旧 DSL 的 `provider: mock` 会在校验期直接报错，并提示改为模型连接或进程端点。确定性夹具移到 `tests/support/`，单测与故障注入照常覆盖。

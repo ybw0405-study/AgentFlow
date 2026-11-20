@@ -155,6 +155,45 @@ def test_invalid_cron_is_rejected(client, editor_token, admin_token):
     assert "cron" in resp.json()["detail"], resp.text
 
 
+def test_sub_minute_cron_is_rejected(client, editor_token, admin_token):
+    """秒级 cron 在分钟粒度的调度器上会被吞掉一半，所以直接拒绝而不是假装支持。"""
+    wf_id = _published_workflow(client, editor_token, admin_token)
+    resp = client.post(f"/api/v1/workflows/{wf_id}/triggers",
+                       json={"type": "SCHEDULE", "cron": "*/5 * * * * *"},
+                       headers=headers(editor_token, SPACE_A))
+    assert resp.status_code == 409, resp.text
+    assert "seconds field must be 0" in resp.json()["detail"], resp.text
+
+
+def test_cron_preview_shows_next_runs_without_creating_anything(client, editor_token,
+                                                               admin_token):
+    wf_id = _published_workflow(client, editor_token, admin_token)
+
+    resp = client.post(f"/api/v1/workflows/{wf_id}/triggers/cron-preview",
+                       json={"cron": "0 9 * * *", "count": 3},
+                       headers=headers(editor_token, SPACE_A))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    # 5 段写法回填成 6 段规范形式，时间按触发器时区的墙钟串返回
+    assert data["cron"] == "0 0 9 * * *", data
+    assert data["timezone"] == "Asia/Shanghai", data
+    assert len(data["times"]) == 3, data
+    assert all(t.endswith(" 09:00") for t in data["times"]), data
+
+    listed = client.get(f"/api/v1/workflows/{wf_id}/triggers",
+                        headers=headers(editor_token, SPACE_A))
+    assert listed.json()["data"] == [], "预览不该落触发器"
+
+
+def test_cron_preview_is_tenant_scoped(client, editor_token, beta_token, admin_token):
+    wf_id = _published_workflow(client, editor_token, admin_token)
+
+    resp = client.post(f"/api/v1/workflows/{wf_id}/triggers/cron-preview",
+                       json={"cron": "0 9 * * *"},
+                       headers=headers(beta_token, SPACE_B))
+    assert resp.status_code == 404, resp.text
+
+
 @pytest.mark.skipif(os.environ.get("AF_E2E_SCHEDULE", "") != "1",
                     reason="定时触发按分钟触发，设置 AF_E2E_SCHEDULE=1 才跑这段等待")
 def test_schedule_fires_within_a_minute(client, editor_token, admin_token):
@@ -164,16 +203,27 @@ def test_schedule_fires_within_a_minute(client, editor_token, admin_token):
                              "variables": {"question": "定时"}},
                        headers=headers(editor_token, SPACE_A))
     assert resp.status_code == 200, resp.text
-
-    deadline = time.monotonic() + 150
-    while time.monotonic() < deadline:
-        listed = client.get("/api/v1/executions", params={"definitionId": wf_id},
-                            headers=headers(editor_token, SPACE_A))
-        items = listed.json()["data"]["items"]
-        if items:
-            detail = wait_terminal(client, editor_token, SPACE_A, items[0]["id"])
-            assert detail["execution"]["status"] == "SUCCEEDED", detail
-            assert detail["result"]["answer"] == "已收到：定时", detail
-            return
-        time.sleep(5)
-    raise AssertionError("定时触发在 150s 内没有产生执行")
+    trigger_id = resp.json()["data"]["id"]
+    # 调度器扫的是全库启用的 cron：跑完必须停掉，否则这条「每分钟」会一直烧 token
+    try:
+        deadline = time.monotonic() + 150
+        while time.monotonic() < deadline:
+            listed = client.get("/api/v1/executions", params={"definitionId": wf_id},
+                                headers=headers(editor_token, SPACE_A))
+            items = listed.json()["data"]["items"]
+            if items:
+                detail = wait_terminal(client, editor_token, SPACE_A, items[0]["id"])
+                assert detail["execution"]["status"] == "SUCCEEDED", detail
+                assert detail["result"]["answer"] == "已收到：定时", detail
+                fired = client.get(f"/api/v1/workflows/{wf_id}/triggers",
+                                   headers=headers(editor_token, SPACE_A))
+                schedule = next(t for t in fired.json()["data"] if t["id"] == trigger_id)
+                # 档位与真正跑的时间分开记：迟到与否一眼能看出来
+                assert schedule["lastSlotAt"], schedule
+                assert schedule["nextFireAt"], schedule
+                return
+            time.sleep(5)
+        raise AssertionError("定时触发在 150s 内没有产生执行")
+    finally:
+        client.patch(f"/api/v1/triggers/{trigger_id}", json={"enabled": False},
+                     headers=headers(editor_token, SPACE_A))

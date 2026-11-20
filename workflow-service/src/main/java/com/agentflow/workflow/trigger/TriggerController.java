@@ -29,6 +29,18 @@ public class TriggerController {
     public record PatchRequest(Boolean enabled, String cron, Map<String, Object> variables) {
     }
 
+    public record CronPreviewRequest(String cron, String timezone, Integer count) {
+    }
+
+    /** 保存前预览：这条 cron 接下来会在这几个时间点跑（不改状态，只做解析）。 */
+    @PostMapping("/api/v1/workflows/{id}/triggers/cron-preview")
+    public ApiResponse<TriggerService.CronPreview> previewCron(@PathVariable String id,
+                                                              @RequestBody
+                                                              CronPreviewRequest body) {
+        return ApiResponse.ok(service.previewCron(TenantContext.require(), id, body.cron(),
+                body.timezone(), body.count()));
+    }
+
     @GetMapping("/api/v1/workflows/{id}/triggers")
     public ApiResponse<List<TriggerService.TriggerView>> list(@PathVariable String id) {
         return ApiResponse.ok(service.list(TenantContext.require(), id));

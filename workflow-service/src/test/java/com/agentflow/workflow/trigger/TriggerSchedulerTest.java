@@ -18,6 +18,8 @@ import org.springframework.data.redis.core.ValueOperations;
 /** 扫描循环的三层防线：租约只省重复劳动，claim 与幂等键才是「只跑一次」。 */
 class TriggerSchedulerTest {
 
+    private static final java.time.Instant SLOT = java.time.Instant.parse("2026-11-20T01:00:00Z");
+
     private TriggerService service;
     private ValueOperations<String, String> ops;
     private TriggerScheduler scheduler;
@@ -39,26 +41,26 @@ class TriggerSchedulerTest {
     void firesDueTrigger() {
         var row = schedule("tr-1");
         when(service.enabledSchedules()).thenReturn(List.of(row));
-        when(service.isDue(eq(row), any())).thenReturn(true);
+        when(service.dueSlot(eq(row), any())).thenReturn(SLOT);
         when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
-        when(service.fireSchedule(eq(row), any())).thenReturn(
+        when(service.fireSchedule(eq(row), any(), eq(SLOT))).thenReturn(
                 new TriggerService.FireResult("e-1", "PENDING", false));
 
         scheduler.poll();
 
-        verify(service).fireSchedule(eq(row), any());
+        verify(service).fireSchedule(eq(row), any(), eq(SLOT));
     }
 
     @Test
     void skipsTriggerThatAnotherReplicaAlreadyClaimed() {
         var row = schedule("tr-1");
         when(service.enabledSchedules()).thenReturn(List.of(row));
-        when(service.isDue(eq(row), any())).thenReturn(true);
+        when(service.dueSlot(eq(row), any())).thenReturn(SLOT);
         when(service.claimFire(eq("tr-1"), any())).thenReturn(false);
 
         scheduler.poll();
 
-        verify(service, never()).fireSchedule(any(), any());
+        verify(service, never()).fireSchedule(any(), any(), any());
     }
 
     @Test
@@ -88,15 +90,15 @@ class TriggerSchedulerTest {
         var first = schedule("tr-1");
         var second = schedule("tr-2");
         when(service.enabledSchedules()).thenReturn(List.of(first, second));
-        when(service.isDue(eq(first), any())).thenThrow(new IllegalStateException("boom"));
-        when(service.isDue(eq(second), any())).thenReturn(true);
+        when(service.dueSlot(eq(first), any())).thenThrow(new IllegalStateException("boom"));
+        when(service.dueSlot(eq(second), any())).thenReturn(SLOT);
         when(service.claimFire(eq("tr-2"), any())).thenReturn(true);
-        when(service.fireSchedule(eq(second), any())).thenReturn(
+        when(service.fireSchedule(eq(second), any(), eq(SLOT))).thenReturn(
                 new TriggerService.FireResult("e-2", "PENDING", false));
 
         scheduler.poll();
 
-        verify(service).fireSchedule(eq(second), any());
+        verify(service).fireSchedule(eq(second), any(), eq(SLOT));
     }
 
     @Test
@@ -121,6 +123,6 @@ class TriggerSchedulerTest {
 
     private static WorkflowTriggerMapper.Row schedule(String id) {
         return new WorkflowTriggerMapper.Row(id, "d-" + id, "t-1", "SCHEDULE", "tok", "sec",
-                "0 9 * * *", "Asia/Shanghai", null, null, true, null, "u-1", null, null);
+                "0 9 * * *", "Asia/Shanghai", null, null, true, null, null, "u-1", null, null);
     }
 }
