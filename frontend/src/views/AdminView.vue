@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { adminApi } from '@/api'
 import type {
   AdminAuditRow,
+  AdminCross,
   AdminModelUsage,
   AdminSweepReport,
   AdminStaleExecution,
@@ -12,7 +13,7 @@ import type {
 } from '@/api'
 import { describeError, type DescribedError } from '@/api/errors'
 
-const tab = ref<'usage' | 'audit' | 'ops'>('usage')
+const tab = ref<'usage' | 'cross' | 'audit' | 'ops'>('usage')
 const usage = ref<AdminUsage | null>(null)
 const period = ref(currentMonth())
 const auditItems = ref<AdminAuditRow[]>([])
@@ -27,6 +28,9 @@ const tenantRows = computed<AdminTenantUsage[]>(() => usage.value?.tenants ?? []
 const modelRows = computed<AdminModelUsage[]>(() => usage.value?.byModel ?? [])
 const totals = computed<AdminTotals | null>(() => usage.value?.totals ?? null)
 const modelTotal = computed(() => modelRows.value.reduce((sum, row) => sum + row.tokens, 0))
+const cross = computed<AdminCross | null>(() => usage.value?.cross ?? null)
+const crossColumns = computed(() => cross.value?.models ?? [])
+const crossRows = computed(() => cross.value?.rows ?? [])
 
 function currentMonth(): string {
   const now = new Date()
@@ -79,6 +83,11 @@ function limitSource(limitedBy: string | null | undefined, name: string | null |
   return `继承自 ${name ?? limitedBy.slice(0, 8)}`
 }
 
+/** 交叉表的列名：空模型就是「未标注」，与用量页叫法一致。 */
+function crossModelLabel(model: string | null | undefined): string {
+  return model && model.length > 0 ? model : '未标注'
+}
+
 function pct(ratio: number | undefined): string {
   return `${Math.round((ratio ?? 0) * 100)}%`
 }
@@ -107,13 +116,16 @@ function width(ratio: number | undefined): string {
 function bars(row: AdminTenantUsage) {
   const limit = row.effectiveTokenLimit
   if (limit == null || limit <= 0) {
-    return { exec: '0%', preview: '0%', unbounded: true }
+    return { exec: '0%', preview: '0%', tick: false, unbounded: true }
   }
   const used = row.tokensUsed ?? 0
   const preview = Math.min(row.previewTokens ?? 0, used)
+  const previewRatio = preview / limit
   return {
     exec: width((used - preview) / limit),
-    preview: width(preview / limit),
+    preview: width(previewRatio),
+    // 非零但不足 1%：按百分比画出来不足 1px，挂最小宽度让它可见（与租户用量页同一规则）
+    tick: previewRatio > 0 && previewRatio < 0.01,
     unbounded: false,
   }
 }
@@ -199,6 +211,13 @@ onMounted(() => loadUsage())
         @click="tab = 'usage'; loadUsage()"
       >
         用量
+      </button>
+      <button
+        class="af-btn af-btn--sm"
+        :class="{ 'af-btn--primary': tab === 'cross' }"
+        @click="tab = 'cross'; loadUsage()"
+      >
+        交叉表
       </button>
       <button
         class="af-btn af-btn--sm"
@@ -418,6 +437,7 @@ onMounted(() => loadUsage())
                   />
                   <span
                     class="af-meter__fill af-meter__fill--preview"
+                    :class="{ 'af-meter__fill--tick': bars(row).tick }"
                     :style="{ width: bars(row).preview }"
                   />
                 </div>
@@ -539,6 +559,155 @@ onMounted(() => loadUsage())
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div
+      v-else-if="tab === 'cross'"
+    >
+      <div
+        class="af-admin-toolbar"
+        style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px"
+      >
+        <label
+          class="af-faint"
+          style="font-size: 11px"
+        >账期</label>
+        <input
+          v-model="period"
+          class="af-input"
+          type="month"
+          style="width: 150px"
+          @change="loadUsage"
+        >
+        <button
+          class="af-btn af-btn--sm"
+          :disabled="loading"
+          @click="loadUsage"
+        >
+          {{ loading ? '加载中…' : '刷新' }}
+        </button>
+        <span
+          class="af-faint"
+          style="font-size: 11px"
+        >行是租户、列是模型；表格里的数字是 token，括号里是节点调用数</span>
+      </div>
+
+      <div
+        class="af-panel"
+        style="padding: 0"
+      >
+        <div style="overflow-x: auto">
+          <table class="af-table af-cross">
+            <thead>
+              <tr>
+                <th class="af-cross__sticky">
+                  租户
+                </th>
+                <th
+                  v-for="column in crossColumns"
+                  :key="column.model ?? '__unlabeled'"
+                  style="text-align: right; white-space: nowrap"
+                >
+                  {{ crossModelLabel(column.model) }}
+                  <div
+                    v-if="column.model == null"
+                    class="af-faint"
+                    style="font-size: 10px; font-weight: 400"
+                  >
+                    非 LLM 或输出未带模型
+                  </div>
+                </th>
+                <th style="text-align: right">
+                  合计
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in crossRows"
+                :key="row.tenantId"
+              >
+                <td class="af-cross__sticky">
+                  {{ row.name }}
+                </td>
+                <td
+                  v-for="(cell, index) in row.cells"
+                  :key="index"
+                  class="mono"
+                  style="text-align: right; white-space: nowrap"
+                >
+                  <template v-if="cell.tokens > 0">
+                    {{ num(cell.tokens) }}
+                    <span
+                      class="af-faint"
+                      style="font-size: 11px"
+                    >（{{ num(cell.calls) }}）</span>
+                  </template>
+                  <span
+                    v-else
+                    class="af-faint"
+                  >—</span>
+                </td>
+                <td
+                  class="mono"
+                  style="text-align: right"
+                >
+                  {{ num(row.tokens) }}
+                  <span
+                    class="af-faint"
+                    style="font-size: 11px"
+                  >（{{ num(row.calls) }}）</span>
+                </td>
+              </tr>
+              <tr v-if="!crossRows.length">
+                <td
+                  :colspan="crossColumns.length + 2"
+                  class="af-faint"
+                  style="text-align: center; padding: 20px"
+                >
+                  这个账期没有模型调用记录
+                </td>
+              </tr>
+            </tbody>
+            <tfoot v-if="crossRows.length">
+              <tr>
+                <td class="af-cross__sticky af-faint">
+                  合计
+                </td>
+                <td
+                  v-for="column in crossColumns"
+                  :key="column.model ?? '__unlabeled'"
+                  class="mono"
+                  style="text-align: right"
+                >
+                  {{ num(column.tokens) }}
+                  <span
+                    class="af-faint"
+                    style="font-size: 11px"
+                  >（{{ num(column.calls) }}）</span>
+                </td>
+                <td
+                  class="mono"
+                  style="text-align: right"
+                >
+                  {{ num(cross?.grand.tokens ?? 0) }}
+                  <span
+                    class="af-faint"
+                    style="font-size: 11px"
+                  >（{{ num(cross?.grand.calls ?? 0) }}）</span>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.7; margin: 8px 2px 0"
+      >
+        执行与试跑合并统计，口径与「用量」页一致（试跑按节点数计）。
+        「未标注」是输出里没有模型名的节点——不按工作流默认模型猜，猜了就等于把「不知道」写成「知道」。
+      </p>
     </div>
 
     <div
@@ -730,5 +899,22 @@ onMounted(() => loadUsage())
   padding: 12px 14px 8px;
   font-size: 12px;
   color: var(--af-text-dim);
+}
+
+/*
+ * 交叉表：列数随模型数量增长，横向滚动时租户列要钉在左边——
+ * 否则滚到第五个模型就不知道这一行是谁了。
+ */
+.af-cross__sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--af-bg);
+  white-space: nowrap;
+}
+
+.af-cross tfoot td {
+  border-top: 1px solid var(--af-border);
+  font-weight: 600;
 }
 </style>

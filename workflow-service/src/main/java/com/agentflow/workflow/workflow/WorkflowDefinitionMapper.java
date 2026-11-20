@@ -19,7 +19,8 @@ public interface WorkflowDefinitionMapper {
     int insert(DefinitionRow row);
 
     @Select("SELECT seq, id, tenant_id AS tenantId, name, description, status,"
-            + " current_version_id AS currentVersionId, draft_dsl AS draftDsl,"
+            + " current_version_id AS currentVersionId, max_concurrent AS maxConcurrent,"
+            + " draft_dsl AS draftDsl,"
             + " draft_checksum AS draftChecksum, created_by AS createdBy,"
             + " created_at AS createdAt, updated_at AS updatedAt"
             + " FROM workflow_definition"
@@ -28,7 +29,8 @@ public interface WorkflowDefinitionMapper {
 
     @Select("<script>"
             + "SELECT seq, id, tenant_id AS tenantId, name, description, status,"
-            + " current_version_id AS currentVersionId, draft_dsl AS draftDsl,"
+            + " current_version_id AS currentVersionId, max_concurrent AS maxConcurrent,"
+            + " draft_dsl AS draftDsl,"
             + " draft_checksum AS draftChecksum, created_by AS createdBy,"
             + " created_at AS createdAt, updated_at AS updatedAt"
             + " FROM workflow_definition"
@@ -54,6 +56,12 @@ public interface WorkflowDefinitionMapper {
     int updateStatus(@Param("id") String id, @Param("tenantId") String tenantId,
                      @Param("status") String status);
 
+    /** 并发上限：0 = 不限。改它只影响「下一个执行能不能进来」，不动已在跑的。 */
+    @Update("UPDATE workflow_definition SET max_concurrent = #{maxConcurrent}"
+            + " WHERE id = #{id} AND tenant_id = #{tenantId} AND deleted_at IS NULL")
+    int updateMaxConcurrent(@Param("id") String id, @Param("tenantId") String tenantId,
+                            @Param("maxConcurrent") int maxConcurrent);
+
     @Update("UPDATE workflow_definition SET deleted_at = NOW(3)"
             + " WHERE id = #{id} AND tenant_id = #{tenantId} AND deleted_at IS NULL")
     int softDelete(@Param("id") String id, @Param("tenantId") String tenantId);
@@ -72,8 +80,8 @@ public interface WorkflowDefinitionMapper {
                              @Param("versionId") String versionId);
 
     record DefinitionRow(long seq, String id, String tenantId, String name, String description,
-                         String status, String currentVersionId, String draftDsl,
-                         String draftChecksum, String createdBy, Timestamp createdAt,
-                         Timestamp updatedAt) {
+                         String status, String currentVersionId, int maxConcurrent,
+                         String draftDsl, String draftChecksum, String createdBy,
+                         Timestamp createdAt, Timestamp updatedAt) {
     }
 }

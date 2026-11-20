@@ -74,6 +74,38 @@ function usage(overrides: Partial<AdminUsage> = {}): AdminUsage {
       { model: 'deepseek-chat', executionTokens: 8000, previewTokens: 300, tokens: 8300, tenants: 2 },
       { model: null, executionTokens: 550, previewTokens: 50, tokens: 600, tenants: 1 },
     ],
+    cross: {
+      models: [
+        { model: 'deepseek-chat', tokens: 8300, calls: 25 },
+        { model: 'qwen-max', tokens: 1200, calls: 3 },
+        { model: null, tokens: 600, calls: 9 },
+      ],
+      rows: [
+        {
+          tenantId: 't-space-a',
+          name: 'Space Alpha',
+          cells: [
+            { tokens: 8300, calls: 25 },
+            { tokens: 0, calls: 0 },
+            { tokens: 600, calls: 9 },
+          ],
+          tokens: 8900,
+          calls: 34,
+        },
+        {
+          tenantId: 't-team-core',
+          name: 'Demo Team',
+          cells: [
+            { tokens: 0, calls: 0 },
+            { tokens: 1200, calls: 3 },
+            { tokens: 0, calls: 0 },
+          ],
+          tokens: 1200,
+          calls: 3,
+        },
+      ],
+      grand: { tokens: 10100, calls: 37 },
+    },
     ...overrides,
   }
 }
@@ -173,6 +205,20 @@ describe('管理端成本中心', () => {
     // 执行段被压到 0：两段加起来不超过已用量
     const exec = wrapper.findAll('.af-meter__fill').filter((n) => !n.classes('af-meter__fill--preview'))
     expect((exec[0].element as HTMLElement).style.width).toBe('0%')
+  })
+
+  it('不足 1% 的试跑段仍然画得出来，不因为取整变成 0', async () => {
+    mocks.usage.mockResolvedValue(
+      usage({
+        tenants: [tenant({ tokensUsed: 1000, previewTokens: 5, effectiveTokenLimit: 10000 })],
+      }),
+    )
+    const wrapper = await mountView()
+
+    const preview = wrapper.findAll('.af-meter__fill--preview')
+    // 5/10000 = 0.05%，宽度不足一像素：靠最小宽度退化成一条可见刻度
+    expect(preview[0].classes()).toContain('af-meter__fill--tick')
+    expect((preview[0].element as HTMLElement).style.width).toBe('0.1%')
   })
 
   it('超限租户标成「已超限」并用危险色，汇总里单独计数', async () => {
@@ -407,5 +453,41 @@ describe('管理端执行看护', () => {
     const wrapper = await openOps()
 
     expect(wrapper.text()).toContain('没有卡住的执行')
+  })
+
+  it('交叉表把租户与模型两维拼成一张表，行列合计都在', async () => {
+    const wrapper = await mountView()
+    const tab = wrapper.findAll('button').find((b) => b.text() === '交叉表')
+    await tab!.trigger('click')
+    await flushPromises()
+
+    const table = wrapper.find('.af-cross')
+    expect(table.exists()).toBe(true)
+    const text = table.text()
+
+    // 列头按消费降序，未标注在最后并给出解释
+    expect(text).toContain('deepseek-chat')
+    expect(text).toContain('qwen-max')
+    expect(text).toContain('未标注')
+    expect(text).toContain('非 LLM 或输出未带模型')
+    // 两行租户 + 合计行
+    expect(text).toContain('Space Alpha')
+    expect(text).toContain('Demo Team')
+    expect(text).toContain('10,100')
+    // 空格子写成破折号，而不是 0——「没有消耗」和「消耗是零」在这里是一回事，
+    // 但满屏 0 会让人以为有数据只是很小
+    expect(text).toContain('—')
+  })
+
+  it('交叉表没有消耗时说明是空账期，而不是渲染一张空表头', async () => {
+    mocks.usage.mockResolvedValue(usage({
+      cross: { models: [], rows: [], grand: { tokens: 0, calls: 0 } },
+    }))
+    const wrapper = await mountView()
+    const tab = wrapper.findAll('button').find((b) => b.text() === '交叉表')
+    await tab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('这个账期没有模型调用记录')
   })
 })

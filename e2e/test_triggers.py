@@ -16,7 +16,7 @@ import uuid
 
 import pytest
 
-from .conftest import SPACE_A, SPACE_B, headers, wait_terminal
+from .conftest import DEMO_DSL, REAL_LLM, SPACE_A, SPACE_B, headers, wait_terminal
 
 ECHO_DSL = {
     "dslVersion": "1.0",
@@ -36,13 +36,14 @@ ECHO_DSL = {
 }
 
 
-def _published_workflow(client, editor_token, admin_token) -> str:
+def _published_workflow(client, editor_token, admin_token, dsl: dict | None = None) -> str:
     hdrs = headers(editor_token, SPACE_A)
     resp = client.post("/api/v1/workflows",
                        json={"name": f"e2e-hook-{uuid.uuid4().hex[:8]}"}, headers=hdrs)
     assert resp.status_code == 200, resp.text
     wf_id = resp.json()["data"]["id"]
-    resp = client.put(f"/api/v1/workflows/{wf_id}/draft", json=ECHO_DSL, headers=hdrs)
+    resp = client.put(f"/api/v1/workflows/{wf_id}/draft",
+                      json=dsl if dsl is not None else ECHO_DSL, headers=hdrs)
     assert resp.status_code == 200, resp.text
     resp = client.post(f"/api/v1/workflows/{wf_id}/versions", headers=hdrs)
     assert resp.status_code == 200, resp.text
@@ -279,3 +280,53 @@ def test_schedule_fires_within_a_minute(client, editor_token, admin_token):
     finally:
         client.patch(f"/api/v1/triggers/{trigger_id}", json={"enabled": False},
                      headers=headers(editor_token, SPACE_A))
+
+
+def test_concurrency_limit_round_trips(client, editor_token, admin_token):
+    """并发上限是工作流的属性：可读、可改、越界拒绝，0 表示恢复不限。"""
+    wf_id = _published_workflow(client, editor_token, admin_token)
+    hdrs = headers(editor_token, SPACE_A)
+
+    detail = client.get(f"/api/v1/workflows/{wf_id}", headers=hdrs).json()["data"]
+    assert detail["definition"]["maxConcurrent"] == 0, detail
+
+    resp = client.patch(f"/api/v1/workflows/{wf_id}", json={"maxConcurrent": 3}, headers=hdrs)
+    assert resp.status_code == 200, resp.text
+    detail = client.get(f"/api/v1/workflows/{wf_id}", headers=hdrs).json()["data"]
+    assert detail["definition"]["maxConcurrent"] == 3, detail
+
+    # 上界之外直接 400：把闸门开到 1000 等于没有闸门
+    bad = client.patch(f"/api/v1/workflows/{wf_id}", json={"maxConcurrent": 65}, headers=hdrs)
+    assert bad.status_code == 400, bad.text
+
+    client.patch(f"/api/v1/workflows/{wf_id}", json={"maxConcurrent": 0}, headers=hdrs)
+    detail = client.get(f"/api/v1/workflows/{wf_id}", headers=hdrs).json()["data"]
+    assert detail["definition"]["maxConcurrent"] == 0, detail
+
+
+@pytest.mark.skipif(not REAL_LLM, reason="需要一个跑得够久的执行来占住并发名额")
+def test_concurrency_limit_rejects_second_run_while_one_is_running(
+        client, editor_token, admin_token):
+    """上限 1 时第二个入口必须被挡住，且是「明确拒绝」而不是插一条永远不开始的执行。
+
+    用真实模型的工作流：LLM 节点要跑几秒，第一个执行在第二个请求发出时一定还占着名额。
+    """
+    wf_id = _published_workflow(client, editor_token, admin_token, dsl=DEMO_DSL)
+    hdrs = headers(editor_token, SPACE_A)
+    client.patch(f"/api/v1/workflows/{wf_id}", json={"maxConcurrent": 1}, headers=hdrs)
+    hook = _create_webhook(client, editor_token, wf_id)
+
+    first = client.post(f"/api/v1/hooks/{hook['token']}", json={"question": "第一个"})
+    assert first.status_code == 200, first.text
+
+    second = client.post(f"/api/v1/hooks/{hook['token']}", json={"question": "第二个"})
+    assert second.status_code == 429, second.text
+    assert "WF-CONCURRENCY-001" in second.text, second.text
+
+    detail = wait_terminal(client, editor_token, SPACE_A, first.json()["data"]["executionId"])
+    assert detail["execution"]["status"] == "SUCCEEDED", detail
+
+    # 名额释放后必须还能进来：限流是「等一等」，不是「永久拉黑」
+    third = client.post(f"/api/v1/hooks/{hook['token']}", json={"question": "第三个"})
+    assert third.status_code == 200, third.text
+    wait_terminal(client, editor_token, SPACE_A, third.json()["data"]["executionId"])

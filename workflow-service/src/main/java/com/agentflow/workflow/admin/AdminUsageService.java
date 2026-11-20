@@ -76,6 +76,7 @@ public class AdminUsageService {
         out.put("tenants", rows);
         out.put("totals", totals(rows));
         out.put("byModel", byModel(from));
+        out.put("cross", cross(from, resolved));
         return out;
     }
 
@@ -185,6 +186,125 @@ public class AdminUsageService {
         });
         out.sort((a, b) -> Long.compare((Long) b.get("tokens"), (Long) a.get("tokens")));
         return out;
+    }
+
+    /**
+     * 「租户 × 模型」交叉表。
+     *
+     * <p>回答的是「A 租户在 deepseek 上花了多少」——成本中心前面按租户、按模型各看一列，
+     * 但「贵模型被谁在用」只有把两维交叉起来才看得见。执行与试跑仍然在服务层合并，
+     * 与 {@code byModel} 同一口径（空模型单独一列，不猜、不并进任何真实模型）。
+     *
+     * <p>服务端直接给出对齐好的矩阵：列是模型、行是租户、每行每列都有合计。
+     * 前端算透视会引出两个真源——它算的行合计与这里的 {@code totals} 不一致时，
+     * 页面上会出现「两处加起来不一样」却没人知道该信哪个。
+     */
+    private Map<String, Object> cross(String from,
+                                      List<TenantLimitResolver.ResolvedTenant> tenants) {
+        Map<String, long[]> cells = new LinkedHashMap<>();
+        Map<String, long[]> modelTotals = new LinkedHashMap<>();
+        Map<String, long[]> tenantTotals = new LinkedHashMap<>();
+        for (var row : nodes.usageByTenantModel(from)) {
+            addCell(cells, modelTotals, tenantTotals, row.tenantId(), row.model(),
+                    row.tokens(), row.cnt());
+        }
+        for (var row : previews.byTenantModel(from)) {
+            addCell(cells, modelTotals, tenantTotals, row.tenantId(), row.model(),
+                    row.tokens(), row.cnt());
+        }
+
+        // 列顺序：按消费降序，空模型（未标注）永远排最后——它是「不知道」，不是「最便宜」
+        List<String> models = new ArrayList<>(modelTotals.keySet());
+        models.sort((a, b) -> {
+            if (a.isEmpty() != b.isEmpty()) {
+                return a.isEmpty() ? 1 : -1;
+            }
+            return Long.compare(modelTotals.get(b)[0], modelTotals.get(a)[0]);
+        });
+
+        List<Map<String, Object>> columns = new ArrayList<>(models.size());
+        for (String model : models) {
+            columns.add(column(model, modelTotals.get(model)));
+        }
+
+        Map<String, String> names = new LinkedHashMap<>();
+        List<String> order = new ArrayList<>();
+        for (var tenant : tenants) {
+            names.put(tenant.tenantId(), tenant.name());
+            if (tenantTotals.containsKey(tenant.tenantId())) {
+                order.add(tenant.tenantId());
+            }
+        }
+        // 有消耗但不在租户表里的（历史数据、已删除租户）：仍然列出来，不要静默丢金额
+        for (String tenantId : tenantTotals.keySet()) {
+            if (!names.containsKey(tenantId)) {
+                names.put(tenantId, tenantId);
+                order.add(tenantId);
+            }
+        }
+
+        List<Map<String, Object>> rows = new ArrayList<>(order.size());
+        for (String tenantId : order) {
+            List<Map<String, Object>> rowCells = new ArrayList<>(models.size());
+            for (String model : models) {
+                long[] cell = cells.get(cellKey(tenantId, model));
+                rowCells.add(cellRow(cell));
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("tenantId", tenantId);
+            row.put("name", names.get(tenantId));
+            row.put("cells", rowCells);
+            row.put("tokens", tenantTotals.get(tenantId)[0]);
+            row.put("calls", tenantTotals.get(tenantId)[1]);
+            rows.add(row);
+        }
+
+        long[] grand = new long[2];
+        for (long[] total : modelTotals.values()) {
+            grand[0] += total[0];
+            grand[1] += total[1];
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("models", columns);
+        out.put("rows", rows);
+        out.put("grand", cellRow(grand));
+        return out;
+    }
+
+    private static void addCell(Map<String, long[]> cells, Map<String, long[]> modelTotals,
+                                Map<String, long[]> tenantTotals, String tenantId, String model,
+                                long tokens, long calls) {
+        String key = cellKey(tenantId, keyOf(model));
+        long[] cell = cells.computeIfAbsent(key, k -> new long[2]);
+        cell[0] += tokens;
+        cell[1] += calls;
+        long[] byModel = modelTotals.computeIfAbsent(keyOf(model), k -> new long[2]);
+        byModel[0] += tokens;
+        byModel[1] += calls;
+        long[] byTenant = tenantTotals.computeIfAbsent(tenantId, k -> new long[2]);
+        byTenant[0] += tokens;
+        byTenant[1] += calls;
+    }
+
+    private static Map<String, Object> column(String model, long[] total) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("model", model.isEmpty() ? null : model);
+        out.put("tokens", total[0]);
+        out.put("calls", total[1]);
+        return out;
+    }
+
+    private static Map<String, Object> cellRow(long[] cell) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tokens", cell == null ? 0L : cell[0]);
+        out.put("calls", cell == null ? 0L : cell[1]);
+        return out;
+    }
+
+    /** 租户 id 与模型名都可能含分隔符，用不可见字符拼键，避免 "a-b" + "c" 与 "a" + "b-c" 撞车。 */
+    private static String cellKey(String tenantId, String model) {
+        return tenantId + '\u0000' + model;
     }
 
     /** 每个租户的 [执行数, 失败数]，失败含 FAILED 与挂起超时后的自动裁决失败。 */

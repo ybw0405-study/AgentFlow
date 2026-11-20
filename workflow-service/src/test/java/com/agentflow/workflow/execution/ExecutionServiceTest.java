@@ -52,7 +52,7 @@ class ExecutionServiceTest {
     private void givenDefinitionAndVersion() {
         when(definitions.findByIdAndTenant("d1", "space-1"))
                 .thenReturn(new WorkflowDefinitionMapper.DefinitionRow(
-                        1L, "d1", "space-1", "wf", null, "PUBLISHED", "v1", "{}", null,
+                        1L, "d1", "space-1", "wf", null, "PUBLISHED", "v1", 0, "{}", null,
                         "user-1", null, null));
         when(versions.findById("v1")).thenReturn(new WorkflowVersionMapper.VersionRow(
                 "v1", "d1", 1, "{\"dslVersion\":\"1.0\"}", "c", null, null, "user-1", null));
@@ -151,11 +151,67 @@ class ExecutionServiceTest {
     void noPublishedVersionIs409() {
         when(definitions.findByIdAndTenant("d1", "space-1"))
                 .thenReturn(new WorkflowDefinitionMapper.DefinitionRow(
-                        1L, "d1", "space-1", "wf", null, "DRAFT", null, "{}", null,
+                        1L, "d1", "space-1", "wf", null, "DRAFT", null, 0, "{}", null,
                         "user-1", null, null));
         var ex = assertThrows(BusinessException.class, () -> service.trigger(
                 editor, "d1", null, "idem-12345678", Map.of(), null, "trace-1"));
         assertEquals(ErrorCode.WF_STATE_001, ex.errorCode());
+    }
+
+    @Test
+    void concurrencyLimitRejectsBeforeInsertingAnything() {
+        when(definitions.findByIdAndTenant("d1", "space-1"))
+                .thenReturn(new WorkflowDefinitionMapper.DefinitionRow(
+                        1L, "d1", "space-1", "wf", null, "PUBLISHED", "v1", 2, "{}", null,
+                        "user-1", null, null));
+        when(executions.countActive("d1")).thenReturn(2);
+
+        var ex = assertThrows(BusinessException.class, () -> service.trigger(
+                editor, "d1", null, "idem-12345678", Map.of(), null, "trace-1"));
+
+        assertEquals(ErrorCode.WF_CONCURRENCY_001, ex.errorCode());
+        // 先挡住再派发：不能插一条 PENDING 再失败，那会留下一个永远不会开始的执行
+        verify(executions, never()).insert(any());
+        verify(engine, never()).submitExecution(any());
+        var captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(audit).publish(captor.capture());
+        assertEquals("EXECUTION_REJECTED", captor.getValue().eventType());
+        assertEquals("CONCURRENCY_LIMIT", captor.getValue().payloadRedacted().get("reason"));
+    }
+
+    @Test
+    void concurrencyLimitZeroMeansUnbounded() {
+        givenDefinitionAndVersion();
+        // 显式给一个「已经很多」的在跑数：上限为 0 时不该去看它
+        when(executions.countActive("d1")).thenReturn(99);
+
+        var result = service.trigger(editor, "d1", null, "idem-12345678",
+                Map.of(), null, "trace-1");
+
+        assertEquals("PENDING", result.status());
+        verify(executions, never()).countActive(anyString());
+        verify(engine).submitExecution(any());
+    }
+
+    @Test
+    void idempotentReplayStillWorksWhenAtConcurrencyLimit() {
+        givenDefinitionAndVersion();
+        when(definitions.findByIdAndTenant("d1", "space-1"))
+                .thenReturn(new WorkflowDefinitionMapper.DefinitionRow(
+                        1L, "d1", "space-1", "wf", null, "PUBLISHED", "v1", 1, "{}", null,
+                        "user-1", null, null));
+        when(executions.countActive("d1")).thenReturn(1);
+        when(executions.findByIdempotency("space-1", "idem-12345678"))
+                .thenReturn(new WorkflowExecutionMapper.ExecutionRow(
+                        7L, "exec-existing", "d1", "v1", "space-1", "user-1", "RUNNING",
+                        "idem-12345678", "t", 8000, 30, null, 0, 0, null, null, null, null));
+
+        // 重放不是「新占一个坑」：调用方重试时必须拿到原结果，而不是被自己的上一次执行挡住
+        var result = service.trigger(editor, "d1", null, "idem-12345678",
+                Map.of(), null, "trace-1");
+
+        assertTrue(result.idempotentReplay());
+        assertEquals("exec-existing", result.executionId());
     }
 
     @Test

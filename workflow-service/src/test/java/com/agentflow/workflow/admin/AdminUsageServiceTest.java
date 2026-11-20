@@ -55,6 +55,12 @@ class AdminUsageServiceTest {
                 new NodeExecutionMapper.PlatformModelRow("", 4, 40, 2)));
         Mockito.when(previews.byModelAll(Mockito.anyString())).thenReturn(List.of(
                 new PreviewUsageMapper.PlatformPreviewModelRow("deepseek-chat", 5, 300, 5)));
+        Mockito.when(nodes.usageByTenantModel(Mockito.anyString())).thenReturn(List.of(
+                new NodeExecutionMapper.TenantModelRow("space", "deepseek-chat", 20, 8_000),
+                new NodeExecutionMapper.TenantModelRow("org", "qwen-max", 3, 1_200),
+                new NodeExecutionMapper.TenantModelRow("space", "", 4, 40)));
+        Mockito.when(previews.byTenantModel(Mockito.anyString())).thenReturn(List.of(
+                new PreviewUsageMapper.PreviewTenantModelRow("space", "deepseek-chat", 5, 300)));
     }
 
     @SuppressWarnings("unchecked")
@@ -151,6 +157,59 @@ class AdminUsageServiceTest {
         assertFalse((Boolean) org.get("inherited"));
         assertEquals("unbounded", org.get("state"));
         assertTrue((Long) org.get("previewTokens") == 0L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void crossPivotsTenantByModelWithAlignedTotals() {
+        var data = service.usage("2026-11");
+        var cross = (Map<String, Object>) data.get("cross");
+        var models = (List<Map<String, Object>>) cross.get("models");
+        var matrixRows = (List<Map<String, Object>>) cross.get("rows");
+
+        // 列按消费降序，未标注永远最后：它是「不知道」，不是「最便宜」
+        assertEquals(java.util.Arrays.asList("deepseek-chat", "qwen-max", null),
+                models.stream().map(m -> m.get("model")).toList());
+        // 试跑与执行合并到同一格：8000 + 300
+        assertEquals(8_300L, models.get(0).get("tokens"));
+        assertEquals(25L, models.get(0).get("calls"));
+        assertEquals(1_200L, models.get(1).get("tokens"));
+        assertEquals(40L, models.get(2).get("tokens"));
+
+        // 行按租户表顺序，没消耗的租户不占一行
+        assertEquals(List.of("org", "space"), matrixRows.stream().map(r -> r.get("tenantId")).toList());
+        var orgCells = (List<Map<String, Object>>) matrixRows.get(0).get("cells");
+        var spaceCells = (List<Map<String, Object>>) matrixRows.get(1).get("cells");
+        // 每行的格子数与列数对齐，缺失的格子是 0 而不是错位
+        assertEquals(3, orgCells.size());
+        assertEquals(0L, orgCells.get(0).get("tokens"));
+        assertEquals(1_200L, orgCells.get(1).get("tokens"));
+        assertEquals(8_300L, spaceCells.get(0).get("tokens"));
+        assertEquals(40L, spaceCells.get(2).get("tokens"));
+
+        // 行列合计一致：这是交叉表唯一的正确性断言
+        long rowSum = matrixRows.stream().mapToLong(r -> (Long) r.get("tokens")).sum();
+        long colSum = models.stream().mapToLong(m -> (Long) m.get("tokens")).sum();
+        var grand = (Map<String, Object>) cross.get("grand");
+        assertEquals(colSum, rowSum);
+        assertEquals(grand.get("tokens"), rowSum);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void crossKeepsTenantsThatNoLongerExistInTheTenantTable() {
+        Mockito.when(nodes.usageByTenantModel(Mockito.anyString())).thenReturn(List.of(
+                new NodeExecutionMapper.TenantModelRow("ghost", "deepseek-chat", 1, 777)));
+        Mockito.when(previews.byTenantModel(Mockito.anyString())).thenReturn(List.of());
+
+        var cross = (Map<String, Object>) service.usage("2026-11").get("cross");
+        var matrixRows = (List<Map<String, Object>>) cross.get("rows");
+
+        // 已删除租户的历史消耗仍然要出现：静默丢一行等于账对不上
+        assertEquals(1, matrixRows.size());
+        assertEquals("ghost", matrixRows.get(0).get("tenantId"));
+        assertEquals("ghost", matrixRows.get(0).get("name"));
+        assertEquals(777L, matrixRows.get(0).get("tokens"));
     }
 
     @Test

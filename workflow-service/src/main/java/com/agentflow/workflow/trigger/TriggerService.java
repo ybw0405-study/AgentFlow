@@ -308,6 +308,55 @@ public class TriggerService {
                 row.id(), plan.skipped(), slotStamp, now);
     }
 
+    /** 这条工作流的并发余量：{@code limit <= 0} 表示不限。 */
+    public record Capacity(int limit, int active) {
+        public boolean available() {
+            return limit <= 0 || active < limit;
+        }
+    }
+
+    /**
+     * 还能不能再起一个执行。
+     *
+     * <p>调度器用它来决定「这一档现在跑，还是留到下一轮」。查不到定义时返回不限：
+     * 定义被删是派发阶段该报的错，不要在这里伪装成「并发满了」。
+     */
+    public Capacity capacity(WorkflowTriggerMapper.Row row) {
+        var def = definitions.findByIdAndTenant(row.definitionId(), row.tenantId());
+        if (def == null || def.maxConcurrent() <= 0) {
+            return new Capacity(0, 0);
+        }
+        return new Capacity(def.maxConcurrent(), executions.activeCount(def.id()));
+    }
+
+    /** 派发阶段撞上并发上限（预检查与真正插入之间被别的触发抢先时的兜底）。 */
+    public static boolean isConcurrencyLimit(Throwable error) {
+        return error instanceof BusinessException e
+                && e.errorCode() == ErrorCode.WF_CONCURRENCY_001;
+    }
+
+    /**
+     * 到并发上限：剩下的档位这一轮不跑，**游标也不动**。
+     *
+     * <p>不动游标是关键：下一轮扫描会重新算出同一批档位，等有执行跑完就继续补。
+     * 这与 {@code skipped} 是两件事——跳过是「不要了」，推迟是「等会儿还要」，
+     * 所以记的是 {@code TRIGGER_DEFERRED} 而不是把档位算进丢弃数。
+     */
+    public void defer(WorkflowTriggerMapper.Row row, SlotPlan plan, int fired, Capacity capacity,
+                      Instant now) {
+        int pending = plan.slots().size() - fired;
+        audit.publish(AuditMessage.of(row.tenantId(), null, "system:schedule",
+                "TRIGGER_DEFERRED", Map.of("triggerId", row.id(),
+                        "definitionId", row.definitionId(),
+                        "policy", MisfirePolicy.parseOrDefault(row.misfirePolicy()).name(),
+                        "fired", fired,
+                        "pending", pending,
+                        "limit", capacity.limit(),
+                        "active", capacity.active())));
+        log.info("schedule trigger {} deferred {} slot(s) at concurrency limit {} (active={}),"
+                + " fired={}", row.id(), pending, capacity.limit(), capacity.active(), fired);
+    }
+
     /**
      * 幂等键里的「分钟」：必须先截断到分钟。
      *
@@ -341,9 +390,10 @@ public class TriggerService {
     /**
      * 该跑但还没跑的那些档：不到点返回 {@link SlotPlan#NONE}。
      *
-     * <p>起点是「游标」——{@code last_fired_at} 与 {@code last_slot_at} 里较新的那个（新触发器则是
-     * 一分钟前，所以创建后不会立刻炸一次）。用两者较大者而不是只看 {@code last_fired_at}，是因为
-     * {@code SKIP} 只推进档位、不改「真的跑过」的时间戳，否则跳过一次后每轮都会重算出同一批档位。
+     * <p>起点是「档位游标」——{@code last_slot_at}，它为空时才退回 {@code last_fired_at}
+     * （新触发器则是「一分钟前」，所以创建后不会立刻炸一次）。只用档位而不是「两者较大值」，
+     * 是因为 {@code last_fired_at} 记的是扫描时刻：补跑到一半被并发上限挡住时，它会跑到
+     * 未跑档位的前面去，取较大值就等于把剩下的档位丢了（见 {@link #cursorOf}）。
      * 起点早于补跑窗口时截到窗口边界。
      *
      * <p>之后按 {@link MisfirePolicy} 决定交出去哪些档：只补最近一档、补齐最近 N 档，或者一档都不补
@@ -400,20 +450,25 @@ public class TriggerService {
         return slots.isEmpty() ? null : slots.get(slots.size() - 1);
     }
 
-    /** 扫描游标：两个时间戳里较新的那个；都为 null 视作「一分钟前刚创建」。 */
+    /**
+     * 扫描游标：最后**消费掉**的档位。
+     *
+     * <p>优先用 {@code last_slot_at}（档位），只有它为空时才退回 {@code last_fired_at}
+     * （真实发生时刻，V012 之前的历史行只有这个）。
+     *
+     * <p>这里曾经取两者较大值，看起来更「安全」，实际上会在补跑中途推迟时丢档：
+     * 跑完第 1 档时 {@code last_fired_at} 记的是**扫描时刻**（12:46），而第 2 档的档位是 12:44，
+     * 取较大值就把 12:44~12:46 全跳过了。档位游标天然就是「最后消费掉的档位」，
+     * 用它当基准既能让 SKIP 前进，也不会让 {@code CATCH_UP_ALL} 的半途而废变成永久丢失。
+     */
     private static Instant cursorOf(WorkflowTriggerMapper.Row row, Instant now) {
-        Instant fired = row.lastFiredAt() == null ? null : row.lastFiredAt().toInstant();
-        Instant slot = row.lastSlotAt() == null ? null : row.lastSlotAt().toInstant();
-        if (fired == null && slot == null) {
-            return now.minusSeconds(60);
+        if (row.lastSlotAt() != null) {
+            return row.lastSlotAt().toInstant();
         }
-        if (fired == null) {
-            return slot;
+        if (row.lastFiredAt() != null) {
+            return row.lastFiredAt().toInstant();
         }
-        if (slot == null) {
-            return fired;
-        }
-        return fired.isAfter(slot) ? fired : slot;
+        return now.minusSeconds(60);
     }
 
     /** 接下来 count 个触发点（触发器时区的墙钟串）；cron 非法时返回空表而不是抛错。 */

@@ -48,6 +48,10 @@ const MESSAGES: Record<string, { text: string; hint?: string }> = {
   'WF-IMMUTABLE-001': { text: '该记录为只追加数据，不允许修改或删除' },
   'WF-STATE-001': { text: '当前状态不允许此操作', hint: '请刷新后查看最新状态' },
   'WF-POLICY_CLAMPED-001': { text: '超出策略上限，已按上限执行' },
+  'WF-CONCURRENCY-001': {
+    text: '这条工作流同时在跑的执行已达上限',
+    hint: '稍后重试，或在触发页调高并发上限',
+  },
 
   // ---- 执行 ----
   'EXEC-BUDGET_EXHAUSTED': { text: 'Token 预算已用尽', hint: '可在工作流策略中调高预算' },

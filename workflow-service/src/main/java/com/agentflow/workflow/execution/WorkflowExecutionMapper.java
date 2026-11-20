@@ -122,6 +122,16 @@ public interface WorkflowExecutionMapper {
                                  @Param("limit") int limit);
 
     /**
+     * 正在占用引擎的执行数：并发上限的判据。
+     *
+     * <p>只数 {@code PENDING} / {@code RUNNING}。{@code SUSPENDED}（等人审批）不占——
+     * 把等人的也算进去，一个搁置三天的审批就能让整条流水线永远进不来新执行。
+     */
+    @Select("SELECT COUNT(*) FROM workflow_execution"
+            + " WHERE definition_id = #{definitionId} AND status IN ('PENDING','RUNNING')")
+    int countActive(@Param("definitionId") String definitionId);
+
+    /**
      * 管理端：本账期内各租户的执行数与失败数。
      *
      * <p>这里刻意按 {@code created_at} 卡区间而不是「全部时间」：成本中心整页都是账期口径，

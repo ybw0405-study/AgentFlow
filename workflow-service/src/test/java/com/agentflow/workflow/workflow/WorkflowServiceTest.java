@@ -44,7 +44,7 @@ class WorkflowServiceTest {
 
     private WorkflowDefinitionMapper.DefinitionRow defRow(String id, String draft) {
         return new WorkflowDefinitionMapper.DefinitionRow(
-                1L, id, "space-1", "wf", null, "DRAFT", null, draft, null, "user-1",
+                1L, id, "space-1", "wf", null, "DRAFT", null, 0, draft, null, "user-1",
                 null, null);
     }
 

@@ -12,13 +12,14 @@ const mocks = vi.hoisted(() => ({
   rotate: vi.fn(),
   remove: vi.fn(),
   previewCron: vi.fn(),
+  workflowPatch: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
   return {
     ...actual,
-    workflowApi: { ...actual.workflowApi, detail: mocks.detail },
+    workflowApi: { ...actual.workflowApi, detail: mocks.detail, patch: mocks.workflowPatch },
     triggerApi: {
       list: mocks.list,
       create: mocks.create,
@@ -46,7 +47,8 @@ function detail(published = true) {
   return {
     definition: {
       seq: 1, id: 'wf-1', tenantId: 't', name: '售后问答', description: null,
-      status: 'PUBLISHED', currentVersionId: published ? 'v-1' : null, draftDsl: DRAFT,
+      status: 'PUBLISHED', currentVersionId: published ? 'v-1' : null,
+      maxConcurrent: 0, draftDsl: DRAFT,
       draftChecksum: 'c', createdBy: 'u', createdAt: null, updatedAt: null,
     },
     versions: [],
@@ -85,6 +87,7 @@ describe('触发页', () => {
     mocks.patch.mockResolvedValue(WEBHOOK)
     mocks.rotate.mockResolvedValue(WEBHOOK)
     mocks.remove.mockResolvedValue({ ok: true })
+    mocks.workflowPatch.mockResolvedValue({ ok: true })
     mocks.previewCron.mockResolvedValue({
       cron: '0 0 9 * * *',
       timezone: 'Asia/Shanghai',
@@ -170,6 +173,29 @@ describe('触发页', () => {
     expect(wrapper.text()).toContain('上次扫描跳过')
     expect(wrapper.text()).toContain('档（未执行）')
     expect(wrapper.text()).not.toContain('上次触发')
+  })
+
+  it('并发上限可改，改的是工作流而不是单条触发器', async () => {
+    mocks.list.mockResolvedValue([SCHEDULE])
+    const wrapper = await mountView()
+
+    const input = wrapper.find('input[type="number"]')
+    expect((input.element as HTMLInputElement).value).toBe('0')
+    await input.setValue('3')
+    const save = wrapper.findAll('button').find((b) => b.text() === '保存上限')
+    await save!.trigger('click')
+    await flushPromises()
+
+    // 上限属于整条流水线：定时与 webhook 共用同一个闸门
+    expect(mocks.workflowPatch).toHaveBeenCalledWith('wf-1', { maxConcurrent: 3 })
+  })
+
+  it('并发上限没改时保存按钮不可点，避免无意义的写请求', async () => {
+    mocks.list.mockResolvedValue([SCHEDULE])
+    const wrapper = await mountView()
+
+    const save = wrapper.findAll('button').find((b) => b.text() === '保存上限')
+    expect((save!.element as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('预览失败时把后端原因就地显示', async () => {

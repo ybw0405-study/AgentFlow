@@ -72,6 +72,16 @@ public class ExecutionService {
     public record TriggerResult(String executionId, String status, boolean idempotentReplay) {
     }
 
+    /**
+     * 这个工作流正在占用引擎的执行数（{@code PENDING} / {@code RUNNING}）。
+     *
+     * <p>调度器用它判断补跑还能不能继续；把「什么算占用」收在这里一份，
+     * 免得触发侧与派发侧各写一套状态集合。
+     */
+    public int activeCount(String definitionId) {
+        return executions.countActive(definitionId);
+    }
+
     public TriggerResult trigger(TenantInfo tenant, String definitionId, String versionId,
                                  String idempotencyKey, Map<String, Object> variables,
                                  PolicyRequest policy, String traceId) {
@@ -109,6 +119,16 @@ public class ExecutionService {
         var replayed = executions.findByIdempotency(tenantId, idempotencyKey);
         if (replayed != null) {
             return new TriggerResult(replayed.id(), replayed.status(), true);
+        }
+        // 并发上限（0 = 不限）：先挡在门口，不要先插一行再失败——那会留下一条假的 PENDING。
+        // 幂等回放放在前面：已经跑过的执行不算「新占一个坑」，重放必须能拿到原结果。
+        if (def.maxConcurrent() > 0 && executions.countActive(def.id()) >= def.maxConcurrent()) {
+            audit.publish(AuditMessage.of(tenantId, null, userId,
+                    "EXECUTION_REJECTED", Map.of("definitionId", definitionId,
+                            "reason", "CONCURRENCY_LIMIT",
+                            "maxConcurrent", def.maxConcurrent())));
+            throw new BusinessException(ErrorCode.WF_CONCURRENCY_001,
+                    "workflow already has " + def.maxConcurrent() + " running executions");
         }
         // 灰度分流（P1）：未显式指定版本时，按 canary 配置路由到新旧版本；审计留痕。
         String effectiveVersionId = versionId;

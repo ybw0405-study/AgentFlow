@@ -90,6 +90,18 @@ public interface PreviewUsageMapper {
             + " FROM preview_usage WHERE created_at >= #{from} GROUP BY COALESCE(model,'')")
     List<PlatformPreviewModelRow> byModelAll(@Param("from") String from);
 
+    /**
+     * 「租户 × 模型」二维：交叉表的试跑侧原料。
+     *
+     * <p>{@code calls} 用 {@code SUM(node_count)} 而不是行数：试跑一次会跑上游好几个节点，
+     * 与执行侧的「节点行数」口径对齐，否则同一张表里两列不可比。
+     */
+    @Select("SELECT tenant_id AS tenantId, COALESCE(model,'') AS model,"
+            + " COALESCE(SUM(node_count),0) AS cnt, COALESCE(SUM(token_used),0) AS tokens"
+            + " FROM preview_usage WHERE created_at >= #{from}"
+            + " GROUP BY tenant_id, COALESCE(model,'')")
+    List<PreviewTenantModelRow> byTenantModel(@Param("from") String from);
+
     record PreviewMonthRow(long calls, long tokens) {
     }
 
@@ -97,6 +109,9 @@ public interface PreviewUsageMapper {
     }
 
     record PlatformPreviewModelRow(String model, long cnt, long tokens, long tenants) {
+    }
+
+    record PreviewTenantModelRow(String tenantId, String model, long cnt, long tokens) {
     }
 
     record PreviewModelRow(String model, long cnt, long tokens) {

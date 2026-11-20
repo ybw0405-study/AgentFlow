@@ -64,10 +64,26 @@ public interface NodeExecutionMapper {
             + " WHERE e.created_at >= #{from} GROUP BY COALESCE(n.model,'')")
     List<PlatformModelRow> usageByModelAll(@Param("from") String from);
 
+    /**
+     * 「租户 × 模型」二维：交叉表的执行侧原料。
+     *
+     * <p>不在 SQL 里做透视：模型列是动态的，SQL 拼列名等于把展示层的形状写进查询；
+     * 而且试跑在另一张表，本来就要在服务层合并。这里只给最细的事实。
+     */
+    @Select("SELECT e.tenant_id AS tenantId, COALESCE(n.model,'') AS model,"
+            + " COUNT(*) AS cnt, COALESCE(SUM(n.token_used),0) AS tokens"
+            + " FROM node_execution n JOIN workflow_execution e ON e.id = n.execution_id"
+            + " WHERE e.created_at >= #{from}"
+            + " GROUP BY e.tenant_id, COALESCE(n.model,'')")
+    List<TenantModelRow> usageByTenantModel(@Param("from") String from);
+
     record ModelUsageRow(String model, long cnt, long tokens) {
     }
 
     record PlatformModelRow(String model, long cnt, long tokens, long tenants) {
+    }
+
+    record TenantModelRow(String tenantId, String model, long cnt, long tokens) {
     }
 
     record NodeRow(long seq, String id, String executionId, String nodeKey, int displayOrder,

@@ -61,6 +61,8 @@ export interface WorkflowDefinitionDto {
   description: string | null
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
   currentVersionId: string | null
+  /** 同一工作流同时在跑的执行上限；0 = 不限（老数据默认 0）。 */
+  maxConcurrent?: number
   draftDsl: string | null
   draftChecksum: string | null
   createdBy: string

@@ -43,8 +43,14 @@ function num(value: number): string {
   return value.toLocaleString('en-US')
 }
 
+/**
+ * 百分比：保留一位小数。
+ *
+ * <p>取整会把 0.4% 抹成 0%，进度条上那一段就直接消失——「明明记了 115 token，条上什么都没有」。
+ * 一位小数已经够读，也不会让 25% 变成 25.0%（整数时仍然只写整数）。
+ */
 function percent(value: number): string {
-  return `${Math.round(value * 100)}%`
+  return `${Math.round(value * 1000) / 10}%`
 }
 
 function shortDate(date: string): string {
@@ -62,6 +68,14 @@ const budgetState = computed<'ok' | 'near' | 'over'>(() => {
   if (used >= 0.8) return 'near'
   return 'ok'
 })
+
+/** 两张卡片的额度条：调用数与 token 各切一次，模板里不再重复算。 */
+const callSegments = computed(() =>
+  budgetSegments(budget.value?.callUtilization ?? 0, budget.value?.previewCallUtilization),
+)
+const tokenSegments = computed(() =>
+  budgetSegments(budget.value?.tokenUtilization ?? 0, budget.value?.previewTokenUtilization),
+)
 
 const usageRows = computed(() => summary.value?.byDefinition ?? [])
 const recent = computed(() => summary.value?.recentPreviews ?? [])
@@ -82,13 +96,21 @@ function modelShare(tokens: number): string {
 /**
  * 已用量切成「执行 / 试跑」两段。
  *
- * 试跑的份额比已用量还大只可能是账本与明细不同步（记账失败、手工改库），
+ * <p>试跑的份额比已用量还大只可能是账本与明细不同步（记账失败、手工改库），
  * 这时按已用量封顶，宁可少画一段也不要把墨迹画出进度条。
  * 后端对 0 值不下发键，所以这里全部按 0 兜底。
+ *
+ * <p>{@code tick}：份额非零但不足 1%。百分比再精确，0.2% 在 300px 的条上也只有 0.6px，
+ * 浏览器会画成空白——所以这一段额外挂一个 2px 的最小宽度，让它至少是一条看得见的刻度。
+ * 份额真的是 0 时不挂：那时画一条刻度等于谎报「有一点试跑」。
  */
 function budgetSegments(utilization: number, previewUtilization: number | undefined) {
   const preview = Math.min(previewUtilization ?? 0, utilization)
-  return { exec: percent(utilization - preview), preview: percent(preview) }
+  return {
+    exec: percent(utilization - preview),
+    preview: percent(preview),
+    tick: preview > 0 && preview < 0.01,
+  }
 }
 
 /**
@@ -157,11 +179,12 @@ function previewShareOfUsed(preview: number | undefined, used: number | undefine
           <span
             class="af-usage-bar__fill"
             :class="{ 'af-usage-bar__fill--danger': budgetState === 'over' }"
-            :style="{ width: budgetSegments(budget?.callUtilization ?? 0, budget?.previewCallUtilization).exec }"
+            :style="{ width: callSegments.exec }"
           />
           <span
             class="af-usage-bar__fill af-usage-bar__fill--preview"
-            :style="{ width: budgetSegments(budget?.callUtilization ?? 0, budget?.previewCallUtilization).preview }"
+            :class="{ 'af-usage-bar__fill--tick': callSegments.tick }"
+            :style="{ width: callSegments.preview }"
           />
         </div>
         <div class="af-faint af-usage-card__foot">
@@ -184,11 +207,12 @@ function previewShareOfUsed(preview: number | undefined, used: number | undefine
           <span
             class="af-usage-bar__fill"
             :class="{ 'af-usage-bar__fill--danger': budgetState === 'over' }"
-            :style="{ width: budgetSegments(budget?.tokenUtilization ?? 0, budget?.previewTokenUtilization).exec }"
+            :style="{ width: tokenSegments.exec }"
           />
           <span
             class="af-usage-bar__fill af-usage-bar__fill--preview"
-            :style="{ width: budgetSegments(budget?.tokenUtilization ?? 0, budget?.previewTokenUtilization).preview }"
+            :class="{ 'af-usage-bar__fill--tick': tokenSegments.tick }"
+            :style="{ width: tokenSegments.preview }"
           />
         </div>
         <div class="af-faint af-usage-card__foot">
@@ -558,6 +582,14 @@ function previewShareOfUsed(preview: number | undefined, used: number | undefine
 /* 与每日柱状图里「试跑」同色：同一页面上同一种消耗只能有一种颜色 */
 .af-usage-bar__fill--preview {
   background: var(--af-neutral);
+}
+
+/*
+ * 不足 1% 的试跑段：按百分比算出来的宽度不到 1px，浏览器直接画不出来。
+ * 给一个 2px 的最小宽度，让它退化成一条刻度——「有一点，但很少」，而不是「没有」。
+ */
+.af-usage-bar__fill--tick {
+  min-width: 2px;
 }
 
 .af-usage-legend {

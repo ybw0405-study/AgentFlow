@@ -21,6 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class WorkflowService {
 
+    /** 并发上限的硬上界：更大的值意味着一次补跑就能打满引擎与连接池。 */
+    static final int MAX_CONCURRENT_LIMIT = 64;
+
     /** 新建定义的默认草稿：最小合法 start→end 骨架。 */
     private static final String DEFAULT_DRAFT = """
             {
@@ -60,7 +63,7 @@ public class WorkflowService {
         String id = UUID.randomUUID().toString();
         try {
             definitions.insert(new WorkflowDefinitionMapper.DefinitionRow(
-                    0L, id, tenant.tenantId(), name, description, "DRAFT", null,
+                    0L, id, tenant.tenantId(), name, description, "DRAFT", null, 0,
                     DEFAULT_DRAFT, null, tenant.userId(), null, null));
         } catch (DuplicateKeyException e) {
             throw new BusinessException(ErrorCode.COM_CONFLICT_001,
@@ -90,6 +93,29 @@ public class WorkflowService {
         requireRole(tenant, "EDITOR", null);
         load(tenant, id);
         definitions.updateMeta(id, tenant.tenantId(), name, description);
+    }
+
+    /**
+     * 并发上限：同一工作流同时最多有几个执行在跑，0 = 不限。
+     *
+     * <p>上限放在工作流上而不是触发器上：同一条流水线可能既有 webhook 又有定时，
+     * 「最多几个同时在跑」是这条流水线的属性，分成两份配置只会互相打架。
+     *
+     * <p>上界 64 是保护而不是建议值：更大的数字意味着一次补跑就能把引擎与本机连接池打满，
+     * 真要更高的吞吐应该拆工作流，而不是把闸门开到不存在。
+     */
+    public int setConcurrency(TenantInfo tenant, String id, Integer maxConcurrent) {
+        requireRole(tenant, "EDITOR", null);
+        load(tenant, id);
+        if (maxConcurrent == null || maxConcurrent < 0 || maxConcurrent > MAX_CONCURRENT_LIMIT) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "maxConcurrent must be between 0 and " + MAX_CONCURRENT_LIMIT);
+        }
+        definitions.updateMaxConcurrent(id, tenant.tenantId(), maxConcurrent);
+        audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
+                "WORKFLOW_CONCURRENCY_UPDATED", Map.of("definitionId", id,
+                        "maxConcurrent", maxConcurrent)));
+        return maxConcurrent;
     }
 
     public void archive(TenantInfo tenant, String id) {

@@ -14,6 +14,13 @@ describe('错误文案映射', () => {
     expect(d.text).not.toContain('WF-')
   })
 
+  it('并发上限给出可执行的提示，而不是只说「太频繁」', () => {
+    const d = describeError(apiError(429, 'WF-CONCURRENCY-001'))
+    expect(d.text).toContain('同时在跑的执行已达上限')
+    expect(d.hint).toContain('触发页')
+    expect(d.text).not.toContain('WF-')
+  })
+
   it('保留内部码与 traceId 供排查', () => {
     const e = apiError(422, 'DSL-ORPHAN-001')
     expect(errorDebugInfo(e)).toBe('DSL-ORPHAN-001 · trace-1')

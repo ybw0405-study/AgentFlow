@@ -25,6 +25,10 @@ const busy = ref(false)
 const showSecret = ref(false)
 const cronDraft = ref('0 9 * * *')
 const misfirePolicy = ref<MisfirePolicy>('CATCH_UP_LATEST')
+/** 工作流级并发上限：0 = 不限。补跑一批档位时会逐个检查余量。 */
+const concurrency = ref(0)
+const concurrencyDraft = ref(0)
+const concurrencyDirty = computed(() => concurrencyDraft.value !== concurrency.value)
 const scheduleValues = ref<Record<string, unknown>>({})
 const preview = ref<CronPreviewDto | null>(null)
 const previewError = ref<string | null>(null)
@@ -77,6 +81,8 @@ async function load(): Promise<void> {
   }
   triggers.value = await triggerApi.list(workflowId)
   if (schedule.value?.cron) cronDraft.value = schedule.value.cron
+  concurrency.value = detail.definition.maxConcurrent ?? 0
+  concurrencyDraft.value = concurrency.value
   misfirePolicy.value = schedule.value?.misfirePolicy ?? 'CATCH_UP_LATEST'
   scheduleValues.value = schedule.value
     ? { ...initialVariables(dslVariables.value), ...schedule.value.variables }
@@ -164,6 +170,19 @@ function saveSchedule(): void {
       variables: scheduleValues.value,
     }),
     '定时触发已更新',
+  )
+}
+
+/**
+ * 并发上限是工作流的属性，不是定时触发器的属性：同一个工作流可能既有 webhook 又有定时，
+ * 两边各配一份只会互相打架。所以这里改的是 workflow 本身。
+ */
+function saveConcurrency(): void {
+  void run(
+    () => workflowApi.patch(workflowId, { maxConcurrent: concurrencyDraft.value }),
+    concurrencyDraft.value > 0
+      ? `并发上限设为 ${concurrencyDraft.value}`
+      : '并发不再限制',
   )
 }
 
@@ -428,6 +447,35 @@ onMounted(() => {
             <span class="af-faint"> · {{ item.hint }}</span>
           </span>
         </label>
+      </div>
+
+      <div class="af-label">
+        并发上限（整个工作流）
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px">
+        <input
+          v-model.number="concurrencyDraft"
+          class="af-input mono"
+          type="number"
+          min="0"
+          max="64"
+          style="width: 84px"
+          :disabled="busy"
+        >
+        <span
+          class="af-faint"
+          style="font-size: 11px; line-height: 1.6; flex: 1"
+        >
+          0 = 不限。补跑一批档位时逐个检查余量，跑满就停——剩下的档位留到下一轮继续，
+          不会丢档，也不会在同一秒把所有档位塞进引擎。
+        </span>
+        <button
+          class="af-btn af-btn--sm"
+          :disabled="busy || !concurrencyDirty"
+          @click="saveConcurrency"
+        >
+          保存上限
+        </button>
       </div>
 
       <RunVariablesForm

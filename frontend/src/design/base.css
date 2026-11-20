@@ -316,6 +316,14 @@ pre,
   background: var(--af-neutral);
 }
 
+/*
+ * 非零但不足 1% 的一段：百分比宽度不到 1px 时浏览器画不出来，
+ * 给它一个最小宽度，退化成一条能看见的刻度（真正的 0 不挂这个类）。
+ */
+.af-meter__fill--tick {
+  min-width: 2px;
+}
+
 .af-meter__fill--danger {
   background: var(--af-danger);
 }

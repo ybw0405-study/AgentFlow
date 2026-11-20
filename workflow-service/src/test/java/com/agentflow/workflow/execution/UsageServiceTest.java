@@ -210,7 +210,7 @@ class UsageServiceTest {
 
     private static WorkflowDefinitionMapper.DefinitionRow definition(String id, String name) {
         return new WorkflowDefinitionMapper.DefinitionRow(1L, id, "space-1", name, null,
-                "DRAFT", null, "{}", null, "user-1", null, null);
+                "DRAFT", null, 0, "{}", null, "user-1", null, null);
     }
 
     @Test

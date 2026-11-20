@@ -160,6 +160,59 @@ describe('用量页', () => {
     expect((exec[1].element as HTMLElement).style.width).toBe('0%')
   })
 
+  it('不足 1% 的试跑段退化成可见刻度，而不是整段消失', async () => {
+    // 50000 额度里只有 115 token 试跑 = 0.23%：宽度只有零点几像素，
+    // 取整成 0% 就等于对外说「没有试跑」，与脚注「占 <1%」自相矛盾。
+    mocks.summary.mockResolvedValue(
+      summary({
+        budget: {
+          period: '2026-11',
+          callsUsed: 120,
+          tokensUsed: 4000,
+          callLimit: 10000,
+          tokenLimit: 50000,
+          callUtilization: 0.012,
+          tokenUtilization: 0.08,
+          previewCalls: 1,
+          previewTokens: 115,
+          previewCallUtilization: 0.0001,
+          previewTokenUtilization: 0.0023,
+        },
+      }),
+    )
+    const wrapper = await mountView()
+
+    const preview = wrapper.findAll('.af-usage-bar__fill--preview')
+    // 调用数那一档 0.01%、token 那一档 0.23%：宽度都落在 1px 以下，靠最小宽度可见
+    expect((preview[0].element as HTMLElement).style.width).toBe('0%')
+    expect((preview[1].element as HTMLElement).style.width).toBe('0.2%')
+    expect(preview[0].classes()).toContain('af-usage-bar__fill--tick')
+    expect(preview[1].classes()).toContain('af-usage-bar__fill--tick')
+  })
+
+  it('试跑为 0 时不挂最小宽度，避免画出「有一点试跑」的假象', async () => {
+    mocks.summary.mockResolvedValue(
+      summary({
+        budget: {
+          period: '2026-11',
+          callsUsed: 120,
+          tokensUsed: 4000,
+          callLimit: 10000,
+          tokenLimit: 50000,
+          callUtilization: 0.012,
+          tokenUtilization: 0.08,
+          previewCalls: 0,
+          previewTokens: 0,
+        },
+      }),
+    )
+    const wrapper = await mountView()
+
+    const preview = wrapper.findAll('.af-usage-bar__fill--preview')
+    expect(preview[0].classes()).not.toContain('af-usage-bar__fill--tick')
+    expect((preview[0].element as HTMLElement).style.width).toBe('0%')
+  })
+
   it('按模型分解：同一模型合并两来源，没有模型的节点单独一桶', async () => {
     const wrapper = await mountView()
 

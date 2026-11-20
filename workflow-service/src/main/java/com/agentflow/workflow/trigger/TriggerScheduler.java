@@ -1,5 +1,6 @@
 package com.agentflow.workflow.trigger;
 
+import com.agentflow.common.error.BusinessException;
 import com.agentflow.workflow.lease.RedisLease;
 import java.time.Duration;
 import java.time.Instant;
@@ -23,10 +24,14 @@ import org.springframework.stereotype.Component;
  *       {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一分钟也只会有一条执行。</li>
  * </ol>
  *
- * <p>到点判断以「扫描游标」为基准（{@code last_fired_at} 与 {@code last_slot_at} 里较新的那个）：
+ * <p>到点判断以「档位游标」为基准（{@code last_slot_at}；为空时退回 {@code last_fired_at}）：
  * 正常运行时每轮最多只有一档到期，停机恢复时按触发器的 {@link MisfirePolicy} 处理错过的档位
  * （窗口 24 小时，见 {@link TriggerService#dueSlots}）——只补最近一档、补齐最近若干档、
  * 或者整批跳过。三种策略都不做「无限重放」：每分钟任务停机 3 小时不会瞬间炸出 180 条执行。
+ *
+ * <p>补跑还要服从工作流的并发上限（{@code workflow_definition.max_concurrent}）：一批档位
+ * 逐个检查余量，跑满就停下，游标停在最后一条真的跑过的档位上，下一轮接着补——
+ * 宁可晚几分钟补完，也不要在同一秒把引擎和额度打满。
  */
 @Component
 public class TriggerScheduler {
@@ -73,11 +78,28 @@ public class TriggerScheduler {
                     service.skipMissed(row, now, plan);
                     continue;
                 }
+                int fired = 0;
                 for (Instant slot : plan.slots()) {
-                    var result = service.fireSchedule(row, now, slot, plan.skipped());
-                    log.info("schedule trigger {} fired slot={} execution={} status={}"
-                                    + " skipped={}", row.id(), slot, result.executionId(),
-                            result.status(), plan.skipped());
+                    var capacity = service.capacity(row);
+                    if (!capacity.available()) {
+                        // 工作流已经跑满：剩下的档位留到下一轮，游标停在最后一条真的跑过的档位上
+                        service.defer(row, plan, fired, capacity, now);
+                        break;
+                    }
+                    try {
+                        var result = service.fireSchedule(row, now, slot, plan.skipped());
+                        fired++;
+                        log.info("schedule trigger {} fired slot={} execution={} status={}"
+                                        + " skipped={}", row.id(), slot, result.executionId(),
+                                result.status(), plan.skipped());
+                    } catch (BusinessException e) {
+                        // 预检查与插入之间被别的入口抢先占满：同样按「推迟」处理，不丢档
+                        if (!TriggerService.isConcurrencyLimit(e)) {
+                            throw e;
+                        }
+                        service.defer(row, plan, fired, service.capacity(row), now);
+                        break;
+                    }
                 }
             } catch (Exception e) {
                 // 一个触发器失败不该拖垮整轮扫描，也不该吞掉同一触发器后面还没跑的档位：

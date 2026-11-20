@@ -133,3 +133,33 @@ def test_admin_usage_breaks_down_by_model_across_tenants(client, admin_token):
     assert llm["tenants"] >= 1, llm
     # 试跑侧与执行侧是并集：租户数不会超过实际有账本行的租户数
     assert llm["tenants"] <= len(usage["tenants"])
+
+
+def test_admin_usage_cross_tabulates_tenant_by_model(client, admin_token):
+    """交叉表：行是租户、列是模型，行列合计必须与整页的账期合计对得上。"""
+    usage = _usage(client, admin_token)
+    cross = usage["cross"]
+
+    models = cross["models"]
+    rows = cross["rows"]
+    grand = cross["grand"]
+    assert models, cross
+    # 未标注（空模型）永远排最后：它是「不知道」，不是「最便宜」
+    labels = [m.get("model") for m in models]
+    assert None not in labels[:-1], labels
+
+    # 每一行的格子与列一一对应，长度不同就是错位
+    for row in rows:
+        assert len(row["cells"]) == len(models), row
+        assert row["tokens"] == sum(cell["tokens"] for cell in row["cells"]), row
+
+    # 行合计之和 == 列合计之和 == 总合计：交叉表唯一的正确性断言
+    assert sum(row["tokens"] for row in rows) == grand["tokens"]
+    assert sum(m["tokens"] for m in models) == grand["tokens"]
+    # 与按模型表同一账期口径：两处总数必须一致
+    assert grand["tokens"] == sum(item["tokens"] for item in usage["byModel"])
+
+    # 上面用例跑过 DEMO_DSL：Space A 必须出现在 deepseek 那一列
+    space = next(row for row in rows if row["tenantId"] == SPACE_A)
+    index = next(i for i, m in enumerate(models) if m.get("model") == REAL_LLM_MODEL)
+    assert space["cells"][index]["tokens"] > 0, space

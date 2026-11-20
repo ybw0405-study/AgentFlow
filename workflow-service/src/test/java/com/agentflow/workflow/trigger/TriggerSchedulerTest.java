@@ -7,6 +7,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.agentflow.common.error.BusinessException;
+import com.agentflow.common.error.ErrorCode;
 import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +36,8 @@ class TriggerSchedulerTest {
         when(ops.get("af:sched:leader")).thenReturn(null);
         when(ops.setIfAbsent(eq("af:sched:leader"), anyString(), any(Duration.class)))
                 .thenReturn(true);
+        // 默认不限并发；关心上限的用例再单独覆盖
+        when(service.capacity(any())).thenReturn(new TriggerService.Capacity(0, 0));
         scheduler = new TriggerScheduler(service, redis, true);
     }
 
@@ -68,6 +72,64 @@ class TriggerSchedulerTest {
         verify(service).fireSchedule(eq(row), any(), eq(SLOT), eq(2));
         verify(service).fireSchedule(eq(row), any(), eq(second), eq(2));
         verify(service).claimFire(eq("tr-1"), any());
+    }
+
+    @Test
+    void defersWholePlanWhenConcurrencyLimitIsAlreadyReached() {
+        var row = schedule("tr-1");
+        when(service.enabledSchedules()).thenReturn(List.of(row));
+        when(service.dueSlots(eq(row), any())).thenReturn(plan(SLOT));
+        when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
+        when(service.capacity(row)).thenReturn(new TriggerService.Capacity(2, 2));
+
+        scheduler.poll();
+
+        // 满了就一档都不发：游标不动，下一轮还在原地等着补
+        verify(service, never()).fireSchedule(any(), any(), any(), Mockito.anyInt());
+        verify(service).defer(eq(row), eq(plan(SLOT)), eq(0),
+                eq(new TriggerService.Capacity(2, 2)), any());
+    }
+
+    @Test
+    void firesUpToTheLimitThenDefersTheRest() {
+        var row = schedule("tr-1");
+        var second = SLOT.plusSeconds(900);
+        var third = SLOT.plusSeconds(1800);
+        when(service.enabledSchedules()).thenReturn(List.of(row));
+        when(service.dueSlots(eq(row), any()))
+                .thenReturn(new TriggerService.SlotPlan(List.of(SLOT, second, third), null, 0));
+        when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
+        // 第一个档位还有余量，派发后占满（1/1）
+        when(service.capacity(row)).thenReturn(
+                new TriggerService.Capacity(1, 0), new TriggerService.Capacity(1, 1));
+        when(service.fireSchedule(eq(row), any(), any(), eq(0))).thenReturn(
+                new TriggerService.FireResult("e-1", "PENDING", false));
+
+        scheduler.poll();
+
+        verify(service).fireSchedule(eq(row), any(), eq(SLOT), eq(0));
+        verify(service, never()).fireSchedule(eq(row), any(), eq(second), Mockito.anyInt());
+        verify(service).defer(eq(row), any(), eq(1),
+                eq(new TriggerService.Capacity(1, 1)), any());
+    }
+
+    @Test
+    void raceOnTheWayInIsTreatedAsDeferredNotAsFailure() {
+        var row = schedule("tr-1");
+        var second = SLOT.plusSeconds(900);
+        when(service.enabledSchedules()).thenReturn(List.of(row));
+        when(service.dueSlots(eq(row), any()))
+                .thenReturn(new TriggerService.SlotPlan(List.of(SLOT, second), null, 0));
+        when(service.claimFire(eq("tr-1"), any())).thenReturn(true);
+        when(service.capacity(row)).thenReturn(new TriggerService.Capacity(4, 1));
+        // 预检查通过，但插入时被别的入口抢先占满
+        when(service.fireSchedule(eq(row), any(), eq(SLOT), eq(0))).thenThrow(
+                new BusinessException(ErrorCode.WF_CONCURRENCY_001, "full"));
+
+        scheduler.poll();
+
+        verify(service).defer(eq(row), any(), eq(0), any(), any());
+        verify(service, never()).fireSchedule(eq(row), any(), eq(second), Mockito.anyInt());
     }
 
     @Test

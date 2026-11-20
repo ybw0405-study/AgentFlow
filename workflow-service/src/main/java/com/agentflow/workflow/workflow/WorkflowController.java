@@ -34,7 +34,8 @@ public class WorkflowController {
 
     public record PatchRequest(@Size(max = 128) String name,
                                @Size(max = 1024) String description,
-                               String status) {
+                               String status,
+                               Integer maxConcurrent) {
     }
 
     public record VersionRefRequest(@NotBlank String versionId) {
@@ -82,6 +83,9 @@ public class WorkflowController {
             service.updateMeta(TenantContext.require(), id,
                     body.name() != null ? body.name() : service.detail(TenantContext.require(), id).name(),
                     body.description());
+        }
+        if (body.maxConcurrent() != null) {
+            service.setConcurrency(TenantContext.require(), id, body.maxConcurrent());
         }
         return ApiResponse.ok(Map.of("ok", true));
     }

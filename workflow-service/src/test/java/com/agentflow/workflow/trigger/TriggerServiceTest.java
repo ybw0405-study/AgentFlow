@@ -302,6 +302,23 @@ class TriggerServiceTest {
     }
 
     @Test
+    void deferredCatchUpKeepsTheUntouchedSlotsForTheNextRound() {
+        // 补跑到第 1 档就被并发上限挡住：last_fired_at 是扫描时刻 12:46:23（晚于档位），
+        // 游标必须停在档位 12:43，否则 12:44~12:46 这三档会被「较大值」直接跳过、永久丢掉
+        var row = schedule("tr-1", "* * * * *", MisfirePolicy.CATCH_UP_ALL,
+                Timestamp.from(Instant.parse("2026-11-20T12:46:23Z")),
+                Timestamp.from(Instant.parse("2026-11-20T12:43:00Z")));
+
+        var plan = service.dueSlots(row, Instant.parse("2026-11-20T12:47:30Z"));
+
+        assertEquals(List.of(Instant.parse("2026-11-20T12:44:00Z"),
+                Instant.parse("2026-11-20T12:45:00Z"),
+                Instant.parse("2026-11-20T12:46:00Z"),
+                Instant.parse("2026-11-20T12:47:00Z")), plan.slots());
+        assertEquals(0, plan.skipped());
+    }
+
+    @Test
     void firstRunIgnoresSkipPolicy() {
         // 刚建的触发器没「错过」过什么，即使选了 SKIP 也该跑当前这一档
         var row = schedule("tr-1", "* * * * *", MisfirePolicy.SKIP, null, null);
@@ -341,6 +358,6 @@ class TriggerServiceTest {
 
     private static WorkflowDefinitionMapper.DefinitionRow definition() {
         return new WorkflowDefinitionMapper.DefinitionRow(1L, "d-1", "t-1", "日报", null,
-                "PUBLISHED", "v-1", null, null, "u-1", null, null);
+                "PUBLISHED", "v-1", 0, null, null, "u-1", null, null);
     }
 }

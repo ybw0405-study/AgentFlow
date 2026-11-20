@@ -49,8 +49,10 @@ export const workflowApi = {
   list: (params: { status?: string; keyword?: string; cursor?: string; limit?: number }) =>
     get<PageResult<WorkflowDefinitionDto>>('/workflows', params),
   detail: (id: string) => get<WorkflowDetail>(`/workflows/${id}`),
-  patch: (id: string, body: { name?: string; description?: string; status?: string }) =>
-    patch<{ ok: boolean }>(`/workflows/${id}`, body),
+  patch: (
+    id: string,
+    body: { name?: string; description?: string; status?: string; maxConcurrent?: number },
+  ) => patch<{ ok: boolean }>(`/workflows/${id}`, body),
   remove: (id: string) => del<{ ok: boolean }>(`/workflows/${id}`),
   saveDraft: (id: string, dsl: WorkflowDsl) =>
     put<{ ok: boolean; checksum: string }>(`/workflows/${id}/draft`, dsl),
@@ -235,12 +237,45 @@ export interface AdminModelUsage {
   tenants: number
 }
 
+/** 交叉表的一列（一个模型）与它的合计；`model=null` 是「未标注」。 */
+export interface AdminCrossColumn {
+  model?: string | null
+  tokens: number
+  calls: number
+}
+
+/** 交叉表的一个格子；缺失的组合是 0，不是错位。 */
+export interface AdminCrossCell {
+  tokens: number
+  calls: number
+}
+
+export interface AdminCrossRow {
+  tenantId: string
+  name: string
+  /** 与 `cross.models` 一一对应，长度相同。 */
+  cells: AdminCrossCell[]
+  tokens: number
+  calls: number
+}
+
+/**
+ * 「租户 × 模型」二维。
+ * 行列合计由服务端给出：前端自己透视会多出一个真源，页面上两处加不起来时没人知道信谁。
+ */
+export interface AdminCross {
+  models: AdminCrossColumn[]
+  rows: AdminCrossRow[]
+  grand: AdminCrossCell
+}
+
 export interface AdminUsage {
   period: string
   from: string
   tenants: AdminTenantUsage[]
   totals: AdminTotals
   byModel: AdminModelUsage[]
+  cross: AdminCross
 }
 
 export interface AdminAuditRow {
