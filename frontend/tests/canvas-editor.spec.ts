@@ -32,8 +32,8 @@ vi.mock('vue-router', () => ({
 vi.mock('@vue-flow/core', () => ({
   VueFlow: {
     name: 'VueFlow',
-    props: ['nodes', 'edges', 'deleteKeyCode'],
-    emits: ['connect', 'nodeClick', 'edgeClick', 'paneClick', 'update:nodes', 'update:edges'],
+    props: ['nodes', 'edges', 'deleteKeyCode', 'fitViewOnInit'],
+    emits: ['connect', 'nodeClick', 'edgeClick', 'paneClick', 'nodesInitialized', 'update:nodes', 'update:edges'],
     template: '<div class="flow-stub"><slot /></div>',
   },
   Handle: { name: 'Handle', template: '<span />' },

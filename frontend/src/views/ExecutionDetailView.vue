@@ -19,6 +19,9 @@ const detail = ref<ExecutionDetail | null>(null)
 const error = ref<string | null>(null)
 const selectedKey = ref<string | null>(null)
 const io = ref<NodeIo | null>(null)
+const selectedNode = computed<NodeExecutionDto | null>(
+  () => nodes.value.find((n) => n.nodeKey === selectedKey.value) ?? null,
+)
 const ioLoading = ref(false)
 const liveNote = ref('')
 let sse: SseSession | null = null
@@ -57,6 +60,23 @@ async function load(): Promise<void> {
   detail.value = await executionApi.detail(executionId)
 }
 
+/**
+ * 首屏对齐事件游标。
+ *
+ * REST 快照已经是投影后的最新状态，但 SSE 默认 `afterSeq=0` 会把整条事件流回放一遍：
+ * 老的 `ExecutionStarted` 把 SUSPENDED 刷回 RUNNING，不带 attempt 的 `GateSuspended`
+ * 又给同一个节点补一条 attempt=0 的重复行。连上之前先问一次当前 lastSeq，SSE 就只收增量。
+ * 取不到就退回回放（下面的状态映射仍能兜住），不让实时通道因为这次查询失败而断开。
+ */
+async function catchUpSeq(): Promise<void> {
+  try {
+    const page = await executionApi.events(executionId, lastSeq.value, 500)
+    if (typeof page.lastSeq === 'number') lastSeq.value = Math.max(lastSeq.value, page.lastSeq)
+  } catch {
+    // 追平失败不阻断连接
+  }
+}
+
 async function selectNode(nodeKey: string): Promise<void> {
   selectedKey.value = nodeKey
   ioLoading.value = true
@@ -83,7 +103,17 @@ function handleLiveEvent(e: EngineEvent): void {
   }
   const exec = detail.value.execution
   switch (e.eventType) {
+    case 'ExecutionCreated':
+      exec.status = 'PENDING'
+      break
     case 'ExecutionStarted':
+      // 万一回放了历史事件，也不能把已经挂起的执行标成运行中
+      if (exec.status !== 'SUSPENDED' && !TERMINAL.has(exec.status)) exec.status = 'RUNNING'
+      break
+    case 'GateSuspended':
+      exec.status = 'SUSPENDED'
+      break
+    case 'GateResolved':
       exec.status = 'RUNNING'
       break
     case 'ExecutionCompleted':
@@ -98,35 +128,47 @@ function handleLiveEvent(e: EngineEvent): void {
   // 节点事件：轻量更新树（attempt 行以 displayOrder 对齐）
   if (e.nodeKey) {
     const rows = detail.value.nodes
-    const existing = rows.find(
-      (n) => n.nodeKey === e.nodeKey && n.attempt === (Number(e.payload.attempt ?? 0)),
-    )
+    // GateSuspended / NodeRetryScheduled 这类事件的 payload 里没有 attempt：按 attempt=0
+    // 去找会扑空，进而给同一个节点 push 一条重复行。没有 attempt 就按 nodeKey 找最后一行。
+    const hasAttempt = typeof e.payload.attempt === 'number'
+    const attempt = Number(e.payload.attempt ?? 0)
+    const existing = hasAttempt
+      ? rows.find((n) => n.nodeKey === e.nodeKey && n.attempt === attempt)
+      : [...rows].reverse().find((n) => n.nodeKey === e.nodeKey)
     const statusByEvent: Record<string, string> = {
       NodeScheduled: 'SCHEDULED',
       NodeStarted: 'RUNNING',
       NodeCompleted: 'SUCCEEDED',
       NodeFailed: 'FAILED',
       NodeSkipped: 'SKIPPED',
+      NodeSuspended: 'SUSPENDED',
       GateSuspended: 'SUSPENDED',
     }
     const status = statusByEvent[e.eventType]
     if (status && existing) {
-      existing.status = status
+      // 回放的历史事件不能让终态或挂起态倒退；只有裁决续跑后的 NodeStarted 才允许
+      // 把 SUSPENDED 推回 RUNNING（此时前面必有 GateResolved 把执行状态改回 RUNNING）。
+      const replayDowngrade =
+        (TERMINAL.has(existing.status) || existing.status === 'SKIPPED')
+        || (existing.status === 'SUSPENDED' && status !== 'SUSPENDED' && exec.status !== 'RUNNING')
+      if (!replayDowngrade) existing.status = status
       if (typeof e.payload.tokenUsed === 'number') existing.tokenUsed = e.payload.tokenUsed
       if (typeof e.payload.latencyMs === 'number') existing.latencyMs = e.payload.latencyMs
       if (typeof e.payload.errorCode === 'string') existing.errorCode = e.payload.errorCode
+      if (typeof e.payload.message === 'string') existing.errorMessage = e.payload.message
     } else if (status) {
       rows.push({
         seq: e.seq,
         nodeKey: e.nodeKey,
         displayOrder: e.aggregateVersion,
         status,
-        attempt: Number(e.payload.attempt ?? 0),
+        attempt,
         outputDigest: null,
         tokenUsed: Number(e.payload.tokenUsed ?? 0),
         latencyMs: null,
         retryCount: 0,
         errorCode: null,
+        errorMessage: null,
         startedAt: null,
         finishedAt: null,
       } as NodeExecutionDto)
@@ -180,6 +222,7 @@ onMounted(async () => {
     liveNote.value = '执行已结束'
     return
   }
+  await catchUpSeq()
   connectSse()
 })
 
@@ -251,6 +294,7 @@ onUnmounted(() => {
           :io="io"
           :loading="ioLoading"
           :node-key="selectedKey"
+          :node="selectedNode"
         />
       </div>
       <div style="overflow: auto">

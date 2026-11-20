@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { VueFlow } from '@vue-flow/core'
 import type { Connection, Edge as FlowEdge, Node as FlowNode } from '@vue-flow/core'
@@ -97,6 +97,25 @@ const edgesForFlow = computed({
     edges.value = v as unknown as CanvasEdge[]
   },
 })
+
+// VueFlow 通过 expose 把实例方法挂到模板 ref 上（fitView / setViewport 等）。
+// 只声明这里用到的那一个，避免把整份实例类型引进来和 vue-tsc 打架。
+const flowRef = ref<{ fitView?: (opts?: { padding?: number }) => Promise<boolean> } | null>(null)
+
+/**
+ * 装载一层图之后把整张图放进视口。
+ *
+ * 位置是 DSL 里存的绝对坐标，12 个节点的流程很容易比视口宽——不 fit 的话首屏只看到
+ * 前几个节点，末尾的 end 被裁在视口外（看起来像“图坏了”）。等一帧再 fit：节点尺寸
+ * 要等组件渲染完才量得到，早一拍 fit 会按 0 尺寸算，结果仍是歪的。
+ */
+function fitViewSoon(): void {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      void flowRef.value?.fitView?.({ padding: 0.15 })
+    })
+  })
+}
 
 const dslForSource = computed<WorkflowDsl>(() => toDsl())
 
@@ -237,6 +256,7 @@ function loadLayer(): void {
   selectedKey.value = null
   selectedEdgeId.value = null
   issues.value = validateDslLocal(toDsl())
+  fitViewSoon()
 }
 
 interface Crumb {
@@ -380,23 +400,22 @@ function updateNode(updated: DslNode): void {
 }
 
 function removeNode(key: string): void {
-  if (inSubgraph.value) {
-    // 子图没有 start 兜底，删掉最后一个 end 就再也收不了尾：明确拒绝并说明怎么绕
-    const reason = subgraphRemovalError(
-      {
-        nodes: nodes.value.map((n) => ({
-          key: n.id,
-          type: n.data.nodeType,
-          config: n.data.config ?? {},
-        })),
-        edges: [],
-      },
-      key,
-    )
-    if (reason) {
-      notice.value = reason
-      return
-    }
+  // 整图必须留一个 end 收口；子图不受此限（出口由上层 loop / parallel 决定）。
+  const reason = subgraphRemovalError(
+    {
+      nodes: nodes.value.map((n) => ({
+        key: n.id,
+        type: n.data.nodeType,
+        config: n.data.config ?? {},
+      })),
+      edges: [],
+    },
+    key,
+    !inSubgraph.value,
+  )
+  if (reason) {
+    notice.value = reason
+    return
   }
   const next = removeNodeOp(nodes.value, edges.value, key)
   nodes.value = next.nodes
@@ -666,7 +685,7 @@ onUnmounted(() => {
       <span
         class="af-faint"
         style="font-size: 11px"
-      >子图：没有 start，需保留至少一个 end</span>
+      >子图：没有 start，出口由上层节点收口</span>
       <div class="af-spacer" />
       <span
         class="mono af-faint"
@@ -697,10 +716,13 @@ onUnmounted(() => {
       />
       <div style="flex: 1; position: relative">
         <VueFlow
+          ref="flowRef"
           v-model:nodes="nodesForFlow"
           v-model:edges="edgesForFlow"
           class="af-flow"
           :delete-key-code="null"
+          :fit-view-on-init="true"
+          @nodes-initialized="fitViewSoon"
           @connect="onConnect"
           @node-click="onNodeClick"
           @edge-click="onEdgeClick"
