@@ -291,3 +291,31 @@ pre,
   padding: 10px 12px;
   font-size: 12.5px;
 }
+
+/* ---------- 计量条 ---------- */
+
+/* 横向条：宽度就是已用比例，可以由多段拼成（例如「执行 / 试跑」同账本的两个来源）。
+   段与段之间不留缝，加起来正好是已用量——留白会让人以为中间还有一段没用掉。 */
+.af-meter {
+  display: flex;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--af-surface);
+}
+
+.af-meter__fill {
+  display: block;
+  height: 100%;
+  background: var(--af-accent);
+  transition: width var(--af-motion);
+}
+
+/* 与每日柱状图里「试跑」同色：同一页面上同一种消耗只有一种颜色 */
+.af-meter__fill--preview {
+  background: var(--af-neutral);
+}
+
+.af-meter__fill--danger {
+  background: var(--af-danger);
+}

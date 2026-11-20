@@ -178,26 +178,68 @@ export const executionApi = {
   cancel: (id: string) => post<{ ok: boolean; status: string }>(`/executions/${id}/cancel`),
 }
 
-export interface AdminBudgetRow {
+/** 管理端一行的租户账面：账本用量 + 生效限额 + 限额来源。 */
+export interface AdminTenantUsage {
   tenantId: string
-  period: string
+  name: string
+  type: string
+  parentId: string | null
   callsUsed: number
   tokensUsed: number
-  limitCalls: number
-  limitTokens: number
+  /** 试跑消耗是账本的一部分，单独列出来才知道额度被调试吃掉了多少。 */
+  previewCalls?: number
+  previewTokens?: number
+  /** 本账期执行数（含失败），失败只数 FAILED。 */
+  executions?: number
+  executionsFailed?: number
+  /** 租户自己账本行上写的限额；没有账本行时为 undefined。 */
+  ownCallLimit?: number | null
+  ownTokenLimit?: number | null
+  /** 生效限额：沿 parent 链取最小。undefined 代表无上限（后端不下发空值）。 */
+  effectiveCallLimit?: number | null
+  effectiveTokenLimit?: number | null
+  /** 卡住这一维额度的租户：等于自身 id 表示「本租户」，否则是某个祖先。 */
+  limitedByCall?: string | null
+  limitedByCallName?: string | null
+  limitedByToken?: string | null
+  limitedByTokenName?: string | null
+  inherited?: boolean
+  /** unbounded 无上限 / ok / near（≥80%）/ over（已到顶）。 */
+  state: string
+  callUtilization: number
+  tokenUtilization: number
 }
 
-export interface AdminUsageRow {
-  tenantId: string
-  status: string
-  cnt: number
+export interface AdminTotals {
+  tenants: number
+  calls: number
   tokens: number
+  previewCalls: number
+  previewTokens: number
+  /** 试跑 token 占平台合计的比例，[0,1]。 */
+  previewShare: number
+  executions: number
+  executionsFailed: number
+  /** 已超限 / 接近上限的租户数。 */
+  over: number
+  near: number
+}
+
+/** 跨租户按模型分解：同一模型在两个来源里合并，tenants 是并集而不是相加。 */
+export interface AdminModelUsage {
+  model?: string | null
+  executionTokens: number
+  previewTokens: number
+  tokens: number
+  tenants: number
 }
 
 export interface AdminUsage {
   period: string
-  budgetLedger: AdminBudgetRow[]
-  executions: AdminUsageRow[]
+  from: string
+  tenants: AdminTenantUsage[]
+  totals: AdminTotals
+  byModel: AdminModelUsage[]
 }
 
 export interface AdminAuditRow {

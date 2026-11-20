@@ -5,8 +5,13 @@
 
 ## [Unreleased]
 
+### 不兼容变更
+
+- `GET /api/v1/admin/usage` 的 `effectiveLimits` 改名为 `tenants`，字段随之扩展（限额来源、试跑份额、执行统计、`state`）；`budgetLedger` 与全时段的 `executions` 不再返回，改由 `tenants` + `totals` 提供账期口径的数字。管理端是本仓库内唯一调用方，已同步。
+
 ### 新增
 
+- **管理端成本中心变成可诊断视图**：`GET /api/v1/admin/usage` 的 `effectiveLimits` 换成 `tenants`。旧接口算了有效限额（沿祖先链取最小）却没有任何前端渲染它，页面上的「限额」列显示的是租户自己账本行写的数字——`Space Alpha` 写着 10,000，真正生效的是 ORG 的 1,000，管理员据此以为还有余量，而新的执行已经被拒。现在每行给出生效限额 + **限额来源**（`limitedByCall` / `limitedByToken` 与名字，两维分开记：它们未必由同一个祖先卡住）、试跑份额、本账期执行数与失败数、以及 `state`（`unbounded` / `ok` / `near` / `over`，判「超限」用原始数字而不是夹到 1.0 的利用率）。新增 `totals`（平台合计、试跑占比、告警租户数）与跨租户 `byModel`（同模型合并两来源，「几个租户在用」取并集而非相加）。整页统一账期口径——旧的 `executions` 是全部时间，和账本并排放会让人把「一共失败 8 次」读成「这个月失败 8 次」。账期改为强校验（`2026-8` 直接 400，不再静默退回本月）。前端 `AdminView` 重做：汇总卡片 + 租户额度表（两段额度条、继承来源、状态）+ 按模型表 + 错误原因展示（`describeError`，不再只给一句兜底文案）。
 - **用量按模型分解 + 额度条区分试跑份额**（`V013__node_model.sql`）：`node_execution` 增加 `model`，投影器从 `NodeCompleted` 的 `output.model` 取 **provider 回落后的真实模型名**（占位名会被服务端替换，记请求名等于记错）；`GET /api/v1/usage/summary` 增加 `byModel`（执行侧按节点、试跑侧按 `preview_usage`，同模型合并成一行，空模型单独一桶不猜）与 `budget.previewCalls / previewTokens / previewTokenUtilization`（账本仍是一本账，试跑份额从明细里切出来）。用量页把额度条切成「执行 / 试跑」两段（同每日柱状图的颜色语义），并新增「按模型」表，空模型标注为「未标注 · 非 LLM 或输出未带模型」。
 - **cron 预览与触发页可预期性**：`POST /api/v1/workflows/{id}/triggers/cron-preview` 只解析不落库，回 `{cron, timezone, times[]}`（5 段回填为 6 段规范形式，时间按触发器时区格式化）；`TriggerView` 增加 `lastSlotAt` / `nextFireAt` / `nextFireTimes`。触发页在输入 cron 时防抖调预览，写错当场看到原因；已存触发器显示「上次触发（09:00 档 · Asia/Shanghai）」与「下次 2026-11-21 09:00」，时间串格式按「真实瞬间用 ISO / cron 墙钟用触发器时区」分工。
 - **Webhook / 定时触发**（`V010__trigger.sql`）：新增 `workflow_trigger` 表与两条外部入口。Webhook 走公开路径 `/api/v1/hooks/{token}`，token（24 字节 Base64URL）即入口凭据；可选 `X-AF-Signature: sha256=HMAC_SHA256(secret, 原始请求体)`（常量时间比较）、`X-AF-Timestamp`（±300 秒防重放）、`X-AF-Idempotency-Key`（重复投递只执行一次，回 `idempotentReplay`）。定时触发用 5 段或 6 段 cron（秒位必须为 0），调度器每 30 秒扫一轮、按最近到点的档位判点。两者都复用 `ExecutionService.dispatch` 的幂等、版本解析、政策钳制与 PII 脱敏，跑的是**已发布版本**；入口限流 60 次/分钟，停用返回 409，`POST /api/v1/hooks/{token}/probe` 可在不触发执行的前提下自检入口。画布工具条「触发」进入管理页，可建入口、复制地址与密钥、轮换令牌、停用、删除、配固定入参。

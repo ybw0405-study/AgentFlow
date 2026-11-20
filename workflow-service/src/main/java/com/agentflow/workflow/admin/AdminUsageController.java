@@ -4,17 +4,8 @@ import com.agentflow.common.api.ApiResponse;
 import com.agentflow.common.error.BusinessException;
 import com.agentflow.common.error.ErrorCode;
 import com.agentflow.common.security.AuthenticatedUser;
-import com.agentflow.workflow.execution.BudgetLedgerMapper;
-import com.agentflow.workflow.execution.BudgetLedgerMapper.BudgetLedgerRow;
-import com.agentflow.workflow.execution.UsageService;
-import com.agentflow.workflow.execution.WorkflowExecutionMapper;
 import com.agentflow.workflow.security.JwtAuthFilter;
-import com.agentflow.workflow.tenant.TenantMapper;
 import jakarta.servlet.http.HttpServletRequest;
-import java.time.YearMonth;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,22 +15,18 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 管理端：成本中心（平台 ADMIN）。
  *
- * <p>用量来自 budget_ledger（投影器按 NodeCompleted 累加）；同时给出「有效限额」——
- * 子租户的限额不得高于任一祖先（取沿链最小值），即三级继承下的真实上限。
+ * <p>只做两件事：挡住非平台管理员，其余交给 {@link AdminUsageService}。口径计算留在服务层，
+ * 因为这里的判断（限额继承、试跑份额、按模型聚合）都需要单测，而带着 HttpServletRequest
+ * 的代码不好测。
  */
 @RestController
 @RequestMapping("/api/v1/admin")
 public class AdminUsageController {
 
-    private final WorkflowExecutionMapper executions;
-    private final BudgetLedgerMapper budget;
-    private final TenantMapper tenants;
+    private final AdminUsageService usage;
 
-    public AdminUsageController(WorkflowExecutionMapper executions, BudgetLedgerMapper budget,
-                                TenantMapper tenants) {
-        this.executions = executions;
-        this.budget = budget;
-        this.tenants = tenants;
+    public AdminUsageController(AdminUsageService usage) {
+        this.usage = usage;
     }
 
     @GetMapping("/usage")
@@ -50,65 +37,6 @@ public class AdminUsageController {
         if (user == null || !user.isAdmin()) {
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "platform admin required");
         }
-        String p = period != null ? period : YearMonth.now().toString();
-        List<BudgetLedgerRow> ledger = budget.listByPeriod(p);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("period", p);
-        result.put("budgetLedger", ledger);
-        result.put("effectiveLimits", effectiveLimits(ledger));
-        result.put("executions", executions.usageByTenant());
-        return ApiResponse.ok(result);
-    }
-
-    /** 沿 parent 链取最小限额；自身无账本行时用量记 0。 */
-    private List<Map<String, Object>> effectiveLimits(List<BudgetLedgerRow> ledger) {
-        Map<String, TenantMapper.TenantRow> tree = new LinkedHashMap<>();
-        for (TenantMapper.TenantRow row : tenants.listTenants()) {
-            tree.put(row.id(), row);
-        }
-        Map<String, BudgetLedgerRow> usage = new LinkedHashMap<>();
-        for (BudgetLedgerRow row : ledger) {
-            usage.put(row.tenantId(), row);
-        }
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (TenantMapper.TenantRow tenant : tree.values()) {
-            BudgetLedgerRow row = usage.get(tenant.id());
-            long tokenLimit = row == null ? Long.MAX_VALUE : row.limitTokens();
-            int callLimit = row == null ? Integer.MAX_VALUE : row.limitCalls();
-            String cursor = tenant.parentId();
-            int depth = 0;
-            while (cursor != null && depth++ < 8) {
-                BudgetLedgerRow ancestor = usage.get(cursor);
-                if (ancestor != null) {
-                    tokenLimit = Math.min(tokenLimit, ancestor.limitTokens());
-                    callLimit = Math.min(callLimit, ancestor.limitCalls());
-                }
-                TenantMapper.TenantRow parent = tree.get(cursor);
-                cursor = parent == null ? null : parent.parentId();
-            }
-            long tokensUsed = row == null ? 0 : row.tokensUsed();
-            int callsUsed = row == null ? 0 : row.callsUsed();
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("tenantId", tenant.id());
-            item.put("name", tenant.name());
-            item.put("type", tenant.type());
-            item.put("parentId", tenant.parentId());
-            item.put("callsUsed", callsUsed);
-            item.put("tokensUsed", tokensUsed);
-            item.put("effectiveCallLimit", callLimit);
-            item.put("effectiveTokenLimit", tokenLimit);
-            item.put("callUtilization", ratio(callsUsed, callLimit));
-            item.put("tokenUtilization", ratio(tokensUsed, tokenLimit));
-            out.add(item);
-        }
-        return out;
-    }
-
-    /**
-     * 用量占比，落在 [0,1]。与租户自助用量页共用同一口径（{@link UsageService#ratio}），
-     * 免得管理员看到的利用率与租户自己看到的对不上。
-     */
-    static double ratio(long used, long limit) {
-        return UsageService.ratio(used, limit);
+        return ApiResponse.ok(usage.usage(period));
     }
 }

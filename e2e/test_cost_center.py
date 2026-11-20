@@ -15,7 +15,7 @@ def _usage(client, admin_token: str) -> dict:
 
 
 def _row(usage: dict, tenant_id: str) -> dict:
-    return next(item for item in usage["effectiveLimits"] if item["tenantId"] == tenant_id)
+    return next(item for item in usage["tenants"] if item["tenantId"] == tenant_id)
 
 
 def test_usage_accrues_and_limits_inherit(client, admin_token, editor_token):
@@ -92,8 +92,44 @@ def test_effective_limits_are_inherited_from_ancestors(client, admin_token):
     space = _row(usage, SPACE_A)
     org = _row(usage, "t-org-demo")
     team = _row(usage, "t-team-core")
+
+    def limit(row: dict, key: str) -> float:
+        # 无上限的字段后端不下发，当作无穷大比较
+        value = row.get(key)
+        return float("inf") if value is None else value
+
     # 子租户有效限额不得高于任一祖先
-    assert space["effectiveTokenLimit"] <= org["effectiveTokenLimit"]
-    assert space["effectiveTokenLimit"] <= team["effectiveTokenLimit"]
+    assert limit(space, "effectiveTokenLimit") <= limit(org, "effectiveTokenLimit")
+    assert limit(space, "effectiveTokenLimit") <= limit(team, "effectiveTokenLimit")
     assert space["type"] == "SPACE"
     assert team["parentId"] == "t-org-demo"
+
+    # 限额来源能指到具体租户：自身最紧写自己，祖先最紧写祖先
+    assert space["limitedByToken"] in {SPACE_A, "t-org-demo", "t-team-core"}
+    assert space["inherited"] == (space["limitedByToken"] != SPACE_A)
+    assert space["state"] in {"ok", "near", "over", "unbounded"}
+
+
+def test_admin_usage_rejects_malformed_period(client, admin_token):
+    resp = client.get("/api/v1/admin/usage", params={"period": "2026-8"},
+                      headers=headers(admin_token, SPACE_A))
+    assert resp.status_code == 400, resp.text
+    assert "YYYY-MM" in resp.json()["detail"], resp.text
+
+
+def test_admin_usage_breaks_down_by_model_across_tenants(client, admin_token):
+    usage = _usage(client, admin_token)
+    totals = usage["totals"]
+    rows = usage["byModel"]
+
+    # 整页是账期口径：平台合计等于各租户之和
+    assert totals["tokens"] == sum(item["tokensUsed"] for item in usage["tenants"]), totals
+    assert totals["previewTokens"] == sum(item.get("previewTokens", 0) for item in usage["tenants"])
+    assert totals["over"] + totals["near"] <= totals["tenants"]
+
+    llm = next((row for row in rows if row.get("model") == REAL_LLM_MODEL), None)
+    assert llm is not None, rows
+    assert llm["executionTokens"] > 0, llm
+    assert llm["tenants"] >= 1, llm
+    # 试跑侧与执行侧是并集：租户数不会超过实际有账本行的租户数
+    assert llm["tenants"] <= len(usage["tenants"])

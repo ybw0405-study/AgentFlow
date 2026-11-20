@@ -78,7 +78,25 @@ public interface PreviewUsageMapper {
     record PreviewDailyRow(String day, long tokens) {
     }
 
+    /** 本账期各租户的试跑合计：一次查完，避免按租户逐个查。 */
+    @Select("SELECT tenant_id AS tenantId, COALESCE(SUM(node_count),0) AS calls,"
+            + " COALESCE(SUM(token_used),0) AS tokens FROM preview_usage"
+            + " WHERE DATE_FORMAT(created_at, '%Y-%m') = #{period} GROUP BY tenant_id")
+    List<PreviewTenantMonthRow> monthByTenant(@Param("period") String period);
+
+    /** 平台级按模型分解（试跑侧），与执行侧的 {@code usageByModelAll} 在服务层合并。 */
+    @Select("SELECT COALESCE(model,'') AS model, COUNT(*) AS cnt,"
+            + " COALESCE(SUM(token_used),0) AS tokens, COUNT(DISTINCT tenant_id) AS tenants"
+            + " FROM preview_usage WHERE created_at >= #{from} GROUP BY COALESCE(model,'')")
+    List<PlatformPreviewModelRow> byModelAll(@Param("from") String from);
+
     record PreviewMonthRow(long calls, long tokens) {
+    }
+
+    record PreviewTenantMonthRow(String tenantId, long calls, long tokens) {
+    }
+
+    record PlatformPreviewModelRow(String model, long cnt, long tokens, long tenants) {
     }
 
     record PreviewModelRow(String model, long cnt, long tokens) {

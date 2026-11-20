@@ -53,7 +53,21 @@ public interface NodeExecutionMapper {
     List<ModelUsageRow> usageByModel(@Param("tenantId") String tenantId,
                                      @Param("from") String from);
 
+    /**
+     * 平台级按模型分解（跨租户）：管理端要回答「最贵的模型被几个租户在用」，
+     * 不是「某个租户用了多少」——后者租户自己能看。
+     */
+    @Select("SELECT COALESCE(n.model,'') AS model, COUNT(*) AS cnt,"
+            + " COALESCE(SUM(n.token_used),0) AS tokens,"
+            + " COUNT(DISTINCT e.tenant_id) AS tenants"
+            + " FROM node_execution n JOIN workflow_execution e ON e.id = n.execution_id"
+            + " WHERE e.created_at >= #{from} GROUP BY COALESCE(n.model,'')")
+    List<PlatformModelRow> usageByModelAll(@Param("from") String from);
+
     record ModelUsageRow(String model, long cnt, long tokens) {
+    }
+
+    record PlatformModelRow(String model, long cnt, long tokens, long tenants) {
     }
 
     record NodeRow(long seq, String id, String executionId, String nodeKey, int displayOrder,

@@ -1177,7 +1177,7 @@ AgentFlow/
    连接器 id」；连接器服务不可用时集合为空，真实连接器节点会在授权校验处
    `CONN-FORBIDDEN-001`（不再有内置兜底清单）。
 6. **成本中心**：`budget_ledger` 由投影器在 `NodeCompleted` 时累加（与游标同事务，重放不重复）；
-   `/admin/usage` 额外返回 `effectiveLimits`（沿祖先链取最小限额）。**预占泄漏**由
+   `/admin/usage` 额外返回 `tenants`（沿祖先链取最小限额，并标出是谁卡住的，见 §26）。**预占泄漏**由
    `BudgetLedger.reconcile` 在恢复与 checkpoint 时按事件流 `tokenUsed` 校准。
 7. **V005 补充约束**：`tool_credential.connector_id` 唯一（一个连接器一份凭据），
    便于 upsert；其余列与 §3.1 草案一致。
@@ -1945,3 +1945,66 @@ V013 之前的历史执行。这些行统一进空串桶，前端渲染「未标
 - 前端：`usage-view.spec.ts`（额度条两段宽度、份额大于已用时封顶、按模型表的合并与「未标注」）。
 - E2E：`test_cost_center.py`（`byModel` 里能找到 `DEMO_DSL` 用过的模型且执行 token > 0、
   `previewTokens ≤ tokensUsed`、`previewCalls ≤ callsUsed`）。
+
+## 26. 管理端成本中心：从账本快照到可诊断视图（2026-11-20）
+
+§14 的成本中心接口一直返回 `effectiveLimits`——沿祖先链取最小限额，逻辑是对的，但**前端从来
+没渲染它**。结果是页面上的「限额」列显示的是各租户账本行自己写的数字：`Space Alpha` 写着
+10,000，而真正生效的是 ORG 的 5,000。管理员据此判断「还有余量」，而新的执行已经被拒了。
+
+这一节修的是「算对了但没人看」和「看了也判断不了」两件事。
+
+### 26.1 有效限额要带来源
+
+`TenantLimitResolver` 沿 `parent_id` 向上走，维护两个维度各自的「当前最小值 + 是谁给的」：
+
+```java
+Integer callLimit = ownCallLimit;  String callBy = ownCallLimit == null ? null : tenant.id();
+Long    tokenLimit = ownTokenLimit; String tokenBy = ownTokenLimit == null ? null : tenant.id();
+while (cursor != null && depth++ < MAX_DEPTH) {
+    if (ancestorCalls < callLimit) { callLimit = ancestorCalls; callBy = cursor; }
+    ...
+}
+```
+
+两个维度分开记，因为它们未必由同一个祖先卡住：ORG 可以 `limit_tokens=10,000` 很紧而
+`limit_calls=100,000` 很松，TEAM 反过来。只报「限额来自 X」会在这种配置下指错人——而指错人
+的代价是管理员跑去改一个改了也没用的账本行。
+
+`limitedByToken == tenantId` 表示这一维由自己决定（前端写「本租户」），否则写「继承自 <名字>」。
+「无上限」用 `null` 表达（没有账本行，或限额 ≤ 0），**不用 `Long.MAX_VALUE` 冒充**：那会一路冒到
+JSON 与进度条上，前端还得反推这个魔数是什么意思。这与 `UsageService.ratio` 的口径一致——那里
+同样把「没有有效限额」折算成 0 利用率。
+
+### 26.2 整页统一账期口径
+
+旧接口混了两种时间口径：`budgetLedger` 是账期，`executions` 是**全部时间**按租户×状态分组。
+同一页上「这个月」和「一共」并列，读的人一定会把「失败 8 次」当成这个月的失败数。
+
+现在 `usageByTenantSince(from)` 也按 `created_at` 卡账期，`totals` 是各租户行之和，`byModel` 用
+账期起点作为 `from`。三个数字之间可以互相验算，这本身就是一个可用的正确性检查——E2E 里就有一条
+断言 `totals.tokens == Σ tenants.tokensUsed`。
+
+### 26.3 跨租户按模型：并集不是和
+
+`byModel` 把执行侧（`node_execution` 按 model 聚合）与试跑侧（`preview_usage`）按模型合并。
+「几个租户在用」取两来源的**较大值**而不是相加：同一个租户既可能跑过执行也可能跑过试跑，相加会
+把 3 个租户算成 5 个。
+
+### 26.4 状态是结论，利用率是画法
+
+`state` 有四种：`unbounded`（两维都无上限）、`ok`、`near`（任一维 ≥80%）、`over`（任一维已到顶）。
+判「超限」用原始数字比较（`used >= limit`），不用夹取后的 `utilization`——`ratio` 把超额压到 1.0，
+拿它判断会把「刚好到顶」和「超了三倍」混成一类。展示上仍然只有两种颜色（accent / danger），
+与设计令牌「状态色只三种」的约束一致：`near` 用 danger 的文字色，但不改进度条的填充色，避免
+「接近」和「已经完了」看起来一样。
+
+### 26.5 验收
+
+- Java：`TenantLimitResolverTest`（自身最紧 / 祖先最紧 / 三级链取祖父 / 两维不同来源 / 无账本行 /
+  子无行但继承祖先 / 超额 / 80% 边界 / 限额 0 视为无上限 / parent 成环不死循环）、
+  `AdminUsageServiceTest`（账期规范化与拒绝、行字段、汇总、按模型并集、`non_null` 下的缺省字段）。
+- 前端：`admin-view.spec.ts`（继承来源、本租户、无上限不画条、两段封顶、超限状态、汇总、按模型、
+  账期切换与空账期、错误原因、空态、审计翻页）。
+- E2E：`test_cost_center.py`（祖先继承、来源归属、`totals` 与租户行可互相验算、按模型跨租户、
+  非法账期 400）。

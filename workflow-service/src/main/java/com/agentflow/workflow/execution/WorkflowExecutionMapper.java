@@ -97,10 +97,17 @@ public interface WorkflowExecutionMapper {
     int markFailedDispatch(@Param("id") String id, @Param("status") String status,
                            @Param("errorCode") String errorCode);
 
+    /**
+     * 管理端：本账期内各租户的执行数与失败数。
+     *
+     * <p>这里刻意按 {@code created_at} 卡区间而不是「全部时间」：成本中心整页都是账期口径，
+     * 混进一张全时段的表会让人把「这个月失败 8 次」读成「一共失败 8 次」。
+     */
     @Select("SELECT tenant_id AS tenantId, status, COUNT(*) AS cnt,"
             + " COALESCE(SUM(token_used),0) AS tokens"
-            + " FROM workflow_execution GROUP BY tenant_id, status")
-    List<UsageRow> usageByTenant();
+            + " FROM workflow_execution WHERE created_at >= #{from}"
+            + " GROUP BY tenant_id, status")
+    List<UsageRow> usageByTenantSince(@Param("from") String from);
 
     /** 租户自己的用量（只算正式执行）：与试跑用量分开统计，避免「调试把额度吃光」看不出来。 */
     @Select("SELECT COUNT(*) AS cnt, COALESCE(SUM(token_used),0) AS tokens"
