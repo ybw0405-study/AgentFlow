@@ -52,6 +52,14 @@ function statusClass(s: string): string {
       </span>
       <div class="af-spacer" />
       <span
+        v-if="n.model"
+        class="af-faint mono"
+        style="font-size: 10px; margin-right: 6px"
+        :title="`实际下发模型：${n.model}`"
+      >
+        {{ n.model }}
+      </span>
+      <span
         v-if="n.tokenUsed"
         class="af-faint mono"
         style="font-size: 10px"

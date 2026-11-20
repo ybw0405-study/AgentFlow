@@ -29,6 +29,11 @@ function summary(overrides: Partial<UsageSummary> = {}): UsageSummary {
       tokenLimit: 50000,
       callUtilization: 0.012,
       tokenUtilization: 0.08,
+      // 本月试跑：账本里已用 4000，其中 1000 来自试跑
+      previewCalls: 4,
+      previewTokens: 1000,
+      previewCallUtilization: 0.004,
+      previewTokenUtilization: 0.02,
     },
     byDefinition: [
       {
@@ -39,6 +44,24 @@ function summary(overrides: Partial<UsageSummary> = {}): UsageSummary {
         previews: 4,
         previewTokens: 1000,
         tokens: 4000,
+      },
+    ],
+    byModel: [
+      {
+        model: 'deepseek-chat',
+        executions: 10,
+        executionTokens: 2500,
+        previews: 3,
+        previewTokens: 800,
+        tokens: 3300,
+      },
+      {
+        model: null,
+        executions: 2,
+        executionTokens: 500,
+        previews: 1,
+        previewTokens: 200,
+        tokens: 700,
       },
     ],
     daily: [
@@ -97,12 +120,90 @@ describe('用量页', () => {
     expect(wrapper.findAll('.af-usage-chart__bar--preview')).toHaveLength(2)
   })
 
+  it('额度条把试跑的一段单独切出来，并写明它在已用里的占比', async () => {
+    const wrapper = await mountView()
+
+    // 本月 token 已用 8%，其中试跑 1000/50000 = 2%，执行段就是剩下的 6%
+    const segments = wrapper.findAll('.af-usage-bar__fill--preview')
+    expect(segments).toHaveLength(2)
+    expect((segments[1].element as HTMLElement).style.width).toBe('2%')
+    const execBar = wrapper.findAll('.af-usage-bar__fill').filter((n) => !n.classes('af-usage-bar__fill--preview'))
+    expect((execBar[1].element as HTMLElement).style.width).toBe('6%')
+    expect(wrapper.text()).toContain('其中试跑 1,000（占已用 25%）')
+  })
+
+  it('试跑份额大于已用量时按已用量封顶，不把墨迹画出进度条', async () => {
+    // 记账失败或手工改库时会出现这种不一致：宁可少画，也不要画出界
+    mocks.summary.mockResolvedValue(
+      summary({
+        budget: {
+          period: '2026-11',
+          callsUsed: 25000,
+          tokensUsed: 25000,
+          callLimit: 50000,
+          tokenLimit: 50000,
+          callUtilization: 0.5,
+          tokenUtilization: 0.5,
+          previewCalls: 100,
+          previewTokens: 40000,
+          previewCallUtilization: 0.002,
+          previewTokenUtilization: 0.8,
+        },
+      }),
+    )
+    const wrapper = await mountView()
+
+    const preview = wrapper.findAll('.af-usage-bar__fill--preview')
+    expect((preview[1].element as HTMLElement).style.width).toBe('50%')
+    // 执行段被压到 0：两段加起来不超已用量
+    const exec = wrapper.findAll('.af-usage-bar__fill').filter((n) => !n.classes('af-usage-bar__fill--preview'))
+    expect((exec[1].element as HTMLElement).style.width).toBe('0%')
+  })
+
+  it('按模型分解：同一模型合并两来源，没有模型的节点单独一桶', async () => {
+    const wrapper = await mountView()
+
+    const text = wrapper.text()
+    expect(text).toContain('按模型')
+    expect(text).toContain('deepseek-chat')
+    expect(text).toContain('2,500')
+    expect(text).toContain('800')
+    // 非 LLM / 输出不带模型的行显式标注，读者不用猜为什么是空的
+    expect(text).toContain('未标注')
+    expect(text).toContain('非 LLM 或输出未带模型')
+    expect(text).toContain('83%')
+  })
+
   it('最近试跑列出模型与 token，账面对不上时可追到具体节点', async () => {
     const wrapper = await mountView()
     const text = wrapper.text()
     expect(text).toContain('draft')
     expect(text).toContain('deepseek-chat')
     expect(text).toContain('321')
+  })
+
+  it('试跑占比不足 1% 时写明「<1%」，不把非零消耗写成 0%', async () => {
+    mocks.summary.mockResolvedValue(
+      summary({
+        budget: {
+          period: '2026-11',
+          callsUsed: 2448,
+          tokensUsed: 132501,
+          callLimit: 10000,
+          tokenLimit: 50000,
+          callUtilization: 0.2448,
+          tokenUtilization: 1,
+          previewCalls: 40,
+          previewTokens: 115,
+          previewCallUtilization: 0.004,
+          previewTokenUtilization: 0.0023,
+        },
+      }),
+    )
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).toContain('其中试跑 115（占已用 <1%）')
+    expect(wrapper.text()).not.toContain('占已用 0%')
   })
 
   it('额度用完时把提示换成会拒绝执行的结论', async () => {

@@ -7,6 +7,7 @@
 
 ### 新增
 
+- **用量按模型分解 + 额度条区分试跑份额**（`V013__node_model.sql`）：`node_execution` 增加 `model`，投影器从 `NodeCompleted` 的 `output.model` 取 **provider 回落后的真实模型名**（占位名会被服务端替换，记请求名等于记错）；`GET /api/v1/usage/summary` 增加 `byModel`（执行侧按节点、试跑侧按 `preview_usage`，同模型合并成一行，空模型单独一桶不猜）与 `budget.previewCalls / previewTokens / previewTokenUtilization`（账本仍是一本账，试跑份额从明细里切出来）。用量页把额度条切成「执行 / 试跑」两段（同每日柱状图的颜色语义），并新增「按模型」表，空模型标注为「未标注 · 非 LLM 或输出未带模型」。
 - **cron 预览与触发页可预期性**：`POST /api/v1/workflows/{id}/triggers/cron-preview` 只解析不落库，回 `{cron, timezone, times[]}`（5 段回填为 6 段规范形式，时间按触发器时区格式化）；`TriggerView` 增加 `lastSlotAt` / `nextFireAt` / `nextFireTimes`。触发页在输入 cron 时防抖调预览，写错当场看到原因；已存触发器显示「上次触发（09:00 档 · Asia/Shanghai）」与「下次 2026-11-21 09:00」，时间串格式按「真实瞬间用 ISO / cron 墙钟用触发器时区」分工。
 - **Webhook / 定时触发**（`V010__trigger.sql`）：新增 `workflow_trigger` 表与两条外部入口。Webhook 走公开路径 `/api/v1/hooks/{token}`，token（24 字节 Base64URL）即入口凭据；可选 `X-AF-Signature: sha256=HMAC_SHA256(secret, 原始请求体)`（常量时间比较）、`X-AF-Timestamp`（±300 秒防重放）、`X-AF-Idempotency-Key`（重复投递只执行一次，回 `idempotentReplay`）。定时触发用 5 段或 6 段 cron（秒位必须为 0），调度器每 30 秒扫一轮、按最近到点的档位判点。两者都复用 `ExecutionService.dispatch` 的幂等、版本解析、政策钳制与 PII 脱敏，跑的是**已发布版本**；入口限流 60 次/分钟，停用返回 409，`POST /api/v1/hooks/{token}/probe` 可在不触发执行的前提下自检入口。画布工具条「触发」进入管理页，可建入口、复制地址与密钥、轮换令牌、停用、删除、配固定入参。
 - **单节点试跑**：节点卡片与配置抽屉新增「试跑」。引擎把「目标节点 + 全部上游」裁成小图（`engine-api/app/preview.py`），交给同一个调度器、同一批执行器、同一份预算与错误分类真的跑一遍，回传该节点的输入 / 输出 / token / 耗时与整条上游链路状态。试跑**不落执行记录**、不产生版本，只留 `NODE_PREVIEWED` 审计；上游含 `loop` / `parallel` / `human_gate` 时返回 422 `PREVIEW-STRUCTURE-001` 并提示改用「运行」，因为裁剪会改变迭代、分支聚合与挂起续跑的语义。

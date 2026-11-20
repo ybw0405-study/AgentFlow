@@ -94,6 +94,30 @@ class ProjectorWriterTest {
     }
 
     @Test
+    void nodeCompletedRecordsTheResolvedModel() {
+        writer.writeBatch(List.of(event(4, "NodeCompleted", Map.of(
+                "attempt", 1, "tokenUsed", 88,
+                "output", Map.of("model", "deepseek-v4-pro", "text", "ok")))));
+
+        ArgumentCaptor<NodeExecutionMapper.NodeRow> row =
+                ArgumentCaptor.forClass(NodeExecutionMapper.NodeRow.class);
+        verify(nodes).upsert(row.capture());
+        assertEquals("deepseek-v4-pro", row.getValue().model());
+    }
+
+    @Test
+    void nodeWithoutOutputModelLeavesModelEmpty() {
+        // 非 LLM 节点、或输出溢出（D5）时 payload 里没有 output.model：留空而不是编一个
+        writer.writeBatch(List.of(event(5, "NodeCompleted", Map.of(
+                "attempt", 1, "tokenUsed", 4, "outputDigest", "d"))));
+
+        ArgumentCaptor<NodeExecutionMapper.NodeRow> row =
+                ArgumentCaptor.forClass(NodeExecutionMapper.NodeRow.class);
+        verify(nodes).upsert(row.capture());
+        assertEquals(null, row.getValue().model());
+    }
+
+    @Test
     void gateSuspendedCreatesTaskAndNotifiesEveryApprover() {
         when(executions.findBrief("exec-1")).thenReturn(
                 new WorkflowExecutionMapper.ExecutionBrief("exec-1", "space-a", "def-1", "v1"));

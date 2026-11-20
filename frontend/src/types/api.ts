@@ -111,6 +111,8 @@ export interface NodeExecutionDto {
   outputDigest: string | null
   tokenUsed: number
   latencyMs: number | null
+  /** 节点实际用过的模型（V013）：只有输出里带 model 的 LLM 节点才有值。 */
+  model?: string | null
   retryCount: number
   errorCode: string | null
   /** 失败原因（引擎 NodeFailed 的 message，最多 500 字）。 */
@@ -418,6 +420,27 @@ export interface UsageBudget {
   /** 已夹到 [0,1]，供进度条使用；真实超额看原始数字。 */
   callUtilization: number
   tokenUtilization: number
+  /**
+   * 本月试跑计入账本的部分（调用按节点数、token 按实际消耗）。
+   * 账本是「执行 + 试跑」一本，这两个数字用来把已用额度切成两段。
+   * 后端省略 0 值时可能是 undefined。
+   */
+  previewCalls?: number
+  previewTokens?: number
+  /** 试跑占限额的比例，[0,1]：进度条里那一段的宽度。 */
+  previewCallUtilization?: number
+  previewTokenUtilization?: number
+}
+
+/** 按模型分解：同一模型在两个来源（执行 / 试跑）里合并成一行。 */
+export interface UsageByModel {
+  /** 空模型（非 LLM 节点、输出溢出、老数据）归到一个桶，渲染为「未标注」。 */
+  model?: string | null
+  executions: number
+  executionTokens: number
+  previews: number
+  previewTokens: number
+  tokens: number
 }
 
 export interface UsageByDefinition {
@@ -461,6 +484,7 @@ export interface UsageSummary {
   previewShare: number
   budget: UsageBudget
   byDefinition: UsageByDefinition[]
+  byModel: UsageByModel[]
   daily: UsageDaily[]
   recentPreviews: UsageRecentPreview[]
 }

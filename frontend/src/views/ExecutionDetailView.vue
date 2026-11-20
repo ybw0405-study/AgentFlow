@@ -182,6 +182,11 @@ function handleLiveEvent(e: EngineEvent): void {
       if (typeof e.payload.latencyMs === 'number') existing.latencyMs = e.payload.latencyMs
       if (typeof e.payload.errorCode === 'string') existing.errorCode = e.payload.errorCode
       if (typeof e.payload.message === 'string') existing.errorMessage = e.payload.message
+      // 实际下发的模型在 output 里（LLM 节点）；投影落库前也要能显示，否则要刷新才看到
+      const output = e.payload.output
+      if (output && typeof output === 'object' && typeof (output as { model?: unknown }).model === 'string') {
+        existing.model = (output as { model: string }).model
+      }
     } else if (status) {
       rows.push({
         seq: e.seq,
@@ -192,6 +197,7 @@ function handleLiveEvent(e: EngineEvent): void {
         outputDigest: null,
         tokenUsed: Number(e.payload.tokenUsed ?? 0),
         latencyMs: null,
+        model: null,
         retryCount: 0,
         errorCode: null,
         errorMessage: null,

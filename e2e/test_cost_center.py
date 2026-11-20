@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 
-from .conftest import DEMO_DSL, SPACE_A, headers, new_idem, wait_terminal
+from .conftest import DEMO_DSL, REAL_LLM_MODEL, SPACE_A, headers, new_idem, wait_terminal
 
 
 def _usage(client, admin_token: str) -> dict:
@@ -62,6 +62,29 @@ def test_usage_accrues_and_limits_inherit(client, admin_token, editor_token):
     assert row["tokensUsed"] > before_tokens
     assert row["effectiveTokenLimit"] > 0
     assert 0.0 <= row["tokenUtilization"] <= 1.0
+
+
+def test_usage_breaks_down_by_model(client, editor_token):
+    """按模型分解：执行侧模型来自节点索引，与试跑侧合并，账本份额能切成两段。"""
+    summary = client.get("/api/v1/usage/summary", params={"days": 7},
+                         headers=headers(editor_token, SPACE_A))
+    assert summary.status_code == 200, summary.text
+    data = summary.json()["data"]
+
+    rows = data["byModel"]
+    assert rows, data
+    # 上面那条用例已经跑过一次 DEMO_DSL，两个 llm 节点都该记在同一个模型下
+    llm = next((row for row in rows if row.get("model") == REAL_LLM_MODEL), None)
+    assert llm is not None, rows
+    assert llm["executions"] >= 2, llm
+    assert llm["executionTokens"] > 0, llm
+    assert llm["tokens"] >= llm["executionTokens"] + llm.get("previewTokens", 0), llm
+
+    # 试跑份额是账本的一部分，不能比已用量还大（大了说明账本与明细不同步）
+    budget = data["budget"]
+    assert budget.get("previewTokens", 0) <= budget["tokensUsed"], budget
+    assert budget.get("previewCalls", 0) <= budget["callsUsed"], budget
+    assert 0.0 <= budget.get("previewTokenUtilization", 0) <= 1.0, budget
 
 
 def test_effective_limits_are_inherited_from_ancestors(client, admin_token):

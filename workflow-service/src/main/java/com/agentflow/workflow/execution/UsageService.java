@@ -35,17 +35,20 @@ public class UsageService {
 
     private final PreviewUsageMapper previews;
     private final WorkflowExecutionMapper executions;
+    private final NodeExecutionMapper nodes;
     private final BudgetLedgerMapper budgets;
     private final WorkflowDefinitionMapper definitions;
     private final int monthlyCallLimit;
     private final long monthlyTokenLimit;
 
     public UsageService(PreviewUsageMapper previews, WorkflowExecutionMapper executions,
-                        BudgetLedgerMapper budgets, WorkflowDefinitionMapper definitions,
+                        NodeExecutionMapper nodes, BudgetLedgerMapper budgets,
+                        WorkflowDefinitionMapper definitions,
                         @Value("${agentflow.tenant.monthly-call-limit:10000}") int callLimit,
                         @Value("${agentflow.tenant.monthly-token-limit:50000}") long tokenLimit) {
         this.previews = previews;
         this.executions = executions;
+        this.nodes = nodes;
         this.budgets = budgets;
         this.definitions = definitions;
         this.monthlyCallLimit = callLimit;
@@ -100,6 +103,7 @@ public class UsageService {
         out.put("previewShare", share(previewTokens, executionTokens + previewTokens));
         out.put("budget", budgetOf(tenantId));
         out.put("byDefinition", byDefinition(tenantId, from));
+        out.put("byModel", byModel(tenantId, from));
         out.put("daily", daily(tenantId, from, first, window));
         out.put("recentPreviews", recent(tenantId));
         return out;
@@ -120,6 +124,16 @@ public class UsageService {
         budget.put("tokenLimit", tokenLimit);
         budget.put("callUtilization", ratio(callsUsed, callLimit));
         budget.put("tokenUtilization", ratio(tokensUsed, tokenLimit));
+        // 账本里执行与试跑是一本账；把试跑的那一份单独切出来，进度条才能说清
+        // 「这个月额度被谁吃掉了」。数字原样给出，不做夹取——账本与明细不一致时
+        // 宁可让前端两个数字对不上，也不要悄悄改数把问题藏起来。
+        var previewMonth = previews.monthToDate(tenantId, period);
+        long previewCalls = previewMonth == null ? 0 : previewMonth.calls();
+        long previewTokens = previewMonth == null ? 0 : previewMonth.tokens();
+        budget.put("previewCalls", previewCalls);
+        budget.put("previewTokens", previewTokens);
+        budget.put("previewCallUtilization", ratio(previewCalls, callLimit));
+        budget.put("previewTokenUtilization", ratio(previewTokens, tokenLimit));
         return budget;
     }
 
@@ -155,6 +169,44 @@ public class UsageService {
         }
         out.sort((a, b) -> Long.compare((Long) b.get("tokens"), (Long) a.get("tokens")));
         return out;
+    }
+
+    /**
+     * 按模型分解：执行侧看 {@code node_execution.model}（投影器从节点输出里取的回落模型），
+     * 试跑侧看 {@code preview_usage.model}，两张表在内存里合并（量级是「模型数」，不是行数）。
+     *
+     * <p>模型为空（非 LLM 节点、输出溢出、老数据）归到一个空串的桶里，前端显示为「未标注」；
+     * 不猜、也不合并进任何真实模型，否则「这个模型花了多少」就不可信了。
+     */
+    private List<Map<String, Object>> byModel(String tenantId, String from) {
+        Map<String, long[]> series = new LinkedHashMap<>();
+        for (var row : nodes.usageByModel(tenantId, from)) {
+            long[] cell = series.computeIfAbsent(keyOf(row.model()), k -> new long[4]);
+            cell[0] += row.cnt();
+            cell[1] += row.tokens();
+        }
+        for (var row : previews.byModel(tenantId, from)) {
+            long[] cell = series.computeIfAbsent(keyOf(row.model()), k -> new long[4]);
+            cell[2] += row.cnt();
+            cell[3] += row.tokens();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        series.forEach((model, cell) -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("model", model.isEmpty() ? null : model);
+            item.put("executions", cell[0]);
+            item.put("executionTokens", cell[1]);
+            item.put("previews", cell[2]);
+            item.put("previewTokens", cell[3]);
+            item.put("tokens", cell[1] + cell[3]);
+            out.add(item);
+        });
+        out.sort((a, b) -> Long.compare((Long) b.get("tokens"), (Long) a.get("tokens")));
+        return out;
+    }
+
+    private static String keyOf(String model) {
+        return model == null ? "" : model.trim();
     }
 
     private List<Map<String, Object>> daily(String tenantId, String from, LocalDate first,

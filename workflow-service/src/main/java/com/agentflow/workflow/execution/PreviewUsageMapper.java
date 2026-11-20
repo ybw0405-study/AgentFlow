@@ -49,6 +49,21 @@ public interface PreviewUsageMapper {
     List<RecentPreviewRow> recent(@Param("tenantId") String tenantId,
                                   @Param("limit") int limit);
 
+    /** 本月试跑计进账本的部分：用来把额度条切成「执行 / 试跑」两段。 */
+    @Select("SELECT COALESCE(SUM(node_count),0) AS calls, COALESCE(SUM(token_used),0) AS tokens"
+            + " FROM preview_usage WHERE tenant_id = #{tenantId}"
+            + " AND DATE_FORMAT(created_at, '%Y-%m') = #{period}")
+    PreviewMonthRow monthToDate(@Param("tenantId") String tenantId,
+                                @Param("period") String period);
+
+    /** 按模型分解（试跑侧）：正式执行的模型来自 node_execution，两张表在服务层合并。 */
+    @Select("SELECT COALESCE(model,'') AS model, COUNT(*) AS cnt,"
+            + " COALESCE(SUM(token_used),0) AS tokens FROM preview_usage"
+            + " WHERE tenant_id = #{tenantId} AND created_at >= #{from}"
+            + " GROUP BY COALESCE(model,'')")
+    List<PreviewModelRow> byModel(@Param("tenantId") String tenantId,
+                                  @Param("from") String from);
+
     record PreviewUsageRow(String id, String tenantId, String definitionId, String nodeKey,
                            String actorId, String status, String model, int nodeCount,
                            int tokenUsed, Integer latencyMs) {
@@ -61,6 +76,12 @@ public interface PreviewUsageMapper {
     }
 
     record PreviewDailyRow(String day, long tokens) {
+    }
+
+    record PreviewMonthRow(long calls, long tokens) {
+    }
+
+    record PreviewModelRow(String model, long cnt, long tokens) {
     }
 
     record RecentPreviewRow(String id, String definitionId, String definitionName, String nodeKey,

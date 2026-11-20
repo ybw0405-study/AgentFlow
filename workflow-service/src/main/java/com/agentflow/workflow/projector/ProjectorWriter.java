@@ -171,6 +171,7 @@ public class ProjectorWriter {
                 asIntOr(payload.get("attempt"), 0),
                 (String) payload.get("inputDigest"), outputDigest,
                 asInt(payload.get("tokenUsed")), (Integer) payload.get("latencyMs"),
+                modelOf(payload),
                 0, errorCode, errorMessage,
                 "RUNNING".equals(status) ? new Timestamp(System.currentTimeMillis()) : null,
                 terminal(status) ? new Timestamp(System.currentTimeMillis()) : null));
@@ -179,6 +180,24 @@ public class ProjectorWriter {
     private static boolean terminal(String status) {
         return "SUCCEEDED".equals(status) || "FAILED".equals(status)
                 || "SKIPPED".equals(status) || "CANCELLED".equals(status);
+    }
+
+    /**
+     * 节点真正用的模型：LLM 节点把 provider 解析后的模型名放在 output 里
+     * （占位名会被回落到服务端默认模型，所以要记回落后的那个）。
+     *
+     * <p>非 LLM 节点没有这个字段；输出超过 256KB 时 payload 只剩引用与摘要（D5），
+     * 同样取不到——这两种情况都返回 null，用量页归到「未标注」，不猜。
+     */
+    private static String modelOf(Map<String, Object> payload) {
+        if (!(payload.get("output") instanceof Map<?, ?> output)) {
+            return null;
+        }
+        Object model = output.get("model");
+        if (!(model instanceof String name) || name.isBlank()) {
+            return null;
+        }
+        return name.length() > 128 ? name.substring(0, 128) : name;
     }
 
     /** 通知 id 由业务键派生（确定性 UUID）：投影重放不会重复通知同一个人。 */

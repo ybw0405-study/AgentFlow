@@ -1888,3 +1888,60 @@ README「已知限制」里写明。
 - 前端：`triggers-view.spec.ts`（预览展示、预览失败就地报错、档位与下次触发）。
 - E2E：`e2e/test_triggers.py`（秒级 cron 409、预览不落触发器、跨租户 404、定时触发后
   `lastSlotAt` / `nextFireAt` 有值；用例结束显式停用，避免「每分钟」的测试触发器一直烧 token）。
+
+## 25. 用量按模型分解与额度条分段（2026-11-20）
+
+§22 解决了「试跑的消耗看不见」，但账面上还是两个笼统的数字：本月用了多少 token、区间里执行
+与试跑各占多少。两个问题随之而来：
+
+1. **花在谁身上？** 同一个租户里，`deepseek-chat` 与一个推理模型的单价可以差十几倍，只看总
+   token 无法判断「这个月变贵是因为跑得多了，还是因为换模型了」。
+2. **额度被谁吃掉了？** 账本是一本账（执行 + 试跑），进度条只有一根。用户看到 82%，却不知道
+   其中 30% 是调试——于是要么不敢调，要么调完才发现额度没了。
+
+### 25.1 模型记在节点上，不新开一本账
+
+`V013__node_model.sql` 只给 `node_execution` 加一列 `model`，不新建 ledger：
+
+- 节点行已经是「一次执行里某个节点的一次尝试」的最小粒度，token、延迟、错误码都在上面。
+  再建一张 `model_usage` 表就等于把同一批事实写两遍，两份数据一旦漂移就要靠对账解释。
+- 按模型聚合是**展示维度**，不是记账维度：`budgets` 仍然按「租户 + 账期」累加一份。
+- 查询是 `node_execution JOIN workflow_execution`（租户与时间在执行上，`execution_id` 有索引），
+  量级是「区间内的节点行」，与按工作流分解同阶。
+
+记的是 **provider 回落后的真实模型名**（`NodeCompleted.payload.output.model`，LLM 节点在
+`nodes/llm.py` 里把 `result.extra["model"] or cfg.model` 写进 output），不是 DSL 里配的那个。
+占位名（如 `default`）会被上游替换，记请求名等于把「实际用了什么」记错——而这个字段的唯一
+用途就是回答「实际用了什么」。
+
+### 25.2 「不知道」要能表达
+
+三个来源会让模型为空：非 LLM 节点、输出超过 256KB 被溢出成引用（D5，payload 里只剩摘要）、
+V013 之前的历史执行。这些行统一进空串桶，前端渲染「未标注 · 非 LLM 或输出未带模型」。
+
+不按「工作流的默认模型」回填：默认模型只是没写 `config.model` 时的兜底，节点完全可以覆盖它，
+而且历史数据里到底跑的是哪个模型我们真的不知道。把「不知道」写成「知道」，比留空更危险。
+
+同理，试跑侧的 `preview_usage.model` 也按同样口径合并：同一模型在两个来源里是同一行，因为
+用户问的是「这个模型花了多少」，而不是「这个模型在调试时花了多少」——后者用两列分列展示。
+
+### 25.3 额度条的两段：派生，不是第二本账
+
+`budget.previewCalls / previewTokens` 来自 `preview_usage` 的本月合计（`calls` 用
+`SUM(node_count)`，与 `accrueByTenant` 的调用口径一致）。它与账本行在**同一个事务**里写，
+所以正常情况下 `previewTokens ≤ tokensUsed` 恒成立。
+
+服务端**不做夹取**：账本与明细不一致（记账失败、手工改库）时，宁可让两个数字对不上，也要让
+问题露出来。夹取放在前端绘图那一层——`min(previewUtilization, utilization)`，两段宽度之和
+永远不超过已用量，墨迹不会画出进度条。
+
+颜色沿用每日柱状图的语义：执行 = accent，试跑 = neutral。同一页面上同一种消耗只有一种颜色，
+不需要图例二次解释。
+
+### 25.4 验收
+
+- Java：`UsageServiceTest`（两来源同模型合并、空模型独立成桶、按合计倒序、试跑份额与利用率、
+  账本缺行时用配置限额）、`ProjectorWriterTest`（记回落模型、无 output 时留空）。
+- 前端：`usage-view.spec.ts`（额度条两段宽度、份额大于已用时封顶、按模型表的合并与「未标注」）。
+- E2E：`test_cost_center.py`（`byModel` 里能找到 `DEMO_DSL` 用过的模型且执行 token > 0、
+  `previewTokens ≤ tokensUsed`、`previewCalls ≤ callsUsed`）。

@@ -65,6 +65,42 @@ const budgetState = computed<'ok' | 'near' | 'over'>(() => {
 
 const usageRows = computed(() => summary.value?.byDefinition ?? [])
 const recent = computed(() => summary.value?.recentPreviews ?? [])
+const modelRows = computed(() => summary.value?.byModel ?? [])
+
+/** 按模型分解的合计：占比用它当分母，各行加起来正好 100%。 */
+const modelTotal = computed(() => modelRows.value.reduce((sum, row) => sum + row.tokens, 0))
+
+function modelName(model: string | null | undefined): string {
+  return model && model.length > 0 ? model : '未标注'
+}
+
+function modelShare(tokens: number): string {
+  if (modelTotal.value <= 0) return '0%'
+  return `${Math.round((tokens / modelTotal.value) * 100)}%`
+}
+
+/**
+ * 已用量切成「执行 / 试跑」两段。
+ *
+ * 试跑的份额比已用量还大只可能是账本与明细不同步（记账失败、手工改库），
+ * 这时按已用量封顶，宁可少画一段也不要把墨迹画出进度条。
+ * 后端对 0 值不下发键，所以这里全部按 0 兜底。
+ */
+function budgetSegments(utilization: number, previewUtilization: number | undefined) {
+  const preview = Math.min(previewUtilization ?? 0, utilization)
+  return { exec: percent(utilization - preview), preview: percent(preview) }
+}
+
+/**
+ * 试跑在「已用」里的占比：卡片脚注用它解释额度被谁吃掉了。
+ * 不到 1% 时写成「<1%」而不是「0%」——明明记了 115 token，显示 0% 会让用户以为没记上。
+ */
+function previewShareOfUsed(preview: number | undefined, used: number | undefined): string {
+  if (!used || used <= 0) return '0%'
+  const pct = ((preview ?? 0) / used) * 100
+  if (pct > 0 && pct < 1) return '<1%'
+  return `${Math.round(pct)}%`
+}
 </script>
 
 <template>
@@ -114,15 +150,22 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
           {{ num(budget?.callsUsed ?? 0) }}
           <span class="af-usage-card__unit">/ {{ num(budget?.callLimit ?? 0) }}</span>
         </div>
-        <div class="af-usage-bar">
+        <div
+          class="af-usage-bar"
+          :title="`执行 ${num((budget?.callsUsed ?? 0) - (budget?.previewCalls ?? 0))} · 试跑 ${num(budget?.previewCalls ?? 0)}`"
+        >
           <span
             class="af-usage-bar__fill"
             :class="{ 'af-usage-bar__fill--danger': budgetState === 'over' }"
-            :style="{ width: percent(budget?.callUtilization ?? 0) }"
+            :style="{ width: budgetSegments(budget?.callUtilization ?? 0, budget?.previewCallUtilization).exec }"
+          />
+          <span
+            class="af-usage-bar__fill af-usage-bar__fill--preview"
+            :style="{ width: budgetSegments(budget?.callUtilization ?? 0, budget?.previewCallUtilization).preview }"
           />
         </div>
         <div class="af-faint af-usage-card__foot">
-          {{ periodLabel }} · 按节点计，含试跑
+          {{ periodLabel }} · 按节点计，其中试跑 {{ num(budget?.previewCalls ?? 0) }} 次
         </div>
       </div>
 
@@ -134,18 +177,25 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
           {{ num(budget?.tokensUsed ?? 0) }}
           <span class="af-usage-card__unit">/ {{ num(budget?.tokenLimit ?? 0) }}</span>
         </div>
-        <div class="af-usage-bar">
+        <div
+          class="af-usage-bar"
+          :title="`执行 ${num((budget?.tokensUsed ?? 0) - (budget?.previewTokens ?? 0))} · 试跑 ${num(budget?.previewTokens ?? 0)}`"
+        >
           <span
             class="af-usage-bar__fill"
             :class="{ 'af-usage-bar__fill--danger': budgetState === 'over' }"
-            :style="{ width: percent(budget?.tokenUtilization ?? 0) }"
+            :style="{ width: budgetSegments(budget?.tokenUtilization ?? 0, budget?.previewTokenUtilization).exec }"
+          />
+          <span
+            class="af-usage-bar__fill af-usage-bar__fill--preview"
+            :style="{ width: budgetSegments(budget?.tokenUtilization ?? 0, budget?.previewTokenUtilization).preview }"
           />
         </div>
-        <div
-          class="af-faint af-usage-card__foot"
-          :class="{ 'af-danger': budgetState !== 'ok' }"
-        >
-          {{ budgetState === 'over' ? '额度已用完，新的执行会被拒绝' : budgetState === 'near' ? '已用 80% 以上' : '额度充足' }}
+        <div class="af-faint af-usage-card__foot">
+          <span :class="{ 'af-danger': budgetState !== 'ok' }">
+            {{ budgetState === 'over' ? '额度已用完，新的执行会被拒绝' : budgetState === 'near' ? '已用 80% 以上' : '额度充足' }}
+          </span>
+          <span> · 其中试跑 {{ num(budget?.previewTokens ?? 0) }}（占已用 {{ previewShareOfUsed(budget?.previewTokens, budget?.tokensUsed) }}）</span>
         </div>
       </div>
 
@@ -183,7 +233,7 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
         <span class="af-usage-dot af-usage-dot--exec" />执行
         <span class="af-usage-dot af-usage-dot--preview" />试跑
         <span class="af-spacer" />
-        <span class="af-faint">峰值 {{ num(peak) }}</span>
+        <span class="af-faint">峰值 {{ num(peak) }} · 额度条同色分段</span>
       </div>
       <div
         class="af-usage-chart"
@@ -288,6 +338,89 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
           <tr v-if="!usageRows.length">
             <td
               colspan="6"
+              class="af-faint"
+              style="text-align: center; padding: 20px"
+            >
+              区间内没有消耗
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div
+      class="af-panel"
+      style="margin-bottom: 14px"
+    >
+      <div class="af-usage-section">
+        按模型
+        <span class="af-faint">执行看节点实际用过的模型，与试跑合并成一行</span>
+      </div>
+      <table class="af-table">
+        <thead>
+          <tr>
+            <th>模型</th>
+            <th style="text-align: right">
+              执行 token
+            </th>
+            <th style="text-align: right">
+              试跑 token
+            </th>
+            <th style="text-align: right">
+              合计
+            </th>
+            <th style="width: 30%">
+              占比
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in modelRows"
+            :key="row.model ?? ''"
+          >
+            <td class="mono">
+              {{ modelName(row.model) }}
+              <span
+                v-if="!row.model"
+                class="af-faint"
+                style="font-size: 11px"
+              >非 LLM 或输出未带模型</span>
+            </td>
+            <td
+              class="mono"
+              style="text-align: right"
+            >
+              {{ num(row.executionTokens) }}
+            </td>
+            <td
+              class="mono"
+              style="text-align: right"
+            >
+              {{ num(row.previewTokens) }}
+            </td>
+            <td
+              class="mono"
+              style="text-align: right"
+            >
+              {{ num(row.tokens) }}
+            </td>
+            <td>
+              <div class="af-usage-bar">
+                <span
+                  class="af-usage-bar__fill"
+                  :style="{ width: modelShare(row.tokens) }"
+                />
+              </div>
+              <span
+                class="af-faint"
+                style="font-size: 11px"
+              >{{ modelShare(row.tokens) }}</span>
+            </td>
+          </tr>
+          <tr v-if="!modelRows.length">
+            <td
+              colspan="5"
               class="af-faint"
               style="text-align: center; padding: 20px"
             >
@@ -407,6 +540,8 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
   border-radius: 2px;
   overflow: hidden;
   margin-top: 8px;
+  /* 两段（执行 / 试跑）并排铺满已用部分，宽度加起来正好是利用率 */
+  display: flex;
 }
 
 .af-usage-bar__fill {
@@ -418,6 +553,11 @@ const recent = computed(() => summary.value?.recentPreviews ?? [])
 
 .af-usage-bar__fill--danger {
   background: var(--af-danger);
+}
+
+/* 与每日柱状图里「试跑」同色：同一页面上同一种消耗只能有一种颜色 */
+.af-usage-bar__fill--preview {
+  background: var(--af-neutral);
 }
 
 .af-usage-legend {

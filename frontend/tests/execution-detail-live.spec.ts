@@ -135,6 +135,20 @@ describe('执行详情的实时事件合并', () => {
     expect(wrapper.find('.af-tree__row .af-status').text()).toBe('SUSPENDED')
   })
 
+  it('NodeCompleted 带回实际下发模型时，节点树上直接就显示', async () => {
+    const wrapper = await mountView('RUNNING', 'RUNNING', 38)
+
+    mocks.handlers?.onFrame(frame(39, 'NodeCompleted', {
+      attempt: 1,
+      tokenUsed: 120,
+      output: { model: 'deepseek-v4-pro', text: 'ok' },
+    }))
+    await flushPromises()
+
+    // 投影落库有 500ms 的间隔，实时事件里已经带着模型了，不该要用户刷新才看到
+    expect(wrapper.find('.af-tree__row').text()).toContain('deepseek-v4-pro')
+  })
+
   it('裁决续跑后节点能从 SUSPENDED 回到 RUNNING', async () => {
     const wrapper = await mountView('SUSPENDED', 'SUSPENDED', 40)
     mocks.handlers?.onFrame(frame(42, 'GateResolved'))
