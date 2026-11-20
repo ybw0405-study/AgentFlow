@@ -64,6 +64,8 @@ agentflow:
       # PENDING 超过这么久还不动，按「派发丢失」处理
       pending-grace-ms: ${AF_REAP_PENDING_GRACE_MS:180000}
       batch: ${AF_REAP_BATCH:50}
+      # 引擎连不上要连续几轮确认才收口：一次 502 / GC 停顿不该把还在跑的执行写成超时
+      unreachable-confirmations: ${AF_REAP_UNREACHABLE_CONFIRMATIONS:3}
   audit:
     # 出口：auto（MQ 开则走 MQ，否则直写审计表）/ mq / direct
     sink: ${AF_AUDIT_SINK:auto}
@@ -71,6 +73,10 @@ agentflow:
     relay-interval-ms: ${AF_AUDIT_RELAY_INTERVAL_MS:2000}
     relay-initial-delay-ms: ${AF_AUDIT_RELAY_INITIAL_DELAY_MS:4000}
     degrade-after-attempts: ${AF_AUDIT_DEGRADE_AFTER_ATTEMPTS:3}
+    # 降级仍持续失败达到这个次数后迁入 DEAD 隔离区（保留原始载荷，可人工重放）
+    dead-after-attempts: ${AF_AUDIT_DEAD_AFTER_ATTEMPTS:24}
+    report-interval-ms: ${AF_AUDIT_REPORT_INTERVAL_MS:300000}
+    report-initial-delay-ms: ${AF_AUDIT_REPORT_INITIAL_DELAY_MS:60000}
     purge-cron: "${AF_AUDIT_PURGE_CRON:0 30 4 * * *}"
   rocketmq:
     enabled: ${AF_MQ_ENABLED:false}

@@ -21,8 +21,8 @@ const NODE_REF = /\bnodes\.([a-z][a-zA-Z0-9_-]{0,63})/g
 const BRANCH_NODE_TYPES = new Set(['condition', 'human_gate'])
 /** 子图字段：内部有自己的作用域（迭代变量、局部节点），不参与外层引用检查。 */
 const SUBGRAPH_KEYS = new Set(['body', 'branches'])
-/** 嵌套子图的校验深度上限：坏数据不应该把界面拖死。 */
-const MAX_SUBGRAPH_DEPTH = 4
+/** 嵌套子图的最大层数：画布下钻、即时校验与引擎发布校验共用这一口径。 */
+export const MAX_SUBGRAPH_DEPTH = 4
 
 interface GraphScope {
   /** 子图定位（如 loop_1.body）；空串表示根层。 */
@@ -234,7 +234,6 @@ function validateNested(
   scope: GraphScope,
   depth: number,
 ): ValidationIssue[] {
-  if (depth >= MAX_SUBGRAPH_DEPTH) return []
   const issues: ValidationIssue[] = []
   const keyOf = (k: string): string => (scope.prefix ? `${scope.prefix}#${k}` : k)
   const dslLike: WorkflowDsl = {
@@ -253,6 +252,13 @@ function validateNested(
       const ref = { nodeKey: node.key }
       const graph = readSubgraph(dslLike, ref)
       if (!graph) continue
+      if (depth >= MAX_SUBGRAPH_DEPTH) {
+        issues.push({
+          nodeKey: keyOf(node.key),
+          message: `子图最多嵌套 ${MAX_SUBGRAPH_DEPTH} 层`,
+        })
+        continue
+      }
       if (graph.nodes.length < 2) {
         // 引擎运行期按 WorkflowDsl 解析子图（nodes 至少 2 个）：单节点子图发布能过，
         // 跑起来必炸在分支上，所以这里就当错误拦住。
@@ -280,6 +286,13 @@ function validateNested(
       const ref = { nodeKey: node.key, branch }
       const graph = readSubgraph(dslLike, ref)
       if (!graph) continue
+      if (depth >= MAX_SUBGRAPH_DEPTH) {
+        issues.push({
+          nodeKey: keyOf(node.key),
+          message: `子图最多嵌套 ${MAX_SUBGRAPH_DEPTH} 层`,
+        })
+        continue
+      }
       if (graph.nodes.length < 2) {
         issues.push({
           nodeKey: keyOf(node.key),

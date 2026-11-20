@@ -17,6 +17,7 @@ import com.agentflow.workflow.audit.AuditPublisher;
 import com.agentflow.workflow.engine.EngineGatewayClient;
 import java.sql.Timestamp;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,7 +30,7 @@ import org.springframework.data.redis.core.ValueOperations;
 
 /**
  * 看护的判据只有一条：引擎怎么说。测试围绕「引擎的四种回答」展开——已终态、还在跑、
- * 已挂起、不认识——加一条「引擎连不上」。
+ * 已挂起、不认识——再加一条「引擎连不上」的连续确认语义。
  */
 class ExecutionReaperTest {
 
@@ -38,6 +39,7 @@ class ExecutionReaperTest {
     private AuditPublisher audit;
     private ValueOperations<String, String> ops;
     private StringRedisTemplate redis;
+    private Map<String, Long> counters;
     private ExecutionReaper reaper;
 
     @BeforeEach
@@ -48,12 +50,19 @@ class ExecutionReaperTest {
         audit = Mockito.mock(AuditPublisher.class);
         redis = Mockito.mock(StringRedisTemplate.class);
         ops = Mockito.mock(ValueOperations.class);
+        counters = new HashMap<>();
         Mockito.doReturn(ops).when(redis).opsForValue();
+        when(ops.increment(anyString())).thenAnswer(invocation ->
+                counters.merge(invocation.getArgument(0), 1L, Long::sum));
+        Mockito.doAnswer(invocation -> {
+            counters.remove(invocation.getArgument(0));
+            return true;
+        }).when(redis).delete(anyString());
         when(ops.get("af:reap:leader")).thenReturn(null);
         when(ops.setIfAbsent(eq("af:reap:leader"), anyString(), any(Duration.class)))
                 .thenReturn(true);
         reaper = new ExecutionReaper(executions, engine, audit, redis, true,
-                120_000, 180_000, 50);
+                120_000, 180_000, 50, 3);
     }
 
     @Test
@@ -72,19 +81,59 @@ class ExecutionReaperTest {
     }
 
     @Test
-    void reapsTimedOutWhenEngineUnreachable() {
+    void reapsOnlyAfterConsecutiveUnreachableConfirmations() {
         givenCandidate(running("e-2"));
         when(engine.findExecutionState("e-2"))
                 .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"));
 
-        var report = reaper.sweep();
+        // 一次 502 / GC 停顿不该把还在跑的执行写成超时
+        var first = reaper.sweep();
+        var second = reaper.sweep();
+        assertEquals(0, first.reaped() + second.reaped());
+        verify(executions, never()).markTerminal(any(), any(), anyInt(), anyInt(), any());
 
-        // 过了 deadline 又连不上引擎：不会再有终态事件了，按超时收口
+        var third = reaper.sweep();
         verify(executions).markTerminal(eq("e-2"), eq("TIMED_OUT"), anyInt(), anyInt(),
                 eq(ExecutionReaper.DEADLINE_EXCEEDED));
-        assertEquals(0, report.reconciled());
-        assertEquals(1, report.reaped());
+        assertEquals(1, third.reaped());
         assertEquals("EXECUTION_REAPED", lastAuditType());
+    }
+
+    @Test
+    void aSuccessfulProbeResetsTheUnreachableStreak() {
+        givenCandidate(running("e-2"));
+        when(engine.findExecutionState("e-2"))
+                .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"))
+                .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"))
+                .thenReturn(Optional.of(Map.of("status", "RUNNING")))
+                .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"))
+                .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"));
+
+        reaper.sweep();  // 1
+        reaper.sweep();  // 2
+        reaper.sweep();  // 引擎恢复：计数清零，本轮不动手
+        reaper.sweep();  // 重新从 1 开始
+        var last = reaper.sweep();  // 2，仍不该收口
+
+        assertEquals(0, last.reaped());
+        verify(executions, never()).markTerminal(any(), any(), anyInt(), anyInt(), any());
+        // 恢复之后重新从 1 计数，不能带着旧的两轮继续累加
+        assertEquals(2, counters.getOrDefault("af:reap:unreachable:e-2", 0L).intValue());
+    }
+
+    @Test
+    void defersWhileEngineStillHoldsTheLease() {
+        givenCandidate(running("e-2"));
+        when(engine.findExecutionState("e-2"))
+                .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"));
+        when(redis.hasKey("af:lease:e-2")).thenReturn(true);
+
+        var report = reaper.sweep();
+
+        // 引擎侧还有活跃租约：只暂缓，不收口、也不累计不可达轮数
+        assertEquals(0, report.reaped());
+        verify(executions, never()).markTerminal(any(), any(), anyInt(), anyInt(), any());
+        assertEquals(0L, counters.size());
     }
 
     @Test
@@ -94,7 +143,7 @@ class ExecutionReaperTest {
 
         var report = reaper.sweep();
 
-        // 行插入了、引擎从没收到：这不是「超时」，是派发在两步之间断了
+        // 行插入了、引擎从没收到：这不是「超时」，是派发在两步之间断了；404 立即收口
         verify(executions).markTerminal(eq("e-3"), eq("FAILED"), anyInt(), anyInt(),
                 eq(ExecutionReaper.DISPATCH_LOST));
         assertEquals(1, report.reaped());
@@ -179,7 +228,7 @@ class ExecutionReaperTest {
     @Test
     void doesNothingWhenDisabled() {
         var off = new ExecutionReaper(executions, engine, audit, redis, false,
-                120_000, 180_000, 50);
+                120_000, 180_000, 50, 3);
 
         off.poll();
 

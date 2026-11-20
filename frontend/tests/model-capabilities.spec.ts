@@ -20,6 +20,14 @@ describe('模型能力标注', () => {
     expect(inferFacts('deepseek-chat').tags).not.toContain('reasoning')
   })
 
+  it('DeepSeek 的 flash / v4 变体按家族名 + 变体名识别，别家 v4 不误判', () => {
+    expect(inferFacts('deepseek-flash').tags).toContain('reasoning')
+    expect(inferFacts('deepseek-v4-pro').tags).toContain('reasoning')
+    expect(inferFacts('glm-v4-pro').tags).not.toContain('reasoning')
+    expect(inferFacts('acme-v4').tags).not.toContain('reasoning')
+    expect(maxTokensSuggestion(inferFacts('deepseek-flash'))).toBe(REASONING_MAX_TOKENS)
+  })
+
   it('引擎给的能力优先，缺字段时回落到模型名推断', () => {
     const facts = modelFacts('deepseek-reasoner', [
       {

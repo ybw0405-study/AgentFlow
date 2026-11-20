@@ -29,6 +29,13 @@ TAG_VISION = "vision"
 CONTEXT_TAG_THRESHOLD = 100_000
 """到这个量级才算「长上下文」，避免把 8k/32k 也标成长上下文。"""
 
+REASONING_MIN_OUTPUT_TOKENS = 4096
+"""推理型模型的最小正文预算，与前端「设为 4096」的建议一致。
+
+思维链与正文共用 max_tokens，1024 常常只够思考、正文为空。这个下限只在
+下发前生效，不改写 DSL 里的配置（见 nodes/llm.py），并且会记进事件留痕。
+"""
+
 _REASONING_MARKERS = (
     "reasoner",
     "reasoning",
@@ -41,6 +48,16 @@ _REASONING_MARKERS = (
     "r1",
 )
 """推理型模型的命名标记。按「分隔符边界」匹配，避免 `gpt-4o-mini` 被 `o1` 误伤。"""
+
+_REASONING_FAMILY_VARIANTS = {
+    "deepseek": frozenset({"flash", "v4"}),
+}
+"""有些家族用变体名而不是 reasoner/r1 表示推理型。
+
+`deepseek-flash` / `deepseek-v4-pro` 的思维链同样占用 max_tokens，但名字里
+没有上面任何词元；只回 id、拿不到上游能力字段时就会漏标，界面连「设大一点」
+的提示都不给。这里要求家族名与变体名同时出现，避免把别家的 v4 误标。
+"""
 
 _CONTEXT_FIELDS = ("context_length", "context_window", "max_context_length", "max_model_len")
 _OUTPUT_FIELDS = ("max_output_tokens", "max_completion_tokens", "max_tokens")
@@ -81,7 +98,22 @@ def _tokens(model_id: str) -> set[str]:
 
 def _is_reasoning_name(model_id: str) -> bool:
     """只认整段词元，`gpt-4o-mini` 不会被 `o1` 误判成推理型。"""
-    return bool(_tokens(model_id) & set(_REASONING_MARKERS))
+    tokens = _tokens(model_id)
+    if tokens & set(_REASONING_MARKERS):
+        return True
+    return any(
+        family in tokens and bool(tokens & variants)
+        for family, variants in _REASONING_FAMILY_VARIANTS.items()
+    )
+
+
+def is_reasoning_model(model_id: str) -> bool:
+    """执行链路用：只按模型名判断，不依赖上游 /models 清单是否可达。
+
+    与 describe_model 共用同一份词表，避免「界面提示是推理型、下发却按普通
+    模型给 1024」这种两套口径。上游明写的字段仍由 describe_model 优先采信。
+    """
+    return _is_reasoning_name(model_id)
 
 
 def _supported_parameters(item: dict[str, Any]) -> set[str]:

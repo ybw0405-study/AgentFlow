@@ -540,3 +540,100 @@ def test_role_approver_untouched_by_expression_rules(settings):
     dsl = _gate_dsl({"type": "ROLE", "role": "ADMIN"})
     result = validate_dsl(dsl, settings)
     assert result.ok, [e.model_dump() for e in result.errors]
+
+
+# ---------- 子图嵌套深度（前端即时校验 / 画布下钻 / 发布校验同一口径） ----------
+
+
+def _nested_loop_dsl(levels: int, *, leaf_template: str = "ok") -> dict:
+    """构造 levels 层嵌套 loop：顶层 loop_1，其 body 里再嵌 loop_2 … loop_levels。
+
+    每层 body 都配一个 end 收口节点满足「至少 2 节点」，config 不含未声明引用，
+    这样唯一的失败原因只可能是子图深度本身。第 4 层允许，第 5 层必须被拒。
+    """
+
+    def subgraph(level: int) -> dict:
+        if level >= levels:
+            return {
+                "nodes": [
+                    {
+                        "key": f"leaf_{level}_prep",
+                        "type": "transform",
+                        "config": {"mappings": [{"target": "vars.tmp", "template": leaf_template}]},
+                    },
+                    {
+                        "key": f"leaf_{level}_end",
+                        "type": "end",
+                        "config": {"resultMapping": {"v": "1"}},
+                    },
+                ],
+                "edges": [{"from": f"leaf_{level}_prep", "to": f"leaf_{level}_end"}],
+            }
+        child = f"loop_{level + 1}"
+        return {
+            "nodes": [
+                {
+                    "key": child,
+                    "type": "loop",
+                    "config": {
+                        "itemsExpression": "vars.tags",
+                        "itemVar": "item",
+                        "indexVar": "index",
+                        "maxIterations": 10,
+                        "body": subgraph(level + 1),
+                    },
+                },
+                {"key": f"tail_{level}", "type": "end", "config": {"resultMapping": {"v": "1"}}},
+            ],
+            "edges": [{"from": child, "to": f"tail_{level}"}],
+        }
+
+    return {
+        "dslVersion": "1.0",
+        "variables": {"tags": {"type": "array", "required": True}},
+        "defaults": {"timeoutMs": 30000, "maxParallelism": 4},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "loop_1",
+                "type": "loop",
+                "config": {
+                    "itemsExpression": "vars.tags",
+                    "itemVar": "item",
+                    "indexVar": "index",
+                    "maxIterations": 10,
+                    "body": subgraph(1),
+                },
+            },
+            {"key": "end", "type": "end", "config": {"resultMapping": {"n": "1"}}},
+        ],
+        "edges": [{"from": "start", "to": "loop_1"}, {"from": "loop_1", "to": "end"}],
+    }
+
+
+def test_subgraph_depth_at_limit_passes(settings):
+    """恰好 4 层子图允许通过：画布能下钻 4 层，发布校验也必须认。
+
+    数字 4 与 app/dsl/validate.py 的 MAX_SUBGRAPH_DEPTH、前端 dsl/validate.ts 的同名常量
+    一致；三处任一改动而没同步，这条测试会先变红。
+    """
+    result = validate_dsl(_nested_loop_dsl(4), settings)
+    assert result.ok, [e.model_dump() for e in result.errors]
+
+
+def test_subgraph_depth_at_limit_still_checks_references(settings):
+    """到达深度上限不等于「跳过校验」：最内层的未声明引用仍要报出来。"""
+    result = validate_dsl(_nested_loop_dsl(4, leaf_template="{{ vars.ghost }}"), settings)
+    assert not result.ok
+    assert any("vars.ghost" in e.message for e in result.errors)
+
+
+def test_subgraph_depth_beyond_limit_is_rejected(settings):
+    """第 5 层子图明确 422，并定位到持有它的节点，而不是静默丢弃该子图。"""
+    result = validate_dsl(_nested_loop_dsl(5), settings)
+    assert not result.ok
+    assert DSL_VALIDATION in _codes(result)
+    depth_errors = [e for e in result.errors if "subgraph nesting exceeds" in e.message]
+    assert depth_errors, [e.model_dump() for e in result.errors]
+    assert all("4 levels" in e.message for e in depth_errors)
+    assert any(e.node_key == "loop_5" for e in depth_errors)

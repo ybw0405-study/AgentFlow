@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from app.commands.providers.model_capabilities import (
+    REASONING_MIN_OUTPUT_TOKENS,
     TAG_JSON,
     TAG_LONG_CONTEXT,
     TAG_REASONING,
     TAG_VISION,
     describe_model,
+    is_reasoning_model,
 )
 
 
@@ -97,3 +99,26 @@ def test_name_size_suffix_marks_long_context() -> None:
 
     assert facts is not None
     assert TAG_LONG_CONTEXT in facts.tags
+
+
+def test_deepseek_variants_inferred_from_name_alone() -> None:
+    """只回 id、拿不到上游字段时，这两个变体也该被认成推理型。
+
+    它们没有 reasoner/r1 词元，却是「思维链与正文共用 max_tokens」的重灾区；
+    漏标会让界面连「设大一点」的提示都不给，执行链路也不会抬下限。
+    """
+    for model_id in ("deepseek-flash", "deepseek-v4-pro"):
+        facts = describe_model({"id": model_id})
+        assert facts is not None
+        assert TAG_REASONING in facts.tags, model_id
+        assert is_reasoning_model(model_id), model_id
+    assert REASONING_MIN_OUTPUT_TOKENS == 4096
+
+
+def test_other_families_variant_not_mislabelled() -> None:
+    """家族名与变体名必须同时出现，别家的 v4 不该被抬 maxTokens。"""
+    for model_id in ("acme-v4", "glm-v4-pro", "deepseek-chat", "gpt-4o-mini"):
+        assert not is_reasoning_model(model_id), model_id
+        facts = describe_model({"id": model_id})
+        assert facts is not None
+        assert TAG_REASONING not in facts.tags, model_id

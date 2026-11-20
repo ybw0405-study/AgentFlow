@@ -37,6 +37,11 @@ const REASONING_MARKERS = new Set([
   'r1',
 ])
 
+/** 家族 + 变体组合：deepseek-flash / deepseek-v4-pro 的思维链同样占 maxTokens。 */
+const REASONING_FAMILY_VARIANTS: Record<string, string[]> = {
+  deepseek: ['flash', 'v4'],
+}
+
 const LONG_CONTEXT_MARKERS = ['128k', '200k', '256k', '1m', 'long-context', 'longcontext']
 
 /** 到这个量级才算「长上下文」，与引擎侧口径一致：8k / 32k 不该被标成长上下文。 */
@@ -54,10 +59,18 @@ function tokens(id: string): string[] {
   return id.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
 }
 
-export function inferFacts(id: string): ModelFacts {
+/** 与引擎侧同一份词表：只认整段词元，或「家族 + 变体」同时出现。 */
+function isReasoningName(id: string): boolean {
   const parts = tokens(id)
+  if (parts.some((part) => REASONING_MARKERS.has(part))) return true
+  return Object.entries(REASONING_FAMILY_VARIANTS).some(
+    ([family, variants]) => parts.includes(family) && variants.some((v) => parts.includes(v)),
+  )
+}
+
+export function inferFacts(id: string): ModelFacts {
   const tags: string[] = []
-  if (parts.some((part) => REASONING_MARKERS.has(part))) {
+  if (isReasoningName(id)) {
     tags.push('reasoning')
   }
   if (LONG_CONTEXT_MARKERS.some((marker) => id.toLowerCase().includes(marker))) {

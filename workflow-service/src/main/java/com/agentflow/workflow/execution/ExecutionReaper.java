@@ -38,7 +38,7 @@ import org.springframework.stereotype.Component;
  *       {@code EXEC-DEADLINE_EXCEEDED}（超时）。</li>
  * </ol>
  *
- * <p>三个刻意的取舍：
+ * <p>四个刻意的取舍：
  *
  * <ul>
  *   <li><b>只在过了 deadline（或派发宽限）之后动手</b>。引擎自己会在 deadline 到点时发
@@ -47,6 +47,8 @@ import org.springframework.stereotype.Component;
  *       把一条正在跑的执行写成超时；</li>
  *   <li><b>引擎说还在跑就什么都不做</b>，哪怕它已经超期——超期由引擎负责收口，控制面只兜底
  *       「无人收口」的情况。</li>
+ *   <li><b>连不上要连续确认</b>。引擎明确不认识（404）可以立即收口；连不上只说明这一路
+ *       探测失败，要求连续 N 轮不可达才动手，期间若发现引擎还持有执行租约就重新计时。</li>
  * </ul>
  */
 @Component
@@ -60,6 +62,12 @@ public class ExecutionReaper {
     private static final Set<String> TERMINAL =
             Set.of("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT");
 
+    /** 引擎连不上时按执行维度记「连续不可达」轮数，不把一次抖动当死亡证明。 */
+    private static final String UNREACHABLE_PREFIX = "af:reap:unreachable:";
+    /** 引擎与 workflow-service 共用 Redis，租约键可以当作「本实例有活任务」的弱信号。 */
+    private static final String ENGINE_LEASE_PREFIX = "af:lease:";
+    private static final Duration UNREACHABLE_TTL = Duration.ofMinutes(15);
+
     /** 派发丢失：行已插入，引擎从没收到过。 */
     static final String DISPATCH_LOST = "EXEC-DISPATCH-LOST";
     /** 超过 deadline 仍未收口：与引擎侧超时用同一个码，界面不必区分来源。 */
@@ -72,10 +80,12 @@ public class ExecutionReaper {
     private final EngineGatewayClient engine;
     private final AuditPublisher audit;
     private final RedisLease lease;
+    private final StringRedisTemplate redis;
     private final boolean enabled;
     private final long graceMs;
     private final long pendingGraceMs;
     private final int batch;
+    private final int confirmations;
 
     public ExecutionReaper(WorkflowExecutionMapper executions, EngineGatewayClient engine,
                            AuditPublisher audit, StringRedisTemplate redis,
@@ -83,15 +93,19 @@ public class ExecutionReaper {
                            @Value("${agentflow.execution.reap.grace-ms:120000}") long graceMs,
                            @Value("${agentflow.execution.reap.pending-grace-ms:180000}")
                            long pendingGraceMs,
-                           @Value("${agentflow.execution.reap.batch:50}") int batch) {
+                           @Value("${agentflow.execution.reap.batch:50}") int batch,
+                           @Value("${agentflow.execution.reap.unreachable-confirmations:3}")
+                           int confirmations) {
         this.executions = executions;
         this.engine = engine;
         this.audit = audit;
         this.lease = new RedisLease(redis);
+        this.redis = redis;
         this.enabled = enabled;
         this.graceMs = graceMs;
         this.pendingGraceMs = pendingGraceMs;
         this.batch = batch;
+        this.confirmations = Math.max(1, confirmations);
     }
 
     /** 一轮扫描的结果。数字都进日志与管理端，出问题时能回答「看护到底做了什么」。 */
@@ -186,13 +200,67 @@ public class ExecutionReaper {
         try {
             state = engine.findExecutionState(row.id());
         } catch (BusinessException e) {
-            // 引擎不可达：候选本来就「早该结束」，按「无人收口」兜底
-            return postMortem(row, "engine-unreachable");
+            // 连不上不等于死了：一次 502、GC 停顿或网关重启都只是抖动。
+            // 旧实现在这里立刻收口，与 EngineGatewayClient 注释里「得再看一轮」
+            // 的承诺相反；现在要求连续 N 轮确认，404 仍保持立即收口。
+            return deferOrReap(row, "engine-unreachable");
         }
+        // 问得通就说明这一路恢复了，连续不可达计数重新来过
+        clearUnreachable(row.id());
         if (state.isEmpty()) {
             return postMortem(row, "engine-unknown");
         }
         return reconcile(row, state.get());
+    }
+
+    /**
+     * 引擎不可达时的处置：先看它是否还持有执行租约，再看连续不可达轮数。
+     *
+     * <p>租约只做冲突降级，不是「一定活着」的证据，所以这里只用来暂缓，不作为
+     * 永久免死的理由；Redis 自己也不可用时一律不动手（保守方向）。
+     */
+    private Outcome deferOrReap(WorkflowExecutionMapper.ExecutionRow row, String cause) {
+        if (engineLeaseHeld(row.id())) {
+            clearUnreachable(row.id());
+            log.info("execution {} engine unreachable but lease held; defer", row.id());
+            return Outcome.ALIVE;
+        }
+        String key = UNREACHABLE_PREFIX + row.id();
+        long streak;
+        try {
+            Long count = redis.opsForValue().increment(key);
+            streak = count == null ? 1L : count;
+            if (streak == 1L) {
+                redis.expire(key, UNREACHABLE_TTL);
+            }
+        } catch (RuntimeException e) {
+            // 计数写不进去时宁可多等几轮，也不要在 Redis 抖动时误杀
+            log.warn("execution reap unreachable counter unavailable: {}", e.toString());
+            return Outcome.ALIVE;
+        }
+        if (streak < confirmations) {
+            log.info("execution {} engine unreachable ({}/{}); awaiting confirmation",
+                    row.id(), streak, confirmations);
+            return Outcome.ALIVE;
+        }
+        clearUnreachable(row.id());
+        return postMortem(row, cause);
+    }
+
+    private boolean engineLeaseHeld(String executionId) {
+        try {
+            return Boolean.TRUE.equals(redis.hasKey(ENGINE_LEASE_PREFIX + executionId));
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void clearUnreachable(String executionId) {
+        try {
+            redis.delete(UNREACHABLE_PREFIX + executionId);
+        } catch (RuntimeException e) {
+            log.debug("execution reap counter cleanup failed: {}", e.toString());
+        }
     }
 
     /** 引擎的状态与投影不一致：把引擎的事实抄到投影上。 */

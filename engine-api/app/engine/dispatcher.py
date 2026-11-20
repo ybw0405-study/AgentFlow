@@ -103,8 +103,10 @@ class Dispatcher:
             state = rebuild_state(req.execution_id, events)
             REPLAY_TOTAL.inc()
             resumed = True
-            # 预算对账：崩溃窗口里未 settle 的预占按事件流回收（§5.6）
-            await self._budget.reconcile(req.execution_id, state.token_used)
+            # 预算对账：旧执行器已不在，未完成节点重放时会重新 reserve，因此
+            # 清空在途计数后按事件流汇总额重建（§5.6）。不重置会把上一轮残留的
+            # 在途计数带进新执行器，让 checkpoint 的 reconcile 一直空转。
+            await self._budget.reconcile(req.execution_id, state.token_used, reset_inflight=True)
         else:
             state = ExecutionState(
                 execution_id=req.execution_id, seed=req.execution_seed or secrets.token_hex(16)
@@ -196,6 +198,15 @@ class Dispatcher:
             if not await lease.renew():
                 logger.error("lease %s lost; executor stops writing events", lease.key)
                 state.lease_lost = True  # 调度器在节点边界检查（§8.5）
+                # 租约与预算共用 Redis：租约续不上通常意味着账本也一起丢了。
+                # 趁 state 还在手里按事件流重建，别等 60s 后的恢复扫描 —— 那段
+                # 窗口里下一个节点会按 0 基预算重新拿到全额（§5.6）。
+                try:
+                    await self._budget.reconcile(
+                        state.execution_id, state.token_used, reset_inflight=True
+                    )
+                except Exception as exc:
+                    logger.warning("budget rebuild on lease loss failed: %s", exc)
                 return
 
     async def cancel(self, execution_id: uuid.UUID) -> dict[str, Any]:
@@ -401,7 +412,23 @@ class Dispatcher:
                 await asyncio.sleep(interval_s)
                 try:
                     for eid in await self._store.open_executions():
-                        if eid not in self._tasks:
+                        if eid in self._tasks:
+                            # 在跑的执行不会被重新 submit，账本丢失时没人替它重建。
+                            # 「事件流里发过 Command，但预算键查不到」说明 Redis
+                            # 换过一轮：让租约失效，续约循环会静默停止并按事件流
+                            # 重建，下一轮扫描再接管续跑。全新执行还没发过
+                            # Command，本来就没有预算键，不在此列。
+                            if await self._budget.exists(eid):
+                                continue
+                            events = await self._store.read_all(eid)
+                            if any(e.event_type == EventType.COMMAND_ISSUED for e in events):
+                                logger.warning(
+                                    "budget ledger missing for running execution %s; "
+                                    "invalidating lease for recovery",
+                                    eid,
+                                )
+                                await self._redis.delete(f"af:lease:{eid}")
+                        else:
                             await self._recover_one(eid, attempts=1)
                 except Exception as exc:
                     logger.warning("recovery sweep failed: %s", exc)

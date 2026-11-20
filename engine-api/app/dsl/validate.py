@@ -24,6 +24,14 @@ _VAR_REF = re.compile(r"\bvars\.([A-Za-z_][A-Za-z0-9_]*)")
 _NODE_REF = re.compile(r"\bnodes\.([a-z][a-zA-Z0-9_-]{0,63})")
 _BRANCH_NODE_TYPES = {"condition", "human_gate"}
 
+MAX_SUBGRAPH_DEPTH = 4
+"""嵌套子图的最大层数，与前端 dsl/validate.ts 及画布下钻同一口径。
+
+以前只有前端「即时校验」有这个上限，画布导航和发布校验都能无限下钻，
+README 却写成「画布最多下钻 4 层」。现在三处统一：超过 4 层明确报错，
+而不是静默跳过校验。
+"""
+
 
 class DslError(CamelModel):
     code: str
@@ -382,6 +390,7 @@ def _graph_ref_errors(
     extra_vars: set[str],
     outer_nodes: set[str],
     outer_ancestors: set[str],
+    depth: int = 0,
 ) -> list[DslError]:
     errors: list[DslError] = []
     ancestors = _ancestors_of(graph_nodes, graph_edges)
@@ -415,6 +424,17 @@ def _graph_ref_errors(
             )
 
         for sub, extra in children:
+            # 与前端、画布同一口径：超过最大层数的嵌套明确报 422，而不是无限
+            # 递归下去（坏数据能把发布请求拖死）或静默跳过校验。
+            if depth >= MAX_SUBGRAPH_DEPTH:
+                errors.append(
+                    DslError(
+                        code=DSL_VALIDATION,
+                        node_key=key,
+                        message=f"subgraph nesting exceeds {MAX_SUBGRAPH_DEPTH} levels",
+                    )
+                )
+                continue
             # 引擎运行时把子图按 WorkflowDsl 解析（nodes 至少 2 个）。只有 1 个节点的
             # 子图发布能过、跑起来必定在分支里炸成 PARALLEL-BRANCH-FAILED，必须提前拦。
             if len(sub.nodes) < 2:
@@ -439,6 +459,7 @@ def _graph_ref_errors(
                     extra_vars=extra_vars | extra,
                     outer_nodes=outer_nodes | set(graph_nodes),
                     outer_ancestors=outer_ancestors | ancestors.get(key, set()),
+                    depth=depth + 1,
                 )
             )
     return errors

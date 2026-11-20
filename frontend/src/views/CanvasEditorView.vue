@@ -13,7 +13,7 @@ import { flowToDsl, dslToFlow, newNodeConfig, AF_NODE_TYPE } from '@/dsl/flow-co
 import { addEdge, removeEdge as removeEdgeOp, removeNode as removeNodeOp, markSelectedEdge, setEdgeBranch } from '@/dsl/graph-ops'
 import type { CanvasEdge } from '@/dsl/graph-ops'
 import type { FlowNodeLike } from '@/dsl/flow-convert'
-import { validateDslLocal } from '@/dsl/validate'
+import { MAX_SUBGRAPH_DEPTH, validateDslLocal } from '@/dsl/validate'
 import type { ValidationIssue } from '@/dsl/validate'
 import { initialVariables } from '@/dsl/run-defaults'
 import { missingRequired } from '@/dsl/run-input'
@@ -420,6 +420,12 @@ const crumbs = computed<Crumb[]>(() => {
 function enterSubgraph(ref: SubgraphRef): void {
   rootDsl.value = toDsl()
   const nextPath = [...path.value, ref]
+  // 与前端即时校验、引擎发布校验同一口径：第 5 层不再进入，也不让它悄悄
+  // 变成「能编辑但发布被拒」的数据。
+  if (nextPath.length > MAX_SUBGRAPH_DEPTH) {
+    notice.value = `子图最多嵌套 ${MAX_SUBGRAPH_DEPTH} 层，无法继续下钻`
+    return
+  }
   if (!readSubgraphPath(rootDsl.value, nextPath)) {
     notice.value = `子图 ${ref.nodeKey}${ref.branch ? `.${ref.branch}` : '.body'} 不可编辑（结构缺失）`
     return

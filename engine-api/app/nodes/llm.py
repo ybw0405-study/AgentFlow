@@ -15,6 +15,10 @@ import logging
 from typing import Any, Protocol
 
 from ..commands.base import CommandKind, CommandResult, digest_of, make_call_id
+from ..commands.providers.model_capabilities import (
+    REASONING_MIN_OUTPUT_TOKENS,
+    is_reasoning_model,
+)
 from ..dsl.models import LlmNode
 from ..errors import (
     BudgetExhaustedError,
@@ -109,13 +113,32 @@ class LlmExecutor:
 
         provider = self._provider_for(cfg)
 
+        # 推理型模型的思维链与正文共用 max_tokens：DSL 默认的 1024 常被思考吃光，
+        # 上游回一个空 content，节点以 LLM-RESPONSE-001 失败。下发前抬到下限，
+        # 预算预占的请求量同步放大。不改写 DSL 配置 —— 实际下发值与抬升标记都
+        # 记进事件和 input_snapshot，事后能解释为什么不是配置里的那个数。
+        reasoning_adjusted = (
+            is_reasoning_model(cfg.model) and cfg.max_tokens < REASONING_MIN_OUTPUT_TOKENS
+        )
+        max_tokens = (
+            min(REASONING_MIN_OUTPUT_TOKENS, 32_000) if reasoning_adjusted else cfg.max_tokens
+        )
+        if reasoning_adjusted:
+            logger.info(
+                "reasoning model %s raises maxTokens %d -> %d execution=%s node=%s",
+                cfg.model,
+                cfg.max_tokens,
+                max_tokens,
+                ctx.execution_id,
+                ctx.node_key,
+            )
+
         # 预算预占（D11）：预留 = promptTokens + maxTokens，生成上限钳到剩余额度
         grant: int | None = None
-        max_tokens = cfg.max_tokens
         prompt_tokens = estimate_tokens(prompt + (system or ""))
         if ctx.policy.token_budget is not None and ctx.budget is not None:
             grant = await ctx.budget.reserve(
-                ctx.execution_id, ctx.policy.token_budget, prompt_tokens + cfg.max_tokens
+                ctx.execution_id, ctx.policy.token_budget, prompt_tokens + max_tokens
             )
             if grant < 0:
                 raise BudgetExhaustedError(
@@ -140,6 +163,11 @@ class LlmExecutor:
                 "requestDigest": request_digest,
                 "attempt": ctx.attempt,
                 **({"piiL2Categories": list(l2.categories)} if l2.count else {}),
+                **(
+                    {"reasoningAdjusted": True, "configuredMaxTokens": cfg.max_tokens}
+                    if reasoning_adjusted
+                    else {}
+                ),
             },
         )
 
@@ -212,6 +240,11 @@ class LlmExecutor:
                 "system": system,
                 "temperature": cfg.temperature,
                 "maxTokens": max_tokens,
+                **(
+                    {"reasoningAdjusted": True, "configuredMaxTokens": cfg.max_tokens}
+                    if reasoning_adjusted
+                    else {}
+                ),
             },
             token_used=result.token_usage,
         )

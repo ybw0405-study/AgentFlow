@@ -12,9 +12,9 @@ import org.apache.ibatis.annotations.Update;
 /**
  * 审计 outbox：写入与投递解耦。
  *
- * <p>业务线程只做一次本地 INSERT（同库、几毫秒），投递交给 {@link AuditOutboxRelay}。
- * 失败不改变 status（仍是 PENDING），只推后 next_attempt_at，因此任何时刻都不会出现
- * 「已放弃」的审计事件。
+ * <p>业务线程只做一次本地 INSERT，投递交给 {@link AuditOutboxRelay}。失败不改变 status
+ * （仍是 PENDING），只推后 next_attempt_at；连续失败到阈值后迁入 DEAD 隔离区，
+ * 原始载荷完整保留，管理端可重放——不存在「放弃投递」，只是换成人工介入。
  */
 @Mapper
 public interface AuditOutboxMapper {
@@ -42,6 +42,26 @@ public interface AuditOutboxMapper {
                   @Param("lastError") String lastError,
                   @Param("delaySeconds") int delaySeconds);
 
+    /** 迁入隔离区：只挡住自动重投，message_json 原样留着供人工排查与重放。 */
+    @Update("UPDATE audit_outbox SET status = 'DEAD', dead_at = NOW(3),"
+            + " dead_reason = #{reason}, last_error = #{lastError}"
+            + " WHERE id = #{id} AND status = 'PENDING'")
+    int markDead(@Param("id") String id, @Param("reason") String reason,
+                 @Param("lastError") String lastError);
+
+    /** 人工重放：清掉退避与隔离标记，下一轮 relay 会重新捞到这一行。 */
+    @Update("UPDATE audit_outbox SET status = 'PENDING', attempts = 0,"
+            + " next_attempt_at = NOW(3), last_error = NULL, dead_at = NULL,"
+            + " dead_reason = NULL WHERE id = #{id} AND status = 'DEAD'")
+    int replayDead(@Param("id") String id);
+
+    @Select("SELECT id, tenant_id AS tenantId, event_type AS eventType,"
+            + " message_json AS messageJson, attempts, dead_at AS deadAt,"
+            + " dead_reason AS deadReason, last_error AS lastError,"
+            + " created_at AS createdAt FROM audit_outbox WHERE status = 'DEAD'"
+            + " ORDER BY dead_at LIMIT #{limit}")
+    List<DeadRow> dead(@Param("limit") int limit);
+
     @Select("SELECT COUNT(*) FROM audit_outbox WHERE status = 'PENDING'")
     long pendingCount();
 
@@ -51,6 +71,9 @@ public interface AuditOutboxMapper {
     @Select("SELECT COUNT(*) FROM audit_outbox WHERE status = 'PENDING' AND attempts > 0")
     long retryingCount();
 
+    @Select("SELECT COUNT(*) FROM audit_outbox WHERE status = 'DEAD'")
+    long deadCount();
+
     /** 已投递记录只留一段时间：outbox 是投递队列，不是审计存储（审计在 audit_event）。 */
     @Delete("DELETE FROM audit_outbox WHERE status = 'SENT'"
             + " AND sent_at < DATE_SUB(NOW(3), INTERVAL #{days} DAY) LIMIT #{limit}")
@@ -58,5 +81,10 @@ public interface AuditOutboxMapper {
 
     record OutboxRow(String id, String tenantId, String eventType, String messageJson,
                      int attempts, Timestamp nextAttemptAt) {
+    }
+
+    record DeadRow(String id, String tenantId, String eventType, String messageJson,
+                   int attempts, Timestamp deadAt, String deadReason, String lastError,
+                   Timestamp createdAt) {
     }
 }

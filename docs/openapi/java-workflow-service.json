@@ -1724,13 +1724,75 @@
   },
   "info": {
     "title": "workflow-service",
-    "version": "0.5.0"
+    "version": "0.5.1"
   },
   "openapi": "3.1.0",
   "paths": {
     "/api/v1/admin/audit-outbox": {
       "get": {
         "operationId": "stats",
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMapStringObject"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "admin-audit-outbox-controller"
+        ]
+      }
+    },
+    "/api/v1/admin/audit-outbox/dead": {
+      "get": {
+        "operationId": "dead",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMapStringObject"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "admin-audit-outbox-controller"
+        ]
+      }
+    },
+    "/api/v1/admin/audit-outbox/dead/{id}/replay": {
+      "post": {
+        "operationId": "replay",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
