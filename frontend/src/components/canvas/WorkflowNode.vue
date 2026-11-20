@@ -34,6 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update-config': [patch: Record<string, unknown>]
   expand: []
+  'pick-model': []
 }>()
 
 const accent = computed(() => categoryColor(nodeCategory(props.data.nodeType)))
@@ -106,6 +107,18 @@ function write(fieldKey: string, kind: string, raw: string): void {
             {{ o }}
           </option>
         </select>
+        <button
+          v-else-if="f.kind === 'picker' && !f.readOnly && !data.readOnly"
+          class="af-node__picker nodrag"
+          :title="`${f.value} · 点击更换模型`"
+          @mousedown.stop
+          @pointerdown.stop
+          @click.stop="emit('pick-model')"
+          @keydown.stop
+        >
+          <span class="af-node__picker-value">{{ f.value }}</span>
+          <span class="af-node__picker-caret">更换</span>
+        </button>
         <input
           v-else-if="!f.readOnly && !data.readOnly"
           class="af-node__input nodrag mono"
@@ -255,6 +268,44 @@ function write(fieldKey: string, kind: string, raw: string): void {
 
 .af-node__input:focus {
   border-color: var(--af-accent-border);
+}
+
+.af-node__picker {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--af-panel);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+  padding: 3px 5px;
+  color: var(--af-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.af-node__picker:hover {
+  border-color: var(--af-accent-border);
+}
+
+.af-node__picker-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.af-node__picker-caret {
+  flex: none;
+  font-size: 10px;
+  color: var(--af-text-faint);
+}
+
+.af-node__picker:hover .af-node__picker-caret {
+  color: var(--af-accent);
 }
 
 .af-node__value {

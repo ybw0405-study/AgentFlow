@@ -18,17 +18,37 @@ function mountNode(overrides: Record<string, unknown> = {}) {
 }
 
 describe('节点卡片内联编辑', () => {
-  it('渲染标题、类型与内联字段', () => {
+  it('渲染标题、类型与内联字段；模型是选择器而不是裸文本框', () => {
     const wrapper = mountNode()
     expect(wrapper.text()).toContain('分诊')
-    expect((wrapper.find('input').element as HTMLInputElement).value).toBe('mock-llm-large')
-    expect(wrapper.findAll('input')).toHaveLength(2)
+    // 模板里的 mock-* 不再显示成占位符，而是说明性的中文名
+    expect(wrapper.find('.af-node__picker').text()).toContain('内置演示模型')
+    expect((wrapper.find('input').element as HTMLInputElement).value).toBe('{{ vars.ticket }}')
+    expect(wrapper.findAll('input')).toHaveLength(1)
+  })
+
+  it('演示模型给出下一步提示，避免看起来像没配好', () => {
+    const wrapper = mountNode()
+    expect(wrapper.text()).toContain('点击「模型」可接入真实服务')
+  })
+
+  it('预设模型显示中文名而不是一串 id', () => {
+    const wrapper = mountNode({
+      config: { model: 'hy4', promptTemplate: '{{ vars.ticket }}', provider: 'openai-compatible' },
+    })
+    expect(wrapper.find('.af-node__picker').text()).toContain('混元 Hy4')
+  })
+
+  it('点击模型选择器抛出 pick-model', async () => {
+    const wrapper = mountNode()
+    await wrapper.find('.af-node__picker').trigger('click')
+    expect(wrapper.emitted('pick-model')).toHaveLength(1)
   })
 
   it('改字段就地把 patch 抛给父级', async () => {
     const wrapper = mountNode()
-    await wrapper.find('input').setValue('deepseek-chat')
-    expect(wrapper.emitted('update-config')?.[0]).toEqual([{ model: 'deepseek-chat' }])
+    await wrapper.find('input').setValue('请回答：{{ vars.ticket }}')
+    expect(wrapper.emitted('update-config')?.[0]).toEqual([{ promptTemplate: '请回答：{{ vars.ticket }}' }])
   })
 
   it('数字字段转成 number', async () => {

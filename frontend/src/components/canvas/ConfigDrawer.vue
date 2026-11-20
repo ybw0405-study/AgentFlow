@@ -30,6 +30,7 @@ const emit = defineEmits<{
   close: []
   remove: [key: string]
   'edit-subgraph': [ref: SubgraphRef]
+  'pick-model': []
 }>()
 
 /**
@@ -327,6 +328,20 @@ function editBody(): void {
     >
 
     <template v-if="node.type === 'llm'">
+      <button
+        class="af-btn af-btn--primary af-btn--sm"
+        style="width: 100%; justify-content: center"
+        @click="emit('pick-model')"
+      >
+        从常见模型快速接入
+      </button>
+      <p
+        class="af-faint"
+        style="font-size: 11px; line-height: 1.6; margin: 6px 0 0"
+      >
+        选一个常见模型，填一次 API Key 验证通过即可使用；下面的来源、provider 与 model 仍可手动精调。
+      </p>
+
       <label class="af-label">模型来源</label>
       <select
         class="af-select"

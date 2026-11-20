@@ -34,6 +34,9 @@ import ConfigDrawer from '@/components/canvas/ConfigDrawer.vue'
 import VariablesPanel from '@/components/canvas/VariablesPanel.vue'
 import DslSourcePanel from '@/components/canvas/DslSourcePanel.vue'
 import WorkflowNode from '@/components/canvas/WorkflowNode.vue'
+import ModelHub from '@/components/canvas/ModelHub.vue'
+import { displayModelName } from '@/dsl/model-presets'
+import type { ConnectModelResult } from '@/dsl/model-connection'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,6 +69,8 @@ const searchOpen = ref(false)
 const clipboardNode = ref<FlowNodeLike | null>(null)
 const templateOpen = ref(false)
 const pendingTemplate = ref<WorkflowTemplate | null>(null)
+/** 从节点卡片 / 配置抽屉唤起的模型接入向导；值为目标节点 id。 */
+const modelHubFor = ref<string | null>(null)
 /** 运行弹窗里标出必填项，其余是流程内部变量，保持默认即可。 */
 const requiredVariableNames = computed(() =>
   Object.entries(variables.value)
@@ -436,6 +441,53 @@ function openFullConfig(id: string): void {
   selectNode(id)
 }
 
+function currentModelLabel(id: string | null): string {
+  if (!id) return ''
+  const node = nodes.value.find((n) => n.id === id)
+  return node ? displayModelName((node.data.config ?? {}) as Record<string, unknown>) : ''
+}
+
+/** 点卡片上的「模型」或抽屉里的快速入口，就地打开模型清单 + 连接向导。 */
+function openModelHub(id: string): void {
+  modelHubFor.value = id
+}
+
+function closeModelHub(): void {
+  modelHubFor.value = null
+}
+
+/** 向导验证通过：把 connectionId / model 写回节点，节点即刻可用，无需再去连接器页。 */
+async function onModelConnected(result: ConnectModelResult): Promise<void> {
+  const id = modelHubFor.value
+  closeModelHub()
+  if (id) {
+    patchNodeConfig(id, {
+      connectionId: result.connectorId,
+      model: result.model,
+      provider: 'openai-compatible',
+    })
+    await loadLlmConnections()
+  }
+  notice.value = result.warning
+    ? `已接入「${result.name}」：${result.warning}`
+    : `已接入「${result.name}」，节点模型 ${result.model} 立即可用`
+}
+
+/** 高级模式保留：随时能切回模板默认的离线演示模型。 */
+function useBuiltinModel(): void {
+  const id = modelHubFor.value
+  closeModelHub()
+  if (id) {
+    patchNodeConfig(id, { connectionId: undefined, provider: 'mock', model: 'mock-llm-large' })
+    notice.value = '已切回内置演示模型（离线可跑）'
+  }
+}
+
+function goConnectors(): void {
+  closeModelHub()
+  void router.push('/connectors')
+}
+
 /** 搜索落位：新建后按需自动接到落位前选中的节点，省掉一次手动连线。 */
 function addFromSearch(type: NodeType, connect: boolean): void {
   const anchor = selectedKey.value
@@ -624,6 +676,10 @@ function isTextEntry(target: EventTarget | null): boolean {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (modelHubFor.value) {
+    if (e.key === 'Escape') closeModelHub()
+    return
+  }
   if (searchOpen.value) {
     if (e.key === 'Escape') searchOpen.value = false
     return
@@ -918,6 +974,7 @@ onUnmounted(() => {
               v-bind="props"
               @update-config="(patch: Record<string, unknown>) => patchNodeConfig(props.id, patch)"
               @expand="openFullConfig(props.id)"
+              @pick-model="openModelHub(props.id)"
             />
           </template>
         </VueFlow>
@@ -976,12 +1033,22 @@ onUnmounted(() => {
         @close="clearSelection"
         @remove="removeNode"
         @edit-subgraph="enterSubgraph"
+        @pick-model="selectedNode && openModelHub(selectedNode.key)"
       />
     </div>
 
     <VariablesPanel
       :variables="variables"
       @update="variables = $event"
+    />
+
+    <ModelHub
+      v-if="modelHubFor"
+      :current-model="currentModelLabel(modelHubFor)"
+      @connected="onModelConnected"
+      @builtin="useBuiltinModel"
+      @manage="goConnectors"
+      @close="closeModelHub"
     />
 
     <div

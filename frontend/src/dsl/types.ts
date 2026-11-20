@@ -35,6 +35,8 @@ export interface DslDefaults {
 
 export interface LlmConfig {
   provider?: 'mock' | 'openai-compatible'
+  /** 模型连接 id：端点与密钥由服务端托管，DSL 里只留这个引用。 */
+  connectionId?: string
   model: string
   promptTemplate: string
   systemPrompt?: string

@@ -4,6 +4,7 @@ import { connectorApi } from '@/api'
 import type { ConnectorAuthType, ConnectorDto, LlmConnectionConfig } from '@/types/api'
 import { errorText } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
+import { buildLlmConfig, hostOf, mergeModels, probeErrorMessage } from '@/dsl/model-connection'
 
 const auth = useAuthStore()
 const connectors = ref<ConnectorDto[]>([])
@@ -34,35 +35,6 @@ function describe(e: unknown): string {
   return errorText(e)
 }
 
-/** 探测失败码翻成人话：这些错误多半是填错了，不该只甩一个内部编码。 */
-function describeProbe(code: string | null): string {
-  switch (code) {
-    case 'CONN-HTTP-4XX':
-      return '端点拒绝了请求，检查 Base URL 路径与 API Key'
-    case 'CONN-HTTP-5XX':
-      return '端点暂时不可用，稍后重试'
-    case 'CONN-CREDENTIAL-001':
-      return '还没有保存 API Key'
-    case 'CONN-SANDBOX-001':
-      return '出网被沙箱拦截，检查允许域名'
-    case 'CONN-TIMEOUT':
-      return '请求超时，检查网络或换一个端点'
-    case 'CONN-RESPONSE-001':
-      return '端点不像 OpenAI 兼容服务（/models 没有返回模型列表）'
-    default:
-      return code ? `拉取失败：${code}` : '拉取失败'
-  }
-}
-
-/** 从 Base URL 推导允许域名，省掉一次手填；用户仍可改成多个。 */
-function hostOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).hostname
-  } catch {
-    return ''
-  }
-}
-
 /** 用户手填的模型清单（逗号分隔）；与探测结果合并，给上游不支持 /models 的端点兜底。 */
 function manualModels(): string[] {
   return form.models
@@ -71,32 +43,14 @@ function manualModels(): string[] {
     .filter(Boolean)
 }
 
-function mergeModels(...groups: string[][]): string[] {
-  const seen = new Set<string>()
-  for (const group of groups) {
-    for (const m of group) {
-      if (m) seen.add(m)
-    }
-  }
-  return [...seen]
-}
-
+/** 与画布「快速接入」共用同一份 config 构造规则，避免两条入口行为漂移。 */
 function llmConfig(models: string[], defaultModel: string): Record<string, unknown> {
-  return {
-    baseUrl: form.baseUrl.trim(),
-    allowedHosts: form.allowedHosts
-      .split(',')
-      .map((h) => h.trim())
-      .filter(Boolean),
-    ...(models.length ? { models } : {}),
-    ...(defaultModel ? { defaultModel } : {}),
-    // OpenAI 兼容端点的凭据形态固定为 Authorization: Bearer <key>
-    auth: { headerName: 'Authorization', valuePrefix: 'Bearer ' },
-    operations: {
-      chat: { method: 'POST', path: '/chat/completions' },
-      models: { method: 'GET', path: '/models' },
-    },
-  }
+  return buildLlmConfig({
+    baseUrl: form.baseUrl,
+    allowedHosts: form.allowedHosts.split(',').map((h) => h.trim()).filter(Boolean),
+    models,
+    defaultModel,
+  })
 }
 
 function toolConfig(): Record<string, unknown> {
@@ -154,9 +108,9 @@ async function create(): Promise<void> {
       if (probe.ok && probe.models.length) {
         suffix = `，可选用 ${merged.length} 个模型`
       } else if (merged.length) {
-        suffix = `，已用手填的 ${merged.length} 个模型${probe.errorCode ? `（自动拉取失败：${describeProbe(probe.errorCode)}）` : ''}`
+        suffix = `，已用手填的 ${merged.length} 个模型${probe.errorCode ? `（自动拉取失败：${probeErrorMessage(probe.errorCode)}）` : ''}`
       } else if (probe.errorCode) {
-        suffix = `，但${describeProbe(probe.errorCode)}`
+        suffix = `，但${probeErrorMessage(probe.errorCode)}`
       }
     }
 
@@ -192,7 +146,7 @@ async function refreshModels(row: ConnectorDto): Promise<void> {
   try {
     const probe = await connectorApi.probeModels(row.id)
     if (!probe.ok || !probe.models.length) {
-      error.value = describeProbe(probe.errorCode)
+      error.value = probeErrorMessage(probe.errorCode)
       return
     }
     const cfg = (row.config ?? {}) as LlmConnectionConfig

@@ -1,4 +1,5 @@
 import type { NodeType } from './types'
+import { displayModelName, isBuiltinDemoModel } from './model-presets'
 
 /** 节点卡片的呈现规则集中在这里：编排画布与执行态画布共用同一套口径。
  *  颜色一律返回设计令牌，不出现原始色值（design-redlines 守卫）。 */
@@ -44,7 +45,7 @@ export interface InlineField {
   key: string
   label: string
   value: string
-  kind: 'text' | 'number' | 'select'
+  kind: 'text' | 'number' | 'select' | 'picker'
   options?: readonly string[]
   /** 嵌套结构只展示摘要，避免内联编辑破坏 cases / mappings 等数组结构。 */
   readOnly?: boolean
@@ -65,7 +66,8 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
   switch (type) {
     case 'llm':
       return [
-        { key: 'model', label: '模型', value: text(config.model), kind: 'text' },
+        // 模型不让人对着文本框盲填 id：点开是预设清单 + 一次填 Key 就能连上的向导。
+        { key: 'model', label: '模型', value: displayModelName(config), kind: 'picker' },
         { key: 'promptTemplate', label: '提示词', value: text(config.promptTemplate), kind: 'text' },
       ]
     case 'tool':
@@ -139,6 +141,11 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
 /** 标题栏下的一行结构摘要，让 loop / parallel / human_gate 的内部信息在图上看得见。 */
 export function nodeSummary(type: string, config: Record<string, unknown>): string {
   switch (type) {
+    case 'llm':
+      // 模板默认走离线演示模型，卡片上直接说明并给出下一步，避免看起来像「没配好」。
+      return isBuiltinDemoModel(config) || !text(config.model)
+        ? '点击「模型」可接入真实服务'
+        : ''
     case 'condition':
       return `${count(config.cases)} 个条件分支`
     case 'loop': {

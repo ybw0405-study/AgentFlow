@@ -38,6 +38,14 @@ function providerOptions(wrapper: ReturnType<typeof mountDrawer>): (string | und
 }
 
 describe('节点配置抽屉', () => {
+  it('LLM 节点提供「从常见模型快速接入」入口', async () => {
+    const wrapper = mountDrawer(llm({ provider: 'mock', model: 'mock-large' }))
+    const quick = wrapper.findAll('button').find((b) => b.text().includes('从常见模型快速接入'))
+    expect(quick).toBeTruthy()
+    await quick!.trigger('click')
+    expect(wrapper.emitted('pick-model')).toHaveLength(1)
+  })
+
   it('占位模型名时明确告知会回落到服务端默认模型', () => {
     const wrapper = mountDrawer(llm({ provider: 'openai-compatible', model: 'mock-large' }))
     expect(wrapper.text()).toContain('服务端默认模型')
