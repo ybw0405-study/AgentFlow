@@ -2260,3 +2260,98 @@ claim 收窄到 1，但同一工作流的两个入口（手动 + webhook）仍�
   工作流、未改时按钮禁用）。
 - E2E：`test_triggers.py`（上限往返 + 越界 400；真实模型下第二个入口 429、额度释放后可再进）、
   `test_cost_center.py`（交叉表行列合计与 `byModel` 一致）。
+
+## 30. 五条「描述与实现不符」的收口（2026-11-20，v0.5.1）
+
+README 的 15 条已知限制原本都按「有意的设计边界」写。复核时发现其中 5 条不是边界，
+而是描述与实现不符，甚至藏着真 bug。这一节记取舍，不复述 CHANGELOG 的条目。
+
+### 30.1 预算：checkpoint 与在途预占谁说了算
+
+§5.6 把 `BudgetLedger.reconcile` 写成「按事件流 `tokenUsed` 校准」，听起来总是对的。
+但事件流里的 `state.token_used` 只累计**已完成**节点，Redis 键里还含**在途预占**：
+checkpoint 恰好发生在 `reserve` 之后、`settle` 之前时，一次无条件 `SET` 就把在途预占
+抹成已完成量；随后 `settle` 回冲未用额度，键可以变成负数——预算被反向放大，而不是漏记。
+
+修法不是「让 reconcile 更聪明地合并两个数」，那需要逐笔账本才能算准。选了更粗但能收敛的
+方案：给每次 `reserve` 记一个**在途计数**（`af:budget:{executionId}:inflight`），`settle`
+在同一事务里回冲额度并递减计数；`reconcile` 只要计数 > 0 就整段跳过。代价是同一执行内的
+并行节点共享一个计数，粒度粗到执行级；换来零额外存储、Redis 全丢后仍能从事件流重建。
+
+真正麻烦的是重建的触发条件。原来只有崩溃恢复会调 `reconcile`，而 Redis 全丢时执行还在跑、
+没有恢复事件——预算键没了，下一个节点却从 0 基预算重新拿全额。现在两处补位：租约续不上时
+立即按事件流重建（`reset_inflight=True`，旧执行器已不在，未完成节点重放会重新 `reserve`）；
+`start_sweep()` 发现「预算键不在了，但事件流里已经有 `COMMAND_ISSUED`」就删掉
+`af:lease:{eid}`，让恢复扫描接管。判据用「发过 Command」而不是「执行在跑」——前者是事件流
+里的既成事实，后者要靠跨服务探活猜。
+
+### 30.2 审计 outbox：把「永远不会放弃」改成「停止自动重投」
+
+§16.1 的 outbox 纪律是「只追加、不放弃」，实现里却有两个洞：投递失败会每 60s 重投到永远
+（尾部一行坏数据能长期占住 relay，且没有任何告警），`message_json` 反序列化失败时写一条
+骨架后 `markSent`——内容已经丢了，账面却是「已发送」。「不放弃」字面上成立，语义上等于
+静默丢弃。
+
+`V017` 给 `audit_outbox.status` 加 `DEAD`，带 `dead_at` / `dead_reason`。DEAD 不是删除：
+原始 `message_json` 原样留着，`purgeSent()` 只清 `SENT`。管理端可列可重放。水位按固定间隔
+记日志，`dead > 0` 或最老积压超 600s 升 WARN——没有引入 Micrometer / actuator，因为这里要的
+是「有人能看见」，不是新指标维度。语义从「自动无限重试」换成「自动重投有上限，超过转人工
+介入」：既不丢，也不会无限重试。
+
+### 30.3 执行看护：连不上要连续确认，404 不用
+
+§28 写「引擎不认识或连不上，才收口」，但 `inspect()` 对 `BusinessException` 一次就
+`postMortem()`——`EngineGatewayClient` 的注释却写着「得再看一轮」，代码与注释互相矛盾。
+网络抖动和引擎真死是两件事，一次探测分不开。
+
+现在 `af:reap:unreachable:{id}` 记连续失败轮数，达到 `AF_REAP_UNREACHABLE_CONFIRMATIONS`
+（默认 3）才收口；中途探测成功就清零；引擎仍持有 `af:lease:{executionId}` 时继续暂缓
+（租约由引擎自己续，比控制面猜更可信）；404 仍立即收口——「明确不认识」不需要确认。
+Redis 异常时保守返回 `ALIVE`：看护是兜底，不该在自身依赖抖动时动手。
+
+### 30.4 子图 4 层：三处同一口径
+
+§17.2 只对齐了「子图规则」，深度却散在两处：画布能无限下钻，前端即时校验超过 4 层静默
+返回空数组（看起来像通过），引擎发布校验完全没有上限。README 写「画布最多下钻 4 层」，
+实际上只有画布的面包屑有这个习惯，另外两处不认。
+
+现在 `MAX_SUBGRAPH_DEPTH = 4` 在 `engine-api/app/dsl/validate.py`、
+`frontend/src/dsl/validate.ts`、画布 `enterSubgraph()` 三处共用；第 5 层明确报错，而不是
+无限递归（坏数据能把发布请求拖死）或静默跳过校验。到达上限的那一层照常做引用与结构检查——
+「不再往下走」不等于「这一层不查了」。Python 与前端各补 3 个契约测试锁住「4 层通过 /
+5 层报错 / 上限层仍校验」。
+
+### 30.5 推理模型：标记要接进下发参数与预算，不能只停在界面
+
+§21.5 的能力标注只影响界面提示，`deepseek-flash` / `deepseek-v4-pro` 这类名字甚至没被判成
+推理型，于是 1024 的 `maxTokens` 原样下发、正文为空。标记如果只用来显示一个 chip，它就没
+解决任何问题。
+
+现在引擎与前端按同一口径推断（`deepseek` + `flash` / `v4`，避免把 `glm-v4-pro`、
+`acme-v4`、`gpt-4o-mini` 误标），LLM 节点对推理型且 `maxTokens < 4096` 时把下发值抬到
+4096，预算预占也按抬升后的量算——否则 grant 会把抬升后的 `maxTokens` 又钳回 1024。
+DSL 不改写，`COMMAND_ISSUED` 与 `input_snapshot` 留 `reasoningAdjusted` /
+`configuredMaxTokens`：改了请求参数却不留痕，等于让重放与对账都失去依据。上游「思维链与
+正文共用 `max_tokens`」的行为消不掉，这里只是缓解，README 第 10 条照实写。
+
+### 30.6 CI：粗筛与精查分层
+
+四份 Java 基线由 springdoc 运行时生成，全量 `--check` 只能等 `e2e` 起全栈；引擎侧却有
+`contract-drift` 这种秒级独立检查。两边不对称，而且 `e2e` 的 `pull_request.paths` 漏了
+`pom.xml`——只改 springdoc 版本或项目版本时连精查都不触发。
+
+补 `scripts/check-java-routes.py`：不启动 Spring，从 Controller 源码抽路由集合与基线双向
+比对，`contract-drift` 的 `java-route-guard` 在每个 PR 秒级执行；`e2e` 的 paths 补根 pom 与
+子模块 pom。粗筛管「路由集合」，运行时 `--check` 管「请求/响应 schema」，两层不重复。粗筛
+的失效是**显式的**：正则一旦扫不到路由，基线里的所有条目都会变成「基线有但源码已无」，
+CI 立刻红，不会静默放过。
+
+### 30.7 验收
+
+- Python：`test_budget.py`（在途计数、反向超发、Redis 全丢重建、重复 settle）、
+  `test_dsl_validate.py`（4 层通过 / 5 层报错 / 上限层仍校验引用）、
+  `test_model_capabilities.py` 与 `test_llm_node.py`（推理型识别、抬升下发与预算、事件留痕）。
+- Java：`AuditOutboxRelayTest`（载荷损坏只隔离、达到阈值转 DEAD、未达阈值仍退避）、
+  `ExecutionReaperTest`（连续确认、恢复清零、持有租约暂缓）。
+- 前端：`dsl-validate.spec.ts`（深度契约）、`model-capabilities.spec.ts`（推断口径）。
+- CI：`check-java-routes.py` 纳入 `contract-drift`；`verify-all.ps1` 同步纳入两条契约检查。

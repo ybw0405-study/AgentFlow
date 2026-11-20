@@ -26,3 +26,19 @@ jobs:
         run: python scripts/dump-openapi.py
       - name: diff against committed baseline
         run: git diff --exit-code -- docs/openapi/engine-api.json
+
+  # Java 侧的四份基线由 springdoc 运行时生成，全量 --check 只能等 e2e 起全栈。
+  # 这里补一层零依赖的静态粗筛：不启动 Spring，直接比对 Controller 源码里的
+  # 路由集合与入库基线，秒级拦住「改了接口却没刷基线」。PR 只改 pom/Controller、
+  # e2e 因排队或 cancel-in-progress 未跑时，检查不再完全真空。
+  # 参数/响应 schema 的漂移仍由 e2e 的运行时 --check 负责，两者互补不重复。
+  java-route-guard:
+    name: Java 路由粗筛（秒级，无需起服务）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: 静态比对 Controller 路由与入库基线
+        run: python scripts/check-java-routes.py

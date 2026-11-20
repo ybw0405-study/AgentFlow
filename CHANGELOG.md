@@ -3,6 +3,23 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [0.5.1] - 2026-11-20
+
+### 修复
+
+- **预算对账会反向超发**（`BudgetLedger`）：`reconcile()` 原来用只含已完成节点的 `state.token_used` 无条件 `SET` 覆盖 Redis 键。checkpoint 与 `reserve` / `settle` 交错时，在途预占被抹掉，随后 `settle` 回冲未用额度会让键变成负数，等于凭空放出预算。现在 `reserve` 同时登记在途计数（`af:budget:{executionId}:inflight`），`settle` 用 `WATCH` + 事务同笔回冲并递减计数（重复 settle 不会减成负数）；checkpoint 只要计数 > 0 就跳过覆盖，恢复 / 接管走 `reset_inflight=True` 按事件流汇总额重建。`dispatcher` 在租约续不上时也立即重建，`start_sweep()` 识别「预算键丢了但执行已发过 `COMMAND_ISSUED`」并删租约，让恢复扫描接管——此前 Redis 全丢只重建了有 checkpoint 的那部分，执行已发出命令却没预算账本时无人过问。
+- **审计 outbox 永不收敛、载荷静默丢失**（`V017__audit_outbox_dead.sql`）：relay 原来每 60s 无限重投到永远，`message_json` 反序列化失败时写一条骨架后 `markSent`——事件内容其实已经丢了，账面上却是「已发送」。现在 `status` 增加 `DEAD` 并带 `dead_at` / `dead_reason`：载荷不可读直接隔离（`payload-unreadable`，保留原始 JSON），投递失败累计 `AF_AUDIT_DEAD_AFTER_ATTEMPTS`（默认 24）次隔离（`delivery-exhausted`）；`purgeSent()` 只清 `SENT` 不删 `DEAD`。管理端新增 `GET /api/v1/admin/audit-outbox/dead` 与 `POST /api/v1/admin/audit-outbox/dead/{id}/replay`，水位（pending / retrying / dead / 最老积压秒数 / 出口）定时记日志，`dead > 0` 或积压超 600s 升 WARN。「不存在放弃投递」从设计上改成「停止自动重投、转人工介入」。
+- **执行看护把「网络抖一下」当成执行已死**：`inspect()` 原来对 `engine-unreachable` 一次异常就 `postMortem()`，和 `EngineGatewayClient` 注释写的「得再看一轮」自相矛盾。现在连续 `AF_REAP_UNREACHABLE_CONFIRMATIONS`（默认 3）轮都探不到才收口，中途任一成功探测清零重数；引擎仍持有 `af:lease:{executionId}` 时继续暂缓；404 仍立即收口。Redis 异常时保守返回 `ALIVE`，不动手。
+- **子图「最多 4 层」只在画布存在**：前端即时校验原来超过 4 层静默 `return []`（看着像校验通过），引擎发布校验则能无限递归。现在画布下钻、前端即时校验、引擎发布校验共用同一口径：第 5 层明确报错（`子图最多嵌套 4 层` / `subgraph nesting exceeds 4 levels`），到达上限的那一层照常做引用与结构检查。Python 与前端各补 3 个契约测试。
+- **推理模型标记没接进执行链路**：`deepseek-flash` / `deepseek-v4-pro` 不被识别为推理型，1024 的 `maxTokens` 原样下发导致正文为空。现在引擎与前端按同一口径推断（`deepseek` + `flash` / `v4`，不会误标别家 `v4`），LLM 节点对推理型且 `maxTokens < 4096` 时把下发值抬到 4096，预算预占按抬升后的量算；DSL 不改写，`COMMAND_ISSUED` 事件与 `input_snapshot` 留 `reasoningAdjusted` / `configuredMaxTokens`。
+
+- **引擎 OpenAPI 基线写入显式 LF**：`dump-openapi.py` 原来用 `Path.write_text()`，Windows 上按 text mode 写出 CRLF，而 `.gitattributes` 要求 LF 入库——这份基线连 HEAD 里都是 CRLF，本地与 CI 恰好都在 Windows 时才侥幸不漂移，换平台就会整片变红。现在与 `dump-openapi-java.py` 一样显式 `newline="\n"`，并把已入库的 1033 行一次性归一化；`git diff --check` 不再报行尾空白。
+
+### 新增
+
+- **Java 路由静态粗筛堵住 CI 检查真空**：四份 `java-*.json` 由 springdoc 运行时生成，全量 `--check` 只能等 `e2e` 起全栈；纯改 Controller 或 pom 的 PR 若没触发 e2e 就没有任何契约保护，而引擎侧早有秒级 `contract-drift`。新增 `scripts/check-java-routes.py`（零依赖），从 Controller 源码抽出路由集合与入库基线双向比对，`contract-drift` 增加 `java-route-guard` job 在每个 PR 秒级执行；`e2e` 的 `pull_request.paths` 补 `pom.xml` / `**/pom.xml`。粗筛管路由集合，e2e 的运行时 `--check` 管请求 / 响应 schema，两层互补。
+- **`verify-all.ps1` 补齐两条契约检查**：本地门禁现在也会跑 `dump-openapi.py` + `git diff --exit-code` 与 `check-java-routes.py`，与 CI 的 `contract-drift` 对齐。
+
 ## [0.5.0] - 2026-11-20
 
 ### 不兼容变更

@@ -2,7 +2,8 @@
 param(
   [switch]$SkipJava,
   [switch]$SkipPython,
-  [switch]$SkipFrontend
+  [switch]$SkipFrontend,
+  [switch]$SkipContract
 )
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
@@ -34,6 +35,19 @@ if (-not $SkipFrontend) {
   npm run lint;      if ($LASTEXITCODE -ne 0) { $failed += 'frontend-lint' }
   npm run test;      if ($LASTEXITCODE -ne 0) { $failed += 'frontend-test' }
   npm run build;     if ($LASTEXITCODE -ne 0) { $failed += 'frontend-build' }
+  Pop-Location
+}
+
+if (-not $SkipContract) {
+  Write-Host '==> contract: engine OpenAPI 基线 + Java 路由粗筛'
+  Push-Location $root
+  $py = Join-Path $root 'engine-api/.venv/Scripts/python.exe'
+  & $py 'scripts/dump-openapi.py' | Out-Null
+  if ($LASTEXITCODE -ne 0) { $failed += 'engine-openapi-dump' }
+  git diff --exit-code -- docs/openapi/engine-api.json
+  if ($LASTEXITCODE -ne 0) { $failed += 'engine-openapi-drift' }
+  & $py 'scripts/check-java-routes.py'
+  if ($LASTEXITCODE -ne 0) { $failed += 'java-route-guard' }
   Pop-Location
 }
 

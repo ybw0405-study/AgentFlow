@@ -18,9 +18,10 @@ cd frontend; npm install; cd ..
 ./scripts/verify-all.ps1
 ```
 
-它等价于 CI 的三条流水线：`mvn verify`（单测 + Checkstyle + ArchUnit）、`ruff check` +
-`ruff format --check` + `pytest`、`tsc` + `eslint` + `vitest` + `build`。只改一端时可加
-`-SkipJava` / `-SkipPython` / `-SkipFrontend` 缩短反馈。
+它等价于 CI 的静态门禁：`mvn verify`（单测 + Checkstyle + ArchUnit）、`ruff check` +
+`ruff format --check` + `pytest`、`tsc` + `eslint` + `vitest` + `build`，外加两条契约检查
+（引擎 OpenAPI 基线 diff、Java 路由静态粗筛）。只改一端时可加
+`-SkipJava` / `-SkipPython` / `-SkipFrontend` / `-SkipContract` 缩短反馈。
 
 ## 契约变更
 
@@ -53,6 +54,18 @@ git add docs/openapi/java-*.json
 `python scripts/dump-openapi-java.py --check` 只比对不写文件，`e2e` 流水线用它做漂移检查。
 改版本号会写进 `info.version`，四份 Java 基线与引擎侧基线要一起刷。
 
+不等服务起来还有一层秒级粗筛：`scripts/check-java-routes.py` 从 Controller 源码抽出路由
+集合，与四份入库基线双向比对；`contract-drift` 的 `java-route-guard` 在每个 PR 都跑，
+纯改接口或 pom、`e2e` 没触发时也能立刻发现「没刷基线」。它只管路由集合，请求 / 响应
+schema 仍由 `e2e` 的运行时 `--check` 负责。本地可直接跑：
+
+```powershell
+python scripts/check-java-routes.py
+```
+
+粗筛只认 `@GetMapping` / `@GetMapping()` / `@GetMapping("/x")` 这类字面量写法；写成
+`value = "..."`、路径数组或常量时会直接报错，避免静默漏掉一条路由。
+
 ## 数据库迁移
 
 `db/mysql` 与 `db/postgres` 由 Flyway 管理，**已合入的迁移文件禁止修改**，只能追加新版本号。
@@ -84,5 +97,6 @@ engine-api/.venv/Scripts/pip freeze > engine-api/requirements.lock.txt
 
 ## Pull Request
 
-按 `.github/workflows/` 的四条流水线自查，并在 PR 描述里写清影响面（改到哪些服务、是否需要
-迁移、是否影响线上契约）。涉及安全的改动请先看 [SECURITY.md](SECURITY.md)。
+按 `.github/workflows/` 的五条流水线自查（`java-ci` / `frontend-ci` / `python-ci` /
+`contract-drift` / `e2e`），并在 PR 描述里写清影响面（改到哪些服务、是否需要迁移、
+是否影响线上契约）。涉及安全的改动请先看 [SECURITY.md](SECURITY.md)。
