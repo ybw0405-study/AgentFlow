@@ -173,6 +173,59 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "LlmModelItem": {
+        "additionalProperties": false,
+        "description": "单个模型的能力标注。字段拿不到就缺省，前端不显示空标签。",
+        "properties": {
+          "contextWindow": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contextwindow"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "maxOutputTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxoutputtokens"
+          },
+          "source": {
+            "default": "inferred",
+            "enum": [
+              "upstream",
+              "inferred"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "LlmModelItem",
+        "type": "object"
+      },
       "LlmModelsResponse": {
         "additionalProperties": false,
         "description": "可用模型清单。未配置真实端点时 configured=false，前端据此退回手填。",
@@ -196,6 +249,13 @@
             ],
             "title": "Error"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LlmModelItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
           "models": {
             "items": {
               "type": "string"
@@ -210,6 +270,70 @@
           "models"
         ],
         "title": "LlmModelsResponse",
+        "type": "object"
+      },
+      "NodePreviewRequest": {
+        "additionalProperties": false,
+        "description": "单节点试跑：整份草稿 + 目标节点 + 本次要用的变量。\n\n传整份草稿而不是「节点配置」：试跑要把上游真实跑一遍，模板里引用的\n`nodes.xxx.output` 才有值，否则用户拿到的只是一个渲染失败。",
+        "properties": {
+          "authorizedConnectorIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authorizedconnectorids",
+            "type": "array"
+          },
+          "dsl": {
+            "additionalProperties": true,
+            "title": "Dsl",
+            "type": "object"
+          },
+          "nodeKey": {
+            "title": "Nodekey",
+            "type": "string"
+          },
+          "requestedBy": {
+            "default": "preview",
+            "title": "Requestedby",
+            "type": "string"
+          },
+          "spaceId": {
+            "default": "preview",
+            "title": "Spaceid",
+            "type": "string"
+          },
+          "tenantId": {
+            "default": "preview",
+            "title": "Tenantid",
+            "type": "string"
+          },
+          "timeoutMs": {
+            "default": 120000,
+            "title": "Timeoutms",
+            "type": "integer"
+          },
+          "tokenBudget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokenbudget"
+          },
+          "variables": {
+            "additionalProperties": true,
+            "title": "Variables",
+            "type": "object"
+          }
+        },
+        "required": [
+          "dsl",
+          "nodeKey"
+        ],
+        "title": "NodePreviewRequest",
         "type": "object"
       },
       "PolicyIn": {
@@ -810,7 +934,7 @@
     },
     "/internal/llm/models": {
       "get": {
-        "description": "模型清单只对已配置的端点发起，密钥与 base_url 不出现在响应里。",
+        "description": "模型清单只对已配置的端点发起，密钥与 base_url 不出现在响应里。\n\nmodels 是纯 id 列表（下拉框用），items 带能力标注（推理型、长上下文、输出上限），\n后者只用于界面提示，不参与任何执行决策。",
         "operationId": "llm_models_internal_llm_models_get",
         "responses": {
           "200": {
@@ -862,6 +986,47 @@
           }
         },
         "summary": "Mq Status"
+      }
+    },
+    "/internal/nodes/preview": {
+      "post": {
+        "description": "试跑到目标节点：裁剪上游 + 真实执行 + 回传该节点的输入输出与链路。\n\n与整体执行同源（同一个调度器），因此结果、错误码、token 计数都可以直接采信。",
+        "operationId": "preview_node_internal_nodes_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Node Internal Nodes Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Node"
       }
     }
   }

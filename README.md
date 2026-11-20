@@ -385,6 +385,8 @@ pytest                        # 全栈验收（仓库根目录，需先 scripts/
 
 CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）、`e2e`（起真基础设施与服务，跑 `e2e/` 全栈验收，失败时上传各服务日志）。
 
+`e2e` 的模型对端是 `e2e/support/fake_openai.py`：产品侧不接受离线 provider，CI 也没有密钥，所以由这个进程在 127.0.0.1 上冒充 OpenAI 兼容端点，通过 `AF_LLM_*` 注入。引擎侧走的仍是真实 HTTP 调用、真实超时与错误分类，`usage` 由该端点给出，因此 token 计量与成本报表照常参与断言；要求真实语义的用例（检索质量、推理模型行为）由 `AF_E2E_REAL_LLM=1` 门控。本机注入了真实密钥时跑 `AF_E2E_REAL_LLM=1 AF_E2E_SCHEDULE=1 pytest e2e`，两条门控都会实际执行。
+
 提交规范、迁移与依赖升级流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 引擎侧新增或改动路由、请求/响应模型后，基线必须同步刷新，否则 `contract-drift` 会红：

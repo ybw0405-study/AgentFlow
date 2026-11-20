@@ -87,8 +87,24 @@ jobs:
           # 用 NoopAuditPublisher，灰度/发布类审计事件不会落库，e2e 会误判为通过。
           AF_MQ_ENABLED: "true"
           AF_ROCKETMQ_NAMESRV: 127.0.0.1:9876
+          # 产品侧不允许离线 provider，CI 也没有密钥，所以起一个本地 OpenAI 兼容端点
+          # 冒充上游（e2e/support/fake_openai.py）。引擎仍走真实 HTTP：真实的超时、
+          # 真实的错误分类、真实按 usage 计量 token，只是对端在 127.0.0.1。
+          AF_LLM_BASE_URL: http://127.0.0.1:8099/v1
+          AF_LLM_API_KEY: ci-test-key
+          AF_LLM_MODEL: deepseek-chat
+          AF_LLM_ALLOW_INSECURE_HTTP: "true"
         run: |
           mkdir -p logs
+          # 先起替身端点：引擎启动时读取 AF_LLM_*，端点没在听会让首个 llm 节点 ConnectError。
+          nohup python e2e/support/fake_openai.py --port 8099 \
+            > logs/fake-llm.log 2>&1 &
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8099/health >/dev/null 2>&1; then break; fi
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:8099/health >/dev/null \
+            || { echo "替身模型端点未就绪"; cat logs/fake-llm.log; exit 1; }
           cd engine-api
           nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
             > ../logs/engine.log 2>&1 &
