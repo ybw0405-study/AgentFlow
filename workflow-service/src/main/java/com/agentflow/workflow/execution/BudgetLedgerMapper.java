@@ -24,6 +24,21 @@ public interface BudgetLedgerMapper {
     int accrue(@Param("executionId") String executionId, @Param("tokens") int tokens,
                @Param("limitCalls") int limitCalls, @Param("limitTokens") long limitTokens);
 
+    /**
+     * 按租户直接累加（试跑用）：试跑没有 workflow_execution 行，{@link #accrue} 会静默插不进任何东西。
+     *
+     * <p>仍然走同一个账本与同一个账期口径，所以「本月已用」是执行 + 试跑的真实合计。
+     */
+    @Update("INSERT INTO budget_ledger (tenant_id, period, calls_used, tokens_used,"
+            + " limit_calls, limit_tokens)"
+            + " VALUES (#{tenantId}, DATE_FORMAT(NOW(3), '%Y-%m'), #{calls}, #{tokens},"
+            + " #{limitCalls}, #{limitTokens})"
+            + " ON DUPLICATE KEY UPDATE calls_used = calls_used + #{calls},"
+            + " tokens_used = tokens_used + #{tokens}")
+    int accrueByTenant(@Param("tenantId") String tenantId, @Param("calls") int calls,
+                       @Param("tokens") int tokens, @Param("limitCalls") int limitCalls,
+                       @Param("limitTokens") long limitTokens);
+
     @Select("SELECT tenant_id AS tenantId, period, calls_used AS callsUsed,"
             + " tokens_used AS tokensUsed, limit_calls AS limitCalls,"
             + " limit_tokens AS limitTokens FROM budget_ledger WHERE period = #{period}"

@@ -12,9 +12,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -22,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
@@ -36,7 +40,10 @@ import org.springframework.stereotype.Service;
 @Service
 public class TriggerService {
 
+    private static final Logger log = LoggerFactory.getLogger(TriggerService.class);
     private static final int MAX_WEBHOOK_PER_MINUTE = 60;
+    /** claim 的存活时间：覆盖一轮扫描 + 一次派发，过期后下一分钟自然换了 key。 */
+    private static final Duration CLAIM_TTL = Duration.ofMinutes(2);
     private static final long SIGNATURE_SKEW_SECONDS = 300;
 
     private final WorkflowTriggerMapper triggers;
@@ -178,18 +185,47 @@ public class TriggerService {
         return body;
     }
 
-    /** 定时扫描的入口：同一分钟内重复扫描用同一个幂等键，不会重复跑。 */    public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now) {
-        String minute = ZonedDateTime.ofInstant(now, ZoneId.of(row.timezone()))
-                .toLocalDateTime().toString();
+    /** 定时扫描的入口：同一分钟内重复扫描用同一个幂等键，不会重复跑。 */
+    public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now) {
         var result = executions.triggerFromExternal(row.tenantId(), "system:schedule",
                 row.definitionId(), row.versionId(),
-                "sched-" + row.id() + "-" + minute, merge(row, Map.of()),
+                "sched-" + row.id() + "-" + minuteOf(row.timezone(), now), merge(row, Map.of()),
                 "sched-" + row.id());
         triggers.markFired(row.id(), Timestamp.from(now));
         audit.publish(AuditMessage.of(row.tenantId(), result.executionId(), "system:schedule",
                 "TRIGGER_FIRED", Map.of("triggerId", row.id(), "type", "SCHEDULE",
                         "cron", row.cronExpr() == null ? "" : row.cronExpr())));
         return new FireResult(result.executionId(), result.status(), result.idempotentReplay());
+    }
+
+    /**
+     * 幂等键里的「分钟」：必须先截断到分钟。
+     *
+     * <p>两个副本在不同秒扫到同一条触发器时（07 秒 / 41 秒），带秒的时间串会生成两个不同的
+     * 幂等键，于是各派发一次——账面两次执行，用户只配了一条 cron。截到分钟才是「这一分钟
+     * 只跑一次」。
+     */
+    static String minuteOf(String timezone, Instant now) {
+        return ZonedDateTime.ofInstant(now, ZoneId.of(timezone))
+                .truncatedTo(ChronoUnit.MINUTES)
+                .toLocalDateTime()
+                .toString();
+    }
+
+    /**
+     * 抢占本分钟的触发权：多副本同时扫描时只有一个真正派发。
+     *
+     * <p>这不是正确性的唯一保障——幂等键（触发器 + 分钟）才是；它只是省掉重复派发与重复
+     * 审计。Redis 不可用时 fail-open（返回 true），漏跑的代价远大于多试一次。
+     */
+    public boolean claimFire(String triggerId, Instant now) {
+        String key = "af:sched:claim:" + triggerId + ":" + (now.getEpochSecond() / 60);
+        try {
+            return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key, "1", CLAIM_TTL));
+        } catch (Exception e) {
+            log.warn("schedule claim unavailable, fall back to idempotency key: {}", e.toString());
+            return true;
+        }
     }
 
     /** cron 是否是「到点了」：用上次触发时间（或一分钟前）推算下一次。 */

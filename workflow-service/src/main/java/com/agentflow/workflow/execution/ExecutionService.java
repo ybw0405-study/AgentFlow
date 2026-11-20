@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -25,12 +27,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class ExecutionService {
 
+    private static final Logger log = LoggerFactory.getLogger(ExecutionService.class);
+
     private final WorkflowExecutionMapper executions;
     private final WorkflowDefinitionMapper definitions;
     private final WorkflowVersionMapper versions;
     private final EngineGatewayClient engine;
     private final AuditPublisher audit;
     private final CanaryService canary;
+    private final UsageService usage;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final int defaultTokenBudget;
     private final int defaultMaxSteps;
@@ -42,7 +47,7 @@ public class ExecutionService {
     public ExecutionService(
             WorkflowExecutionMapper executions, WorkflowDefinitionMapper definitions,
             WorkflowVersionMapper versions, EngineGatewayClient engine, AuditPublisher audit,
-            CanaryService canary,
+            CanaryService canary, UsageService usage,
             @Value("${agentflow.tenant.default-token-budget}") int defaultTokenBudget,
             @Value("${agentflow.tenant.default-max-steps}") int defaultMaxSteps,
             @Value("${agentflow.tenant.default-deadline-ms}") int defaultDeadlineMs,
@@ -53,6 +58,7 @@ public class ExecutionService {
         this.engine = engine;
         this.audit = audit;
         this.canary = canary;
+        this.usage = usage;
         this.defaultTokenBudget = defaultTokenBudget;
         this.defaultMaxSteps = defaultMaxSteps;
         this.defaultDeadlineMs = defaultDeadlineMs;
@@ -234,7 +240,53 @@ public class ExecutionService {
                 "NODE_PREVIEWED", Map.of("definitionId", definitionId, "nodeKey", nodeKey,
                         "status", String.valueOf(result.getOrDefault("status", "")),
                         "tokenUsed", result.getOrDefault("totalTokens", 0))));
+        recordPreviewUsage(tenant, definitionId, nodeKey, snapshot, result);
         return result;
+    }
+
+    /**
+     * 试跑的消耗进账：明细落 preview_usage，token 与节点数累加进 budget_ledger。
+     *
+     * <p>记账失败不改变试跑结果（用户要的是节点输出），但会留下一条 warn——账不能悄悄丢。
+     */
+    private void recordPreviewUsage(TenantInfo tenant, String definitionId, String nodeKey,
+                                    Map<String, Object> dsl, Map<String, Object> result) {
+        try {
+            usage.recordPreview(tenant.tenantId(), new UsageService.PreviewRecord(
+                    definitionId, nodeKey, tenant.userId(),
+                    String.valueOf(result.getOrDefault("status", "UNKNOWN")),
+                    modelOf(dsl, nodeKey),
+                    traceSize(result.get("trace")),
+                    asInt(result.get("totalTokens")),
+                    result.get("latencyMs") instanceof Number n ? n.intValue() : null));
+        } catch (Exception e) {
+            log.warn("preview usage not recorded for {}:{}: {}", definitionId, nodeKey, e.toString());
+        }
+    }
+
+    /** 目标节点的模型名：试跑账单要能回答「这次调试花在哪个模型上」。 */
+    static String modelOf(Map<String, Object> dsl, String nodeKey) {
+        if (dsl == null || !(dsl.get("nodes") instanceof List<?> nodes)) {
+            return null;
+        }
+        for (Object item : nodes) {
+            if (!(item instanceof Map<?, ?> node) || !nodeKey.equals(node.get("key"))) {
+                continue;
+            }
+            if (node.get("config") instanceof Map<?, ?> config
+                    && config.get("model") instanceof String model && !model.isBlank()) {
+                return model;
+            }
+        }
+        return null;
+    }
+
+    private static int traceSize(Object trace) {
+        return trace instanceof List<?> list ? list.size() : 0;
+    }
+
+    private static int asInt(Object value) {
+        return value instanceof Number n ? n.intValue() : 0;
     }
 
     /** 授权清单：后台配置 + 该空间可见的真实连接器（含祖先租户共享）。 */

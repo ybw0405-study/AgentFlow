@@ -25,6 +25,7 @@ import type {
   TriggerData,
   TriggerDto,
   TriggerType,
+  UsageSummary,
   WorkflowDetail,
   WorkflowDefinitionDto,
   WorkflowVersionDto,
@@ -231,6 +232,11 @@ export const triggerApi = {
   ) => patch<TriggerDto>(`/triggers/${triggerId}`, body),
   rotate: (triggerId: string) => post<TriggerDto>(`/triggers/${triggerId}/rotate`),
   remove: (triggerId: string) => del<{ ok: boolean }>(`/triggers/${triggerId}`),
+}
+
+/** 用量：只读汇总，按当前空间统计；试跑与正式执行分列。 */
+export const usageApi = {
+  summary: (days = 30) => get<UsageSummary>(`/usage/summary?days=${days}`),
 }
 
 /** 文档知识库：纯文本导入（前端读文件后按 JSON 提交，服务端不开放 multipart）。 */

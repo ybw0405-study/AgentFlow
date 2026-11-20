@@ -11,6 +11,7 @@
 - **单节点试跑**：节点卡片与配置抽屉新增「试跑」。引擎把「目标节点 + 全部上游」裁成小图（`engine-api/app/preview.py`），交给同一个调度器、同一批执行器、同一份预算与错误分类真的跑一遍，回传该节点的输入 / 输出 / token / 耗时与整条上游链路状态。试跑**不落执行记录**、不产生版本，只留 `NODE_PREVIEWED` 审计；上游含 `loop` / `parallel` / `human_gate` 时返回 422 `PREVIEW-STRUCTURE-001` 并提示改用「运行」，因为裁剪会改变迭代、分支聚合与挂起续跑的语义。
 - **运行入参表单化**：运行弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件（布尔勾选框、数字框、文本框，`object` / `array` 走 JSON 编辑并即时提示解析错误），右上角可切回「JSON 原文」整块编辑。必填项缺失时「触发执行」禁用，不再先落一条注定 `EXEC-INPUT-001` 的执行记录。同一份表单复用到定时触发配置。
 - **工作流级默认模型（`defaults.llm`）**：工具条「默认模型」把 `connectionId` + `model` 写进 DSL 的 `defaults.llm`，只用于新建 llm 节点的继承；可勾选批量应用到现有节点。执行始终以节点自身 `config` 为准，改默认值不会影响已经跑通的节点。
+- **用量与成本中心（试跑入账）**（`V011__preview_usage.sql`）：建 `preview_usage` 明细表，每次试跑写一行（租户 / 工作流 / 节点 / 模型 / 节点数 / token / 耗时 / 状态），同时把 token 与节点数累加进同一本 `budget_ledger`——此前试跑没有 `workflow_execution` 行，`accrue` 按 executionId 取租户的写法会静默插不进任何东西，于是「调试十次」在账面上完全隐形。新增租户自助接口 `GET /api/v1/usage/summary?days=7|30|90`：区间内的执行与试跑分列统计、本月额度利用率（与平台管理员同一口径 `UsageService.ratio`）、按工作流分解、按天补齐的序列、最近 10 次试跑明细。新增「用量」页把上述口径画成卡片 + 每日堆叠柱状图 + 两张表；执行与试跑用不同颜色，额度用尽时直接写明「新的执行会被拒绝」。记账失败不影响试跑结果（记 warn 并按审计补账），试跑的调用口径按实际跑过的节点数计，不是一个请求算一次。
 - **模型能力标注**：`/internal/llm/models` 与 `/api/v1/llm/models` 增加 `items`，按上游 `/models` 的 `context_window` / `max_output_tokens` / `input_modalities` / `effort.supported_levels` / `supported_parameters` 标注推理型、长上下文、支持 JSON、图像输入；上游只回 id 时按模型名推断并标 `source=inferred`，不硬编码某家某代的能力。画布模型输入框下展示标签与上下文 / 输出上限，选到推理型而 `maxTokens` 偏小时给「设为 4096」的一键建议。
 
 - **文档知识库 / 真实文档检索**：`V009__knowledge.sql` 建 `knowledge_base` / `knowledge_document` / `knowledge_chunk` 三表。新增「知识库」页：建库、粘贴或选择 `.txt` / `.md` 导入文档（写入时按标点/段落切片，中文按单字与相邻二元组建词项）、文档列表与删除、检索自测。引擎新增 `retrieval` 执行器与 `KnowledgeSearchClient`，经网关 `/internal/knowledge/search` 调控制面本地 BM25 打分，返回带出处的原文片段（`output.text` / `results` / `citations`），阶段门正式放行；画布可勾选知识库并配置 `queryTemplate` / `topK` / `minScore`，校验要求至少选一个，也可一键生成「文档检索 → 模型作答」工作流。跨租户 kbId 由服务端逐条复核后静默忽略，不泄露存在性。
@@ -25,6 +26,7 @@
 
 ### 修复
 
+- **定时触发在多副本下会重复执行**：`fireSchedule` 的幂等键用 `LocalDateTime.toString()`（含秒），两个副本在不同秒扫到同一条触发器时会得到两个不同的键，于是各派发一次——用户只配了一条 cron，账面却是两次执行。现在分钟键先截断到分钟；调度器再加两层：扫描租约（`af:sched:leader`，60 秒 TTL，续租按持有者判断）只让一个副本扫表，分钟 claim（`af:sched:claim:{id}:{分钟}`，2 分钟 TTL）只让一个副本派发。三层都 fail-open，Redis 不可用时退化为依赖幂等键，宁可多扫一轮也不漏跑。
 - **运行执行的是已发布版本而非当前草稿**：引擎触发只认版本快照，此前「运行」直接触发会执行**已发布版本**，而接入向导只改当前草稿，两者不是同一份 DSL。现在运行先保存草稿，再复用（或冻结）同 checksum 的版本快照并显式带 `versionId` 触发，按画布所见执行；不改已发布版本、不走灰度分流、同内容草稿不重复冻结。画布与运行弹窗均写明该语义。
 - **移除产品侧的离线 provider 与内置测试连接器**：`LlmConfig.provider` 的默认值与唯一取值改为 `openai-compatible`，`app/main.py` 不再注册离线 provider，`ConnectorRegistry` 只走 connector-service，`AF_AUTHORIZED_CONNECTORS` 默认为空；配置抽屉去掉 provider 的离线选项，tool 节点不再预填 `mock.*`。旧 DSL 的 `provider: mock` 会在校验期直接报错，并提示改为模型连接或进程端点。确定性夹具移到 `tests/support/`，单测与故障注入照常覆盖。
 - **真实模型节点偶发空正文**：`deepseek-flash` 是推理模型，`max_tokens` 同时覆盖思维链与正文，给到 1024 时思维链把预算吃光、`content` 为空，节点以 `LLM-RESPONSE-001` 失败。内置示例、模板与新建节点默认改用非推理的 `deepseek-chat`，种子版本升到 v4；provider 在 `content` 为空且响应带 `reasoning_content` 时给出「调大 maxTokens」的明确原因，模型清单同时把默认模型并入下拉（它是上游接受的别名，不一定出现在 `/models` 里）。
@@ -41,6 +43,7 @@
 
 ### 文档
 
+- README 新增「用量与成本」章节（数据来自哪张表、试跑为什么计入额度、调用口径按实际跑过的节点数），功能矩阵、界面与已知限制同步：试跑不再被写成「不计成本」，定时触发改写为三层防线，限流注明是固定窗口；`docs/architecture.md` 新增 §22，记录试跑记账的漏洞、`accrueByTenant` 的必要性，以及扫描租约 / claim / 幂等键的分工。
 - README 新增「调试与触发」章节：单节点试跑的语义与限制、运行入参表单、工作流默认模型、Webhook 签名 / 幂等 / 限流与定时触发口径（含可直接粘的 curl）；功能矩阵补 4 行，已知限制补定时单实例扫描、试跑不计成本、能力标签非权威数据三条。`docs/architecture.md` 新增 §21，记录试跑裁剪语义、外部触发的凭据模型与信任边界、`defaults.llm` 只影响新建节点、能力标注的来源分级与错误展示的 detail 补充行。
 - README 功能矩阵、界面、接入真实模型、已知限制同步更新，并新增「文档检索（知识库）」章节；`docs/architecture.md` 新增 §20，记录 V009 数据模型、BM25 口径、内部端点信任边界与「运行按草稿」的版本语义。内置示例升级 v4 与真实模型接入方式一并写入。
 - README「界面」与「接入真实模型」改写：画布一键接入为推荐路径，连接器页与配置抽屉明确为高级模式；补模型清单、连接向导、连接失败反馈三张实机截图，并说明预设端点可编辑、以服务商控制台为准。

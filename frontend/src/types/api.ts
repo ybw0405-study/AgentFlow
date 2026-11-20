@@ -370,3 +370,65 @@ export interface TriggerDto {
   lastFiredAt: string | null
   createdAt: string | null
 }
+
+/** 用量汇总：正式执行与试跑分开统计，试跑的 token 也是真金白银。 */
+export interface UsageTotals {
+  count: number
+  tokens: number
+}
+
+export interface UsageBudget {
+  period: string
+  callsUsed: number
+  tokensUsed: number
+  callLimit: number
+  tokenLimit: number
+  /** 已夹到 [0,1]，供进度条使用；真实超额看原始数字。 */
+  callUtilization: number
+  tokenUtilization: number
+}
+
+export interface UsageByDefinition {
+  definitionId: string
+  name: string
+  executions: number
+  executionTokens: number
+  previews: number
+  previewTokens: number
+  tokens: number
+}
+
+export interface UsageDaily {
+  date: string
+  executionTokens: number
+  previewTokens: number
+  tokens: number
+}
+
+export interface UsageRecentPreview {
+  id: string
+  definitionId: string
+  definitionName: string | null
+  nodeKey: string
+  actorId: string | null
+  status: string
+  model: string | null
+  tokenUsed: number
+  latencyMs: number | null
+  createdAt: string
+}
+
+export interface UsageSummary {
+  from: string
+  to: string
+  days: number
+  executions: UsageTotals
+  previews: UsageTotals
+  totalTokens: number
+  /** 试跑占区间总消耗的比例，[0,1]。 */
+  previewShare: number
+  budget: UsageBudget
+  byDefinition: UsageByDefinition[]
+  daily: UsageDaily[]
+  recentPreviews: UsageRecentPreview[]
+}

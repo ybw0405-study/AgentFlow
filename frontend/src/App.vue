@@ -31,6 +31,7 @@ async function logout() {
         <router-link to="/connectors">连接器</router-link>
         <router-link to="/knowledge">知识库</router-link>
         <router-link to="/evals">评测</router-link>
+        <router-link to="/usage">用量</router-link>
         <router-link to="/admin">管理</router-link>
       </nav>
       <div class="af-spacer" />

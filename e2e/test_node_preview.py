@@ -159,3 +159,32 @@ def test_preview_llm_node_returns_real_completion(client, editor_token):
     assert text.strip(), data
     assert data["tokenUsed"] > 0, data
     assert data["output"]["model"] == REAL_LLM_MODEL, data
+
+
+def test_preview_usage_is_counted_in_the_tenant_ledger(client, editor_token):
+    """试跑不落执行记录，但消耗必须进账：否则「调试十次」在成本中心是隐形的。"""
+    wf_id = _create(client, editor_token, TRANSFORM_DSL)
+
+    before = client.get("/api/v1/usage/summary", params={"days": 7},
+                        headers=headers(editor_token, SPACE_A))
+    assert before.status_code == 200, before.text
+    before_data = before.json()["data"]
+
+    resp = _preview(client, editor_token, wf_id, "norm", {"question": "记账"})
+    assert resp.status_code == 200, resp.text
+
+    after = client.get("/api/v1/usage/summary", params={"days": 7},
+                       headers=headers(editor_token, SPACE_A))
+    assert after.status_code == 200, after.text
+    data = after.json()["data"]
+
+    assert data["previews"]["count"] == before_data["previews"]["count"] + 1, data
+    recent = data["recentPreviews"][0]
+    assert recent["nodeKey"] == "norm", recent
+    assert recent["definitionId"] == wf_id, recent
+    assert recent["status"] == "SUCCEEDED", recent
+    # 试跑的节点数进了调用口径：调试不能白用额度，也不能一条都不记
+    assert data["budget"]["callsUsed"] >= before_data["budget"]["callsUsed"] + 2, data
+    # 账面上的试跑只能来自这条工作流
+    row = next(item for item in data["byDefinition"] if item["definitionId"] == wf_id)
+    assert row["previews"] >= 1, row

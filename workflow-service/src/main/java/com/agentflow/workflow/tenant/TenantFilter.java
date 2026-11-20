@@ -37,6 +37,7 @@ public class TenantFilter extends OncePerRequestFilter {
         return !(path.startsWith("/api/v1/workflows") || path.startsWith("/api/v1/executions")
                 || path.startsWith("/api/v1/connectors") || path.startsWith("/api/v1/gates")
                 || path.startsWith("/api/v1/evals") || path.startsWith("/api/v1/knowledge")
+                || path.startsWith("/api/v1/usage")
                 || path.startsWith("/api/v1/triggers"));
     }
 

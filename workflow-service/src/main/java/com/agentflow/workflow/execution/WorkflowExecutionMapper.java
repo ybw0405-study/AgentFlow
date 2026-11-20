@@ -102,6 +102,33 @@ public interface WorkflowExecutionMapper {
             + " FROM workflow_execution GROUP BY tenant_id, status")
     List<UsageRow> usageByTenant();
 
+    /** 租户自己的用量（只算正式执行）：与试跑用量分开统计，避免「调试把额度吃光」看不出来。 */
+    @Select("SELECT COUNT(*) AS cnt, COALESCE(SUM(token_used),0) AS tokens"
+            + " FROM workflow_execution WHERE tenant_id = #{tenantId} AND created_at >= #{from}")
+    TotalsRow usageTotals(@Param("tenantId") String tenantId, @Param("from") String from);
+
+    @Select("SELECT definition_id AS definitionId, COUNT(*) AS cnt,"
+            + " COALESCE(SUM(token_used),0) AS tokens FROM workflow_execution"
+            + " WHERE tenant_id = #{tenantId} AND created_at >= #{from} GROUP BY definition_id")
+    List<DefinitionUsageRow> usageByDefinition(@Param("tenantId") String tenantId,
+                                               @Param("from") String from);
+
+    @Select("SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,"
+            + " COALESCE(SUM(token_used),0) AS tokens FROM workflow_execution"
+            + " WHERE tenant_id = #{tenantId} AND created_at >= #{from}"
+            + " GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')")
+    List<DailyUsageRow> usageDaily(@Param("tenantId") String tenantId,
+                                   @Param("from") String from);
+
+    record TotalsRow(long cnt, long tokens) {
+    }
+
+    record DefinitionUsageRow(String definitionId, long cnt, long tokens) {
+    }
+
+    record DailyUsageRow(String day, long tokens) {
+    }
+
     record ExecutionRow(long seq, String id, String definitionId, String versionId,
                         String tenantId, String triggeredBy, String status,
                         String idempotencyKey, String traceId, Integer tokenBudget,

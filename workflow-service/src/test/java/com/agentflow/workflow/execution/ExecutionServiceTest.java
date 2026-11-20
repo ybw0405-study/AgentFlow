@@ -30,6 +30,7 @@ class ExecutionServiceTest {
     private WorkflowVersionMapper versions;
     private EngineGatewayClient engine;
     private AuditPublisher audit;
+    private UsageService usage;
     private ExecutionService service;
 
     private final TenantInfo editor = new TenantInfo("space-1", "user-1", "EDITOR");
@@ -43,8 +44,9 @@ class ExecutionServiceTest {
         engine = Mockito.mock(EngineGatewayClient.class);
         audit = Mockito.mock(AuditPublisher.class);
         CanaryService canary = Mockito.mock(CanaryService.class);  // route() 默认 null → 走 current
+        usage = Mockito.mock(UsageService.class);
         service = new ExecutionService(executions, definitions, versions, engine, audit, canary,
-                50_000, 50, 120_000, "mock.search,mock.echo,mock.flaky");
+                usage, 50_000, 50, 120_000, "mock.search,mock.echo,mock.flaky");
     }
 
     private void givenDefinitionAndVersion() {
@@ -154,5 +156,41 @@ class ExecutionServiceTest {
         var ex = assertThrows(BusinessException.class, () -> service.trigger(
                 editor, "d1", null, "idem-12345678", Map.of(), null, "trace-1"));
         assertEquals(ErrorCode.WF_STATE_001, ex.errorCode());
+    }
+
+    @Test
+    void previewRecordsUsageWithTargetNodeModel() {
+        givenDefinitionAndVersion();
+        when(engine.previewNode(any())).thenReturn(Map.of(
+                "status", "SUCCEEDED", "totalTokens", 321, "latencyMs", 1200,
+                "trace", java.util.List.of(Map.of("key", "start"), Map.of("key", "draft"))));
+        Map<String, Object> dsl = Map.of("nodes", java.util.List.of(
+                Map.of("key", "draft", "type", "llm",
+                        "config", Map.of("model", "deepseek-chat"))));
+
+        service.preview(editor, "d1", "draft", dsl, Map.of());
+
+        var captor = ArgumentCaptor.forClass(UsageService.PreviewRecord.class);
+        verify(usage).recordPreview(eq("space-1"), captor.capture());
+        assertEquals(321, captor.getValue().tokenUsed());
+        assertEquals("deepseek-chat", captor.getValue().model());
+        assertEquals(2, captor.getValue().nodeCount());
+        assertEquals("SUCCEEDED", captor.getValue().status());
+        assertEquals(1200, captor.getValue().latencyMs());
+    }
+
+    @Test
+    void previewStillReturnsResultWhenAccountingFails() {
+        givenDefinitionAndVersion();
+        when(engine.previewNode(any())).thenReturn(Map.of(
+                "status", "SUCCEEDED", "totalTokens", 10));
+        Mockito.doThrow(new IllegalStateException("db down"))
+                .when(usage).recordPreview(anyString(), any());
+
+        Map<String, Object> result = service.preview(editor, "d1", "draft",
+                Map.of("nodes", java.util.List.of()), Map.of());
+
+        assertEquals("SUCCEEDED", result.get("status"));
+        verify(usage).recordPreview(anyString(), any());
     }
 }

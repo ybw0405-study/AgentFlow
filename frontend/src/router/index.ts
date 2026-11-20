@@ -36,6 +36,7 @@ const router = createRouter({
     { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeView.vue') },
     { path: '/approvals', name: 'approvals', component: () => import('@/views/ApprovalsView.vue') },
     { path: '/evals', name: 'evals', component: () => import('@/views/EvalsView.vue') },
+    { path: '/usage', name: 'usage', component: () => import('@/views/UsageView.vue') },
     { path: '/admin', name: 'admin', component: () => import('@/views/AdminView.vue') },
     // 兜底：任何未匹配路径都应给出明确页面，而不是空白
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue') },
