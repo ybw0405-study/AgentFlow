@@ -1,5 +1,13 @@
 # AgentFlow · 可视化 Agent 工作流编排平台
 
+[![java-ci](https://github.com/ybw0405-study/AgentFlow/actions/workflows/java-ci.yml/badge.svg)](https://github.com/ybw0405-study/AgentFlow/actions/workflows/java-ci.yml)
+[![python-ci](https://github.com/ybw0405-study/AgentFlow/actions/workflows/python-ci.yml/badge.svg)](https://github.com/ybw0405-study/AgentFlow/actions/workflows/python-ci.yml)
+[![frontend-ci](https://github.com/ybw0405-study/AgentFlow/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/ybw0405-study/AgentFlow/actions/workflows/frontend-ci.yml)
+[![contract-drift](https://github.com/ybw0405-study/AgentFlow/actions/workflows/contract-drift.yml/badge.svg)](https://github.com/ybw0405-study/AgentFlow/actions/workflows/contract-drift.yml)
+[![e2e](https://github.com/ybw0405-study/AgentFlow/actions/workflows/e2e.yml/badge.svg)](https://github.com/ybw0405-study/AgentFlow/actions/workflows/e2e.yml)
+[![release](https://img.shields.io/github/v/release/ybw0405-study/AgentFlow)](https://github.com/ybw0405-study/AgentFlow/releases)
+[![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 企业级可视化 Agent 工作流编排：画布拖拽编排 DAG（LLM / 工具 / 检索 / 条件 / 循环 / 人工审批），事件溯源执行引擎（崩溃可恢复、副作用恰好一次），全链路治理（租户隔离、预算硬停止、PII 双层脱敏、审计只追加）。
 
 ## 架构
@@ -56,7 +64,23 @@ flowchart LR
 
 分支连线：选中从 `condition` / `human_gate` 出发的连线，浮条里会多出 `branch` 输入框，下拉给的是该节点的 case 名（审批节点固定 `approved` / `rejected`），也可直接填。同一节点的分支名不允许重复；分支名不在 cases / elseBranch 里时，校验会提示该分支永远走不到。
 
-子图画布：选中 `loop` / `parallel` 节点，在配置抽屉里点「在画布中编辑」进入该节点的 `body` / 某个 `branches` 分支——画布顶部出现面包屑，点根节点可退回整图。子图内是同一个编辑器：拖节点、连边、选中即配；不能放 `start`（外层已有起点），至少保留一个 `end`，删掉最后一个 `end` 会被拒绝并说明原因。子图里的配置仍写回同一份 DSL，退出/刷新都不丢；「高级」里的 JSON 与表单是同一份数据的两个视图。
+子图画布：选中 `loop` / `parallel` 节点，在配置抽屉里点「在画布中编辑」进入该节点的 `body` / 某个 `branches` 分支——画布顶部出现面包屑，点根节点可退回整图。子图内是同一个编辑器：拖节点、连边、选中即配；不能放 `start`（入口由上层节点决定），也不需要 `end`（出口由上层节点收口，与引擎一致）。整图则必须留一个 `end`，删掉最后一个会被拒绝并说明原因。子图里的配置仍写回同一份 DSL，退出/刷新都不丢；「高级」里的 JSON 与表单是同一份数据的两个视图。
+
+## 界面
+
+画布编排（内置示例「客户工单分诊」：分诊 → 加急判定 → 并行取证 → 人工审批 → 循环润色 → 回复 → 归档回复 → 收口，另有一条驳回支路）：
+
+![画布](docs/images/canvas.png)
+
+审批中心：`human_gate` 挂起后进入待办收件箱，表格给出提示词、执行短号、节点、超时剩余时间与通过/驳回；审批意见统一填在上方，裁决回执会注明实际走到的分支。
+
+![审批中心](docs/images/approvals.png)
+
+执行详情：一条已通过审批、跑完整条链路的执行。左栏节点树由 SSE 实时点亮，包含并行分支的子节点
+（`gather#kb#kb_hit`）、循环每轮的 `polish#0` / `polish#1` 与被跳过的 `notify`；点节点看输入输出原文
+（失败时还会就地给出错误码与原因），右栏是 token / steps / traceId 与最终产出。
+
+![执行详情](docs/images/execution.png)
 
 ## 快速开始（Windows）
 
@@ -67,7 +91,7 @@ flowchart LR
 cd engine-api; python -m venv .venv; .venv/Scripts/pip install -e ".[dev]"; cd ..
 # 2) 安装前端依赖（一次）
 cd frontend; npm install; cd ..
-# 3) 一键启动（基础设施 + 迁移 + 种子 + 四服务 + 前端）
+# 3) 一键启动（基础设施 + 迁移 + 种子 + 4 个 Java 服务 + 引擎 + 前端）
 ./scripts/start-dev.ps1
 ```
 
@@ -140,6 +164,20 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 重跑不必先手动停：`start-dev` 在构建前会先执行 `stop-dev` 并清掉残留的半成品 `*.jar.original`。
 Windows 上运行中的 jar 是独占打开的，不先停就会在 `spring-boot:repackage` 改名时失败。
 `stop-dev` 只停本仓库的进程（按仓库路径判定），不会影响同机其他项目的同名服务。
+
+## 演示脚本（内置示例：审批 + 并行 + 循环）
+
+种子数据里有两条已发布示例，`wf-demo-triage`（「示例：客户工单分诊」）在一条链路上跑齐了条件、并行、审批、循环四种结构：
+
+1. 用 `admin@agentflow.dev` 打开「示例：客户工单分诊」→「运行」，变量填
+   `{"ticket": "登录页验证码收不到，客户很急", "urgent": true}` → 触发。
+2. 前四步直接跑完（分诊 llm → 加急判定 condition → 并行取证 parallel），到「加急审批」停下，
+   执行状态 **SUSPENDED**。审批人规则是表达式 `user.platformAdmin == true`：平台管理员命中，
+   普通 EDITOR 不命中（用 `editor@agentflow.dev` 打开审批中心看不到这条待办）。
+3. 审批中心点「通过」→ 引擎续跑 `approved` 支：循环两轮润色 → 撰写回复 → 收口，`rejected` 支
+   显式 `NodeSkipped`。执行详情里的节点键是 `gather#kb#kb_hit`、`polish#1#polish_sign` 这种带层级的
+   形式——前缀即子图名与循环轮次。
+4. 验证驳回：再触发一次，审批中心点「驳回」→ 走 `notify`（转人工复核）→ 收口。
 
 ## 健康检查
 
@@ -232,7 +270,7 @@ git add docs/openapi/engine-api.json
 5. Java 侧 OpenAPI 生成物未入库（contract-drift 覆盖引擎侧）。
 6. `human_gate` 的 `EXPRESSION` 审批人只认受限子集：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`，比较 `== != < <= > >=`、`in` / `not in`、`and` / `or` / `not`，字面量支持字符串、整数、布尔、null 与列表；**不支持函数调用与下标**。三处同文法——发布期在引擎侧以 `ast` 白名单静态校验、运行期由控制面逐候选求值、画布编辑时即时体检；表达式为空或非法一律 fail-closed（无人可批，记 ERROR）。子图（loop/parallel/subworkflow）内不允许 `human_gate`。
 7. 评测与 A/B 用轮询收口（默认 3s），不是事件驱动；用例数上限 50/次。
-8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、必须保留至少一个 `end`，画布最多下钻 4 层；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。
+8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、也不要求 `end`（出口由上层节点收口），画布最多下钻 4 层；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。
 9. `retrieval` 只在 DSL 类型与前端枚举里占位，引擎未实现该执行器（阶段门会以 `DSL-NODE-001` 拒绝，不会静默降级）。
 
 ## 目录

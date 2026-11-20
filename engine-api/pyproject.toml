@@ -1,6 +1,6 @@
 [project]
 name = "agentflow-engine"
-version = "0.3.1"
+version = "0.4.0"
 description = "AgentFlow execution engine (data plane)"
 requires-python = ">=3.11"
 dependencies = [

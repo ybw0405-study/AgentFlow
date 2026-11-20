@@ -556,29 +556,29 @@ stateDiagram-v2
 - human_gate 无论 approve/reject 都经 RUNNING → SUCCEEDED，输出 `decision`，下游按 `branch=approved|rejected` 的边分流（与 condition 语义统一）。
 - 执行被取消时，未开始的节点转 CANCELLED；运行中节点允许当前 Command 收尾后停。
 
-### 5.2 事件目录（§6.2 核心集 + 带 ★ 的扩展，扩展均有条款依据）
+### 5.2 事件目录（§6.2 核心集 + 扩展事件（标 `ex`，均有条款依据））
 
 | 事件 | 级别 | payload 关键字段 | 依据 |
 |---|---|---|---|
 | ExecutionCreated | 执行 | definitionId, versionId, tenantId/spaceId, triggeredBy, idempotencyKey, policy{tokenBudget,maxSteps,deadlineMs,clamped}, variablesDigest, traceId | 核心 |
-| ExecutionStarted ★ | 执行 | workerId, leaseId, startedAt | 恢复/租约观测 |
+| ExecutionStarted `ex` | 执行 | workerId, leaseId, startedAt | 恢复/租约观测 |
 | ExecutionCompleted | 执行 | result, tokenUsed, stepsUsed, durationMs | 核心 |
 | ExecutionFailed | 执行 | errorCode, message(脱敏), failedNodeKey, tokenUsed, stepsUsed | 核心 |
-| ExecutionTimedOut ★ | 执行 | phase(QUEUE/RUNNING), deadlineAt | 状态机完备性 |
+| ExecutionTimedOut `ex` | 执行 | phase(QUEUE/RUNNING), deadlineAt | 状态机完备性 |
 | ExecutionCancelled | 执行 | requestedBy, reason | 核心 |
 | CheckpointCreated | 执行 | completedNodes[], variablesSnapshot(脱敏), tokenUsed, stepsUsed | 核心（每 10 事件） |
 | NodeScheduled | 节点 | nodeKey, nodeType, attempt, dependsOn[] | 核心 |
 | NodeStarted | 节点 | nodeKey, attempt, inputDigest | 核心 |
 | NodeCompleted | 节点 | nodeKey, attempt, **output（完整·已脱敏，D5）**, outputDigest, tokenUsed, latencyMs | 核心 |
 | NodeFailed | 节点 | nodeKey, attempt, errorCode, class(PERMANENT/TRANSIENT), retryable, latencyMs | 核心 |
-| NodeRetryScheduled ★ | 节点 | nodeKey, nextAttempt, delayMs, cause | §8.4 重试 |
-| NodeSkipped ★ | 节点 | nodeKey, reason(BRANCH_NOT_TAKEN/UPSTREAM_SKIPPED), byNodeKey | US-03 SKIPPED 必须可见 |
-| NodeSuspended ★ | 节点 | nodeKey, reason | 状态机完备性 |
+| NodeRetryScheduled `ex` | 节点 | nodeKey, nextAttempt, delayMs, cause | §8.4 重试 |
+| NodeSkipped `ex` | 节点 | nodeKey, reason(BRANCH_NOT_TAKEN/UPSTREAM_SKIPPED), byNodeKey | US-03 SKIPPED 必须可见 |
+| NodeSuspended `ex` | 节点 | nodeKey, reason | 状态机完备性 |
 | GateSuspended | 节点 | nodeKey, approversRule, timeoutAt, defaultBranch | 核心（P3） |
 | GateResolved | 节点 | nodeKey, decision(APPROVED/REJECTED/TIMEOUT), resolvedBy | 核心（P3） |
-| CommandIssued ★ | 命令 | nodeKey, attempt, **callId**, kind(LLM/TOOL/RETRIEVAL), requestDigest | §8.2.3 命令成对落事件 |
-| CommandCompleted ★ | 命令 | callId, responseDigest, tokenUsed, latencyMs | §8.2.3 |
-| CommandFailed ★ | 命令 | callId, errorCode, class, latencyMs | §8.2.3 |
+| CommandIssued `ex` | 命令 | nodeKey, attempt, **callId**, kind(LLM/TOOL/RETRIEVAL), requestDigest | §8.2.3 命令成对落事件 |
+| CommandCompleted `ex` | 命令 | callId, responseDigest, tokenUsed, latencyMs | §8.2.3 |
+| CommandFailed `ex` | 命令 | callId, errorCode, class, latencyMs | §8.2.3 |
 
 `aggregate_version` 每 execution 从 1 严格递增；追加时带期望值，冲突则重读重放后重试 ≤3 次。`callId = {executionId}/{nodeKey}/{attempt}`。
 
@@ -1314,15 +1314,73 @@ transactional outbox：
 ### 16.4 子图画布（`frontend/src/dsl/subgraph.ts` + `CanvasEditorView`）
 
 `loop.body` / `parallel.branches` 此前只能在抽屉里手写 JSON，等于把最容易写错的
-（层内 key 唯一性、必须有一个 `end`、不能有 `start`）交给用户。现在：
+（层内 key 唯一性、不能有 `start`、节点数下限）交给用户。现在：
 
 1. **一份真源**：`rootDsl` 是整份 DSL，`path: SubgraphRef[]` 表示当前层
    （`{nodeKey, branch?}`）。`readSubgraph` / `writeSubgraph` 都是不可变的，未命中
    返回同一对象（避免 Vue 无谓的深层 diff）。`toDsl()` 把当前层经 `writeSubgraphPath`
    合并回根，变量与 defaults 始终取根层——子图不拥有自己的变量表。
-2. **层内编辑**：子图内 `start` 置灰（外层已有起点，且 DSL 规定子图无 start）；
-   删除最后一个 `end` 会被 `subgraphRemovalError` 拒绝并说明原因；层内 key 只需层内唯一。
+2. **层内编辑**：子图内 `start` 置灰（入口由上层节点决定，子图没有 start）；层内 key 只需
+   层内唯一。**只有整图**必须留一个 `end` 且删掉最后一个会被拒绝——子图的出口由上层
+   `loop` / `parallel` 节点收口，引擎同样不要求子图内有 `end`（见 §17.2）。
 3. **校验能下钻**：`validateGraph(nodes, edges, scope)` 递归 `validateNested`，问题 key
    带层前缀（`loop_1.body#body_end`），画布与抽屉都能把错误挂回具体那一层。深度上限 4。
 4. **JSON 不删**：抽屉里的文本域改成「高级：直接编辑 …JSON」，无解析错误时从配置实时
    序列化，和表单是同一份数据的两个视图。
+
+## 17. 交付前对齐记录（2026-11-20，v0.4.0）
+
+这一版没有新增大模块，处理的是「一处放行、另一处拒绝」「界面显示的和投影里存的不一致」
+这类跨层错位。它们不体现在功能矩阵里，但都足以让一条合法流程跑不通。
+
+### 17.1 表达式字面量：三处同文法补齐
+
+§16.2 的文法表里漏了字面量。`ast.parse("vars.urgent == true")` 把 `true` 解析成
+`ast.Name`，发布期白名单判「未知标识符」，而画布编辑器与 Java `GateExpression` 都放行；
+引擎侧的 `simpleeval` 又没有 `true/false/null` 别名，同一句在执行期报
+`EXPR-EVAL-001`。现在：
+
+- 发布期 `app/dsl/validate.py` 认 `true/false/null/none` 四个 `ast.Name`；
+- 运行期 `app/expression/safeexpr.py` 把 `_LITERAL_ALIASES` 并入 `evaluate` 的 names；
+- 编辑期 `approver-expr.ts` 的关键字（`and/or/not/in` 与字面量）大小写不敏感，
+  标识符（`user` / `space` / 属性名）保持区分大小写，与 Java 递归下降一致。
+
+### 17.2 子图规则与引擎严格对齐
+
+引擎按 `WorkflowDsl` 解析 `loop.body` / `parallel.branches`，`SubGraph.nodes` 有
+`minItems: 2`。此前画布强制子图必须有 `end`，把合法图报成校验错误；单节点子图却能通过
+发布、一执行就 `PARALLEL-BRANCH-FAILED`。现在统一为：**整图**必须留一个 `end`，
+**子图**不放 `start`、不要求也不依赖 `end`（出口由上层节点收口）、至少 2 个节点。
+`subgraphRemovalError(..., isRoot)` 只对整图做末位 `end` 保护。
+
+### 17.3 执行详情：实时事件不能覆盖 REST 快照
+
+`GET /executions/{id}` 返回的是投影后的最新状态，但详情页的 SSE 原来从 `afterSeq=0`
+连上去，会先回放整条事件流：旧的 `ExecutionStarted` 把 `SUSPENDED` 刷回 `RUNNING`，
+不带 `attempt` 的 `GateSuspended` 又给同一节点补出一条 `attempt=0` 的重复行。修复：
+
+- 连接前用 `executionApi.events(id, lastSeq, 500).lastSeq` 对齐游标，SSE 只收增量；
+  取不到游标就退回回放，下面的状态映射兜底。
+- 执行级状态补齐 `GateSuspended → SUSPENDED` / `GateResolved → RUNNING`，
+  `ExecutionStarted` 不再覆盖挂起态或终态。
+- 节点事件按 `nodeKey + attempt` 找行；payload 里没有 `attempt` 时按 `nodeKey` 找最后一行，
+  不再凭空 `push` 一条。终态与挂起态不会被历史事件倒退，但裁决续跑后的 `NodeStarted`
+  仍能把 `SUSPENDED` 推回 `RUNNING`。
+- `NodeFailed.message` 经 `V008` 落到 `node_execution.error_message`，执行详情的 I/O 面板
+  直接展示错误码 + 原因，不必回去翻事件流。
+
+### 17.4 画布首屏与变量面板
+
+DSL 存的是绝对坐标，宽流程的首屏会只看到前几个节点、末尾的 `end` 被裁在视口外。
+现在 `VueFlow` 开 `fitViewOnInit`，并在 `nodesInitialized` / 切子图后重新
+`fitView({ padding: 0.15 })`。变量面板的折叠初值改为跟着变量数走（画布先挂载、DSL 后到），
+用户手动点过之后不再被自动折叠。
+
+### 17.5 内置示例二：客户工单分诊
+
+`scripts/gen-seed.py` 改成按清单生成多个示例，`wf-demo-triage` 在一条链路上跑齐
+`condition` / `parallel` / `human_gate(EXPRESSION)` / `loop`，并有 approved / rejected 双出口。
+两条例外都要注意：子图至少 2 节点；`end.resultMapping` 只能引用**两条分支都会写入**的变量——
+被 `SKIPPED` 的节点没有 `output`，直接引用会在收口时 `EXPR-EVAL-001`。所以两条分支各自把
+结果写进 `vars.outcome`，`end` 只取这一个变量。canonical 串与 checksum 仍由生成脚本计算，
+与服务端落库口径一致。

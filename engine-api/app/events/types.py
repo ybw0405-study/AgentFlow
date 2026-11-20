@@ -1,4 +1,4 @@
-"""执行事件类型目录（architecture.md §5.2）。★扩展事件均有条款依据。"""
+"""执行事件类型目录（architecture.md §5.2）。扩展事件（标记为 extra）均有条款依据。"""
 
 from __future__ import annotations
 

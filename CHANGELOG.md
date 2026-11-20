@@ -3,6 +3,37 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [0.4.0] - 2026-11-20
+
+交付前的最后一轮打磨：把「看得见的错」补齐（节点失败原因、表达式字面量、子图规则），
+并用一条真正跑得通的复杂示例替掉「只能看不能跑」的演示。
+
+### 新增
+
+- **节点失败原因可见**（`V008__node_error_message.sql`）：`node_execution` 增
+  `error_message`，Projector 把 `NodeFailed.message` 一并落库；执行详情抽屉在错误码下面
+  直接给出原因。此前只有 `EXPR-EVAL-001` 这类码，排查得回去翻日志与事件流。
+- **内置示例「客户工单分诊」**（`wf-demo-triage`）：分诊 → 加急判定（`condition`）→
+  并行取证（`parallel`，两支各两节点）→ 人工审批（`human_gate` + `EXPRESSION` 审批人）→
+  逐条润色（`loop`，body 两节点）→ 回复，另有一条驳回支路。`scripts/gen-seed.py` 改为
+  按清单生成多个示例，canonical 串与 checksum 仍由脚本计算，不手写 SQL。
+- **画布变量面板可折叠**：变量超过 6 个时默认收起，展开后列表限高滚动。此前 5 个变量就能
+  把画布压成一条缝，节点被裁到视口外。
+- `CODE_OF_CONDUCT.md`（Contributor Covenant 2.1 中文本地化）。
+
+### 修复
+
+- **表达式字面量三处口径统一**：发布期 `ast` 白名单把 `vars.urgent == true` 里的 `true`
+  当成未知标识符拒绝，而画布与 Java `GateExpression` 都放行；引擎 `simpleeval` 又缺
+  `true/false/null` 别名，同一句在运行期报 `EXPR-EVAL-001`。现在三处一致：字面量别名可用，
+  关键字大小写不敏感，标识符（`user` / `space` / 属性名）区分大小写。
+- **子图 `end` 规则与引擎对齐**：`loop.body` / `parallel.branches` 既不要求也不允许依赖
+  `end`——出口由上层节点收口，只有整图必须留一个 `end`。此前画布强制子图有 `end`，
+  合法图被报「3 处校验问题」；子图内删 `end` 也被末位保护挡住。
+- **单节点子图在提交前拦下**：引擎按 `WorkflowDsl` 解析子图（`nodes` 有 `minItems: 2`），
+  单节点分支能发布成功但一执行就 `PARALLEL-BRANCH-FAILED`。发布期与画布现在同时拒绝，
+  提示「子图至少需要 2 个节点」。
+
 ## [0.3.1] - 2026-11-19
 
 0.3.0 首次在 GitHub 上跑全栈验收时暴露的问题：把 MQ 通道的正常形态当成了故障。
@@ -65,6 +96,35 @@
   `AuditOutboxRelayTest` 5 项）；引擎 284 项（新增表达式校验 6 项、remoting 编解码 9 项）；
   前端 109 项（新增 `subgraph.spec.ts` 25 项、审批人表达式 4 项）；全栈 e2e 34 项。
 
+## [0.2.2] - 2026-11-19
+
+### 修复
+
+- 评测运行会「假完成」：`createRun` 先写 `eval_run` 行、再逐条写用例结果，
+  轮询正好落在中间时 `recount` 看到 0 条结果就判定全部收口，把 run 标成
+  `SUCCEEDED` 并把 `total` 改写成 0——前端显示 0/0 通过，用例其实还在跑
+  （CI 上实测复现）。现在结果条数不足 `run.total()` 时不再收口，收口时
+  `total` 以 `run.total()` 为准；e2e 的等待逻辑也只认 `SUCCEEDED` / `FAILED` /
+  `CANCELLED` 三种终态。
+
+## [0.2.1] - 2026-11-19
+
+0.2.0 首次在 GitHub 上跑全栈验收时暴露的问题：审计链路在本地与 CI 都是关的，
+而验收用例靠历史数据蒙过去了。
+
+### 修复
+
+- 本地与 CI 都没开 `AF_MQ_ENABLED`，`workflow-service` 走 `NoopAuditPublisher`：
+  灰度、发布、执行触发这些审计事件一条都没落库。现在 `start-dev` 与 `e2e` 流水线
+  默认开启 MQ，并等 RocketMQ broker healthy 才拉起服务（compose 里 broker 此前
+  没有健康检查，服务连上去才发现它还在启动）。
+- 灰度审计断言只按事件类型过滤，审计表是跨轮次累积的，MQ 断链也能「通过」；
+  改为按本轮工作流的 `definitionId` 命中载荷。
+- 审计查询的 `payload_redacted AS payloadRedacted` 与 `AuditRow.payloadJson` 名不对号，
+  接口返回的 `payloadJson` 恒为 `null`，前端审计详情看不到载荷；别名改为与 DTO 一致。
+- 仓库根目录补 `pytest.ini`：根下 `pytest` 即全栈 e2e 套件，同时消掉 pytest-asyncio
+  的 loop scope 弃用告警（此前只有 `engine-api/` 下有配置）。
+
 ## [0.2.0] - 2026-11-19
 
 把引擎早已支持、但画布够不着的节点能力放出来，同时修掉子图校验的两个作用域问题。
@@ -100,35 +160,6 @@
   `Invoke-WebRequest` 默认走 IE DOM 解析，非交互模式下一律抛错，探测永远不成立。补
   `-UseBasicParsing`，并打印实际就绪耗时（实测约 17s）。
 - 依赖断连时 gate 扫描每 15s 打一屏 traceback，降为单行 WARNING，堆栈落到 DEBUG。
-
-## [0.2.2] - 2026-11-19
-
-### 修复
-
-- 评测运行会「假完成」：`createRun` 先写 `eval_run` 行、再逐条写用例结果，
-  轮询正好落在中间时 `recount` 看到 0 条结果就判定全部收口，把 run 标成
-  `SUCCEEDED` 并把 `total` 改写成 0——前端显示 0/0 通过，用例其实还在跑
-  （CI 上实测复现）。现在结果条数不足 `run.total()` 时不再收口，收口时
-  `total` 以 `run.total()` 为准；e2e 的等待逻辑也只认 `SUCCEEDED` / `FAILED` /
-  `CANCELLED` 三种终态。
-
-## [0.2.1] - 2026-11-19
-
-0.2.0 首次在 GitHub 上跑全栈验收时暴露的问题：审计链路在本地与 CI 都是关的，
-而验收用例靠历史数据蒙过去了。
-
-### 修复
-
-- 本地与 CI 都没开 `AF_MQ_ENABLED`，`workflow-service` 走 `NoopAuditPublisher`：
-  灰度、发布、执行触发这些审计事件一条都没落库。现在 `start-dev` 与 `e2e` 流水线
-  默认开启 MQ，并等 RocketMQ broker healthy 才拉起服务（compose 里 broker 此前
-  没有健康检查，服务连上去才发现它还在启动）。
-- 灰度审计断言只按事件类型过滤，审计表是跨轮次累积的，MQ 断链也能「通过」；
-  改为按本轮工作流的 `definitionId` 命中载荷。
-- 审计查询的 `payload_redacted AS payloadRedacted` 与 `AuditRow.payloadJson` 名不对号，
-  接口返回的 `payloadJson` 恒为 `null`，前端审计详情看不到载荷；别名改为与 DTO 一致。
-- 仓库根目录补 `pytest.ini`：根下 `pytest` 即全栈 e2e 套件，同时消掉 pytest-asyncio
-  的 loop scope 弃用告警（此前只有 `engine-api/` 下有配置）。
 
 ## [0.1.1] - 2026-11-19
 
