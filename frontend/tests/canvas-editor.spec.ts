@@ -93,7 +93,7 @@ function flow(wrapper: Awaited<ReturnType<typeof mountCanvas>>) {
   return wrapper.findComponent({ name: 'VueFlow' })
 }
 
-describe('画布删除交互', () => {
+describe('画布交互', () => {
   beforeEach(() => {
     mocks.detail.mockReset()
     mocks.saveDraft.mockReset()
@@ -263,5 +263,66 @@ describe('画布删除交互', () => {
     }[]
     const created = nodes.find((n) => n.id.startsWith('llm_'))
     expect(created?.data.config.connectionId).toBeUndefined()
+  })
+
+  /** 选中节点后从抽屉快速入口唤起向导；VueFlow 是替身，节点卡片不走这里。 */
+  async function openModelHub(wrapper: Awaited<ReturnType<typeof mountCanvas>>) {
+    flow(wrapper).vm.$emit('nodeClick', { node: { id: 'draft' } })
+    await flushPromises()
+    const quick = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('从常见模型快速接入'))
+    expect(quick).toBeTruthy()
+    await quick!.trigger('click')
+    await flushPromises()
+    return wrapper.findComponent({ name: 'ModelHub' })
+  }
+
+  it('抽屉里的快速入口能唤起模型清单', async () => {
+    const wrapper = await mountCanvas()
+    const hub = await openModelHub(wrapper)
+    expect(hub.exists()).toBe(true)
+    expect(wrapper.text()).toContain('选择模型')
+    expect(wrapper.text()).toContain('混元 Hy4')
+  })
+
+  it('连接成功后把 connectionId / model 写回节点并关闭向导', async () => {
+    const wrapper = await mountCanvas()
+    const hub = await openModelHub(wrapper)
+    hub.vm.$emit('connected', {
+      ok: true,
+      connectorId: 'c-hy4',
+      name: '混元 Hy4 连接',
+      model: 'hy4',
+      models: ['hy4'],
+    })
+    await flushPromises()
+
+    const nodes = flow(wrapper).props('nodes') as {
+      id: string
+      data: { config: Record<string, unknown> }
+    }[]
+    const draft = nodes.find((n) => n.id === 'draft')
+    expect(draft?.data.config.connectionId).toBe('c-hy4')
+    expect(draft?.data.config.model).toBe('hy4')
+    expect(draft?.data.config.provider).toBe('openai-compatible')
+    expect(wrapper.findComponent({ name: 'ModelHub' }).exists()).toBe(false)
+    expect(wrapper.text()).toContain('已接入')
+  })
+
+  it('切回内置演示模型会清掉连接引用，保留离线可跑', async () => {
+    const wrapper = await mountCanvas()
+    const hub = await openModelHub(wrapper)
+    hub.vm.$emit('builtin')
+    await flushPromises()
+
+    const nodes = flow(wrapper).props('nodes') as {
+      id: string
+      data: { config: Record<string, unknown> }
+    }[]
+    const draft = nodes.find((n) => n.id === 'draft')
+    expect(draft?.data.config.connectionId).toBeUndefined()
+    expect(draft?.data.config.model).toBe('mock-llm-large')
+    expect(draft?.data.config.provider).toBe('mock')
   })
 })
