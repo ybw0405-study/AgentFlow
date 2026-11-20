@@ -85,14 +85,18 @@ def main() -> int:
             continue
 
         if not args.check:
-            path.write_text(generated, encoding="utf-8")
+            # 显式 LF：Windows 上 text mode 默认写 CRLF，而 .gitattributes 要求 LF 入库，
+            # 两者混用会让「同一份代码生成字节一致」的保证失效。
+            with path.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(generated)
             print(f"wrote {path.relative_to(ROOT)}")
             continue
 
         if not path.exists():
             failures.append(f"{service}: 基线文件不存在 {path.relative_to(ROOT)}")
             continue
-        committed = path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8", newline="\n") as handle:
+            committed = handle.read()
         if committed == generated:
             print(f"ok  {path.relative_to(ROOT)}")
             continue
