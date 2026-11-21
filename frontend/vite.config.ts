@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 
 import { fileURLToPath, URL } from 'node:url'
@@ -31,6 +31,5 @@ export default defineConfig({
     // jsdom 环境每个 worker 都要初始化，本机满载时并发建环境会把 worker 拖死
     // （表现为 vitest 无输出地挂住）。限制并发换取确定性，总耗时影响很小。
     maxWorkers: 2,
-    minWorkers: 1,
   },
 })
