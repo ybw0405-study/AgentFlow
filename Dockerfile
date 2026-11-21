@@ -30,7 +30,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---------- 3. Java 运行时公共层（非 root + readiness 探针） ----------
-FROM eclipse-temurin:17-jre-jammy@sha256:b3054a20e1a851574cdb1692dd0db5310c647e62214a2a7abecbec1b9e3ae8f1 AS java-base
+FROM eclipse-temurin:22-jre-jammy@sha256:dbcae8b5dd4d63f81739a538ec2c09797735f04a21d814f9071b62f018326043 AS java-base
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \
