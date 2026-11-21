@@ -18,7 +18,8 @@ import com.agentflow.connector.crypto.CredentialCipher;
 import com.agentflow.connector.domain.ConnectorRepository;
 import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.tenant.JdbcTenantTreePort;
-import com.agentflow.connector.web.ConnectorDtos.CreateRequest;
+import com.agentflow.connector.dto.ConnectorDtos.CreateRequest;
+import com.agentflow.connector.dto.ConnectorDtos.IdSummary;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
@@ -220,7 +221,7 @@ class ConnectorServiceTest {
     void visibleEnabledFiltersDisabled() {
         when(repo.listByTenants(any())).thenReturn(List.of(
                 row("on", "space-a", true), row("off", "space-a", false)));
-        assertThat(service.visibleEnabled("space-a")).extracting(ConnectorRow::id)
+        assertThat(service.visibleEnabled("space-a")).extracting(IdSummary::id)
                 .containsExactly("on");
     }
 }

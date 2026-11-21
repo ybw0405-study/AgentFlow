@@ -35,6 +35,9 @@ export AF_RATE_LIMIT_LOGIN_MAX="${AF_RATE_LIMIT_LOGIN_MAX:-300}"
 # 关着的话审计只走直写、不再经 MQ 扇出；生产必须开启。
 export AF_MQ_ENABLED="${AF_MQ_ENABLED:-true}"
 export AF_ROCKETMQ_NAMESRV="${AF_ROCKETMQ_NAMESRV:-127.0.0.1:9876}"
+# 本地开发默认开启 LLM 逐 token 流式（打字机效果）；引擎侧仍保守默认 false（opt-in），
+# 生产部署不经此脚本、行为不变。显式设 AF_LLM_STREAM=false 可关闭。
+export AF_LLM_STREAM="${AF_LLM_STREAM:-true}"
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
 # 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引用真实模型的

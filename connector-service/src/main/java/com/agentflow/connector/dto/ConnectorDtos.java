@@ -1,4 +1,4 @@
-package com.agentflow.connector.web;
+package com.agentflow.connector.dto;
 
 /** 连接器 API 请求/响应体。config 内不含任何密钥（密钥只走 /authorize）。 */
 public final class ConnectorDtos {

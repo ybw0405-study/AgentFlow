@@ -111,6 +111,58 @@ jobs:
             bash -n "$f" || exit 1
           done
 
+  # 弱凭据泄漏门禁：仓库内不得出现可被直接利用的明文 dev 口令/内部令牌。
+  # 只允许命中「显式标注为占位符/示例」的写法（CHANGE_ME、<...>、$... 环境变量引用），
+  # 一旦有人把真实弱口令写进源码/配置/脚本，本 job 在 PR 阶段即失败。
+  secret-leak-guard:
+    name: dev 弱凭据泄漏门禁
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 扫描仓库内明文弱凭据
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          # 需要强化的危险字面量：真实弱口令 / 弱内部令牌 / 明文 root 口令
+          patterns = [
+              (r'-p\s*(root|password|admin|agentflow|123456)\b', '明文 root/弱口令连接命令'),
+              (r"(?i)\bpassword\s*=\s*['\"](?!.*(CHANGE_ME|\\$\\{|\u003c|\u003c)).*['\"]", '疑似明文密码赋值'),
+          ]
+          # 目标文件类型
+          exts = {'.sql', '.yml', '.yaml', '.py', '.sh', '.properties', '.java', '.md'}
+          skip_dirs = {'.git', 'target', 'node_modules', '.venv', 'dist', '__pycache__', '.ruff_cache', '.pytest_cache'}
+
+          errors = []
+          for path in Path('.').rglob('*'):
+              if not path.is_file():
+                  continue
+              if any(part in skip_dirs for part in path.parts):
+                  continue
+              if path.suffix.lower() not in exts:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+              except Exception:
+                  continue
+              for idx, (pat, label) in enumerate(patterns):
+                  for m in re.finditer(pat, text):
+                      line_no = text[:m.start()].count('\n') + 1
+                      line = text.splitlines()[line_no - 1] if text.splitlines() else ''
+                      errors.append(f'{path}:{line_no} [{label}] -> {line.strip()[:100]}')
+
+          if errors:
+              print('弱凭据泄漏门禁失败：', file=sys.stderr)
+              for item in errors:
+                  print(f'  - {item}', file=sys.stderr)
+              sys.exit(1)
+          print('弱凭据泄漏门禁通过：未发现可被直接利用的明文弱口令/弱令牌。')
+          PY
+
   # AF-10 / AF-12：方案要求「空库 + 已迁移库各重放一次」与「迁移后跨表一致性」
   # 纳入 CI。两个脚本都带 --require-* 强制真库，禁止无库时靠静态审计蒙混过关；
   # build_executor 会在 runner 上自动起临时 mysql:8.4 容器并自行清理。

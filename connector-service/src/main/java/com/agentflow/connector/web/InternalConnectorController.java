@@ -1,14 +1,13 @@
 package com.agentflow.connector.web;
 
 import com.agentflow.common.api.ApiResponse;
-import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.service.ConnectorInvoker;
 import com.agentflow.connector.service.ConnectorInvoker.InvokeCommand;
 import com.agentflow.connector.service.ConnectorInvoker.InvokeResult;
 import com.agentflow.connector.service.ConnectorService;
-import com.agentflow.connector.web.ConnectorDtos.IdSummary;
-import com.agentflow.connector.web.ConnectorDtos.InvokeRequest;
-import com.agentflow.connector.web.ConnectorDtos.InvokeResponse;
+import com.agentflow.connector.dto.ConnectorDtos.IdSummary;
+import com.agentflow.connector.dto.ConnectorDtos.InvokeRequest;
+import com.agentflow.connector.dto.ConnectorDtos.InvokeResponse;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,14 +36,13 @@ public class InternalConnectorController {
     /** 引擎触发前拉取该空间可见且启用的连接器清单（含祖先共享）。 */
     @GetMapping
     public ApiResponse<List<IdSummary>> list(@RequestParam String spaceId) {
-        return ApiResponse.ok(connectors.visibleEnabled(spaceId).stream()
-                .map(row -> new IdSummary(row.id(), row.name(), row.tenantId())).toList());
+        return ApiResponse.ok(connectors.visibleEnabled(spaceId));
     }
 
     @PostMapping("/{id}/invoke")
     public InvokeResponse invoke(@PathVariable String id, @RequestBody InvokeRequest body) {
         int timeoutMs = body.timeoutMs() == null ? 30_000 : body.timeoutMs();
-        ConnectorRow row = connectors.visibleEnabled(body.tenantId()).stream()
+        IdSummary row = connectors.visibleEnabled(body.tenantId()).stream()
                 .filter(r -> r.id().equals(id)).findFirst().orElse(null);
         if (row == null) {
             return new InvokeResponse(false, null, "CONN-NOT_FOUND-001", false, 0);

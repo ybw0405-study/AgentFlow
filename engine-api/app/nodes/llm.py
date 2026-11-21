@@ -179,20 +179,27 @@ class LlmExecutor:
         )
 
         result: CommandResult | None = None
+        # 流式只对纯文本模式有意义：JSON 模式必须一次性拿到完整结果做 schema 校验，
+        # condition/下游变量引用同理依赖 COMMAND_COMPLETED 的完整结果。
+        # 文本模式下是否流式由 provider 的配置（AF_LLM_STREAM）决定，这里显式传
+        # stream=False 只在 JSON 模式强制关闭，其余交给 provider 内部判断。
+        kwargs: dict[str, Any] = {
+            "model": cfg.model,
+            "prompt": prompt,
+            "system": system,
+            "temperature": cfg.temperature,
+            "max_tokens": max_tokens,
+            "output_mode": cfg.output_mode,
+            "output_schema": cfg.output_schema,
+            "seed": ctx.derived_seed(),
+            "trace_id": ctx.trace_id,
+            "call_id": call_id,
+            "space_id": ctx.space_id,
+        }
+        if cfg.output_mode != "text" and _accepts_stream_kwarg(provider):
+            kwargs["stream"] = False
         try:
-            result = await provider.complete(
-                model=cfg.model,
-                prompt=prompt,
-                system=system,
-                temperature=cfg.temperature,
-                max_tokens=max_tokens,
-                output_mode=cfg.output_mode,
-                output_schema=cfg.output_schema,
-                seed=ctx.derived_seed(),
-                trace_id=ctx.trace_id,
-                call_id=call_id,
-                space_id=ctx.space_id,
-            )
+            result = await provider.complete(**kwargs)
         except TransientNodeError as exc:
             await self._command_failed(ctx, call_id, exc.code)
             # provider 抛异常时未走到成功/失败结果分支，已 reserve 的 grant 必须在这里
@@ -215,6 +222,24 @@ class LlmExecutor:
 
         # provider 可能把占位模型名回落到服务端默认模型；审计需记录真实下发的模型名
         resolved_model = str(result.extra.get("model") or cfg.model)
+
+        # 流式增量作为展示层事件推送：严格落在 COMMAND_COMPLETED 之前，
+        # 且绝不影响 NodeResult —— 下游只消费完整结果。无增量（非流式 / 上游不支持）
+        # 时这一整块为空，行为与之前逐字节一致。
+        deltas = result.extra.get("deltas")
+        if isinstance(deltas, list):
+            for idx, delta in enumerate(deltas):
+                if not isinstance(delta, str) or not delta:
+                    continue
+                await ctx.emit(
+                    EventType.OUTPUT_DELTA,
+                    {
+                        "callId": call_id,
+                        "index": idx,
+                        "text": delta,
+                    },
+                )
+
         await ctx.emit(
             EventType.COMMAND_COMPLETED,
             {
@@ -265,3 +290,18 @@ class LlmExecutor:
     @staticmethod
     async def _command_failed(ctx: NodeContext, call_id: str, code: str) -> None:
         await ctx.emit(EventType.COMMAND_FAILED, {"callId": call_id, "errorCode": code})
+
+
+def _accepts_stream_kwarg(provider: LLMProvider) -> bool:
+    """探测 provider 是否接受 stream 关键字。
+
+    只有直连 openai-compatible 提供该参数；连接器路径（connector_llm）经
+    connector-service 单跳代理，拿不到 SSE 增量，签名里没有 stream。
+    探测用函数签名而非 name 字符串，避免 future provider 引入 stream 时漏判。
+    """
+    import inspect
+
+    try:
+        return "stream" in inspect.signature(provider.complete).parameters
+    except (TypeError, ValueError):
+        return False

@@ -79,6 +79,9 @@ if ($null -eq $env:AF_RATE_LIMIT_LOGIN_MAX) { $env:AF_RATE_LIMIT_LOGIN_MAX = '30
 # 关着的话 workflow-service 用 NoopAuditPublisher，审计表里根本不会有对应事件。
 if ($null -eq $env:AF_MQ_ENABLED) { $env:AF_MQ_ENABLED = 'true' }
 if ($null -eq $env:AF_ROCKETMQ_NAMESRV) { $env:AF_ROCKETMQ_NAMESRV = '127.0.0.1:9876' }
+# 本地开发默认开启 LLM 逐 token 流式（打字机效果）；引擎侧仍保守默认 false（opt-in），
+# 生产部署不经此脚本、行为不变。显式设 AF_LLM_STREAM=false 可关闭。
+if ($null -eq $env:AF_LLM_STREAM) { $env:AF_LLM_STREAM = 'true' }
 
 # 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
 # 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引用真实模型的

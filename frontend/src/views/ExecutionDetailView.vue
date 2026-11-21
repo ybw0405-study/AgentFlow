@@ -30,6 +30,10 @@ const selectedNode = computed<NodeExecutionDto | null>(
 )
 const ioLoading = ref(false)
 const liveNote = ref('')
+/** 流式输出（OutputDelta 逐 token 打字机）：nodeKey → 已累计的增量文本。 */
+const streamText = ref<Record<string, string>>({})
+/** 正在流式输出的节点 key（用于高亮「正在生成」）。 */
+const streamingNodeKey = ref<string | null>(null)
 let sse: SseSession | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
@@ -160,6 +164,23 @@ function handleLiveEvent(e: EngineEvent): void {
     case 'ExecutionTimedOut':
       void load()  // 终态：拉全量对齐投影
       return
+    case 'OutputDelta':
+      // 逐 token 增量：按 nodeKey 累加，展示打字机效果。payload.text 为增量片段。
+      if (e.nodeKey) {
+        const delta = typeof e.payload.text === 'string' ? e.payload.text : ''
+        streamText.value = { ...streamText.value, [e.nodeKey]: (streamText.value[e.nodeKey] ?? '') + delta }
+        streamingNodeKey.value = e.nodeKey
+      }
+      break
+    case 'CommandCompleted':
+      // 完整结果已落库走既有 output 展示；清除该节点的流式增量，避免与最终输出重复。
+      if (e.nodeKey && streamText.value[e.nodeKey] !== undefined) {
+        const next = { ...streamText.value }
+        delete next[e.nodeKey]
+        streamText.value = next
+        if (streamingNodeKey.value === e.nodeKey) streamingNodeKey.value = null
+      }
+      break
     default:
       break
   }
@@ -394,6 +415,29 @@ onUnmounted(() => {
       </div>
       <div style="overflow: auto">
         <TracePanel :execution="detail.execution" />
+        <div
+          v-if="Object.keys(streamText).length > 0"
+          style="padding: 12px"
+        >
+          <div
+            v-for="(text, key) in streamText"
+            :key="key"
+            style="margin-bottom: 10px"
+          >
+            <div class="af-label">
+              {{ key }}
+              <span
+                v-if="streamingNodeKey === key"
+                class="af-faint"
+                style="font-size: 10px"
+              >· 生成中…</span>
+            </div>
+            <pre
+              class="mono"
+              style="white-space: pre-wrap; font-size: 11.5px; margin: 0; line-height: 1.5"
+            >{{ text }}<span class="af-cursor">▍</span></pre>
+          </div>
+        </div>
         <div style="padding: 12px">
           <div
             class="af-label"
@@ -410,3 +454,16 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.af-cursor {
+  animation: af-blink 1s steps(1) infinite;
+  color: var(--af-accent);
+}
+
+@keyframes af-blink {
+  50% {
+    opacity: 0;
+  }
+}
+</style>
