@@ -5,6 +5,7 @@ import { triggerApi, workflowApi } from '@/api'
 import { describeError, type DescribedError } from '@/api/errors'
 import { formatInstant } from '@/utils/instant'
 import { initialVariables } from '@/dsl/run-defaults'
+import { MISFIRE_POLICY_VALUES, type MisfirePolicyValue } from '@/dsl/contract-enums'
 import RunVariablesForm from '@/components/canvas/RunVariablesForm.vue'
 import type { VariableSpec, WorkflowDsl } from '@/dsl/types'
 import type {
@@ -53,23 +54,23 @@ const CRON_PRESETS = [
  * 三种策略不是「补跑开关的三档力度」，而是三件不同的事：探活要跳过、对账要补齐、
  * 提醒不要迟到。所以每个选项都写清代价，而不是用「激进 / 保守」这种词。
  */
-const MISFIRE_POLICIES: { value: MisfirePolicy; label: string; hint: string }[] = [
-  {
-    value: 'CATCH_UP_LATEST',
+const MISFIRE_POLICY_TEXT: Record<MisfirePolicyValue, { label: string; hint: string }> = {
+  CATCH_UP_LATEST: {
     label: '只补最近一档',
     hint: '停机再久也只跑一次——每分钟的任务不会瞬间补出上百条',
   },
-  {
-    value: 'CATCH_UP_ALL',
+  CATCH_UP_ALL: {
     label: '补齐错过的档位',
     hint: '按时间顺序回放最近 20 档，更老的丢弃并记审计——按小时对账不会缺一段',
   },
-  {
-    value: 'SKIP',
+  SKIP: {
     label: '错过就跳过',
     hint: '只推游标、留一条审计，不补跑——下午补发早晨的提醒是噪音',
   },
-]
+}
+// CT-1：取值来自单一 contract-enums.ts，这里只补展示文案，不再抄一遍枚举值。
+const MISFIRE_POLICIES: { value: MisfirePolicy; label: string; hint: string }[] =
+  MISFIRE_POLICY_VALUES.map((value) => ({ value, ...MISFIRE_POLICY_TEXT[value] }))
 
 async function load(): Promise<void> {
   const detail = await workflowApi.detail(workflowId)

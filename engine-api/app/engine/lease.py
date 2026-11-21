@@ -9,6 +9,7 @@ GET 与 SET 之间若恰好过期并被新 worker 抢占，SET xx 会把新持�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import redis.asyncio as aioredis
@@ -17,6 +18,9 @@ from redis.exceptions import WatchError
 logger = logging.getLogger(__name__)
 
 _RENEW_RETRIES = 5
+# 单次租约 Redis 操作的硬超时（AF-7）：client 的 socket_timeout 只覆盖真实网络，
+# 这里再兜一层，防止 WATCH/MULTI 或 TCP 半开让调用方既不返回也不抛。
+OP_TIMEOUT_S = 2.0
 
 
 class Lease:
@@ -31,6 +35,9 @@ class Lease:
 
     async def renew(self) -> bool:
         """仅当租约仍属于我时续期；owner 被改或冲突耗尽都返回 False。"""
+        return await asyncio.wait_for(self._renew(), timeout=OP_TIMEOUT_S)
+
+    async def _renew(self) -> bool:
         async with self._r.pipeline() as pipe:
             for _ in range(_RENEW_RETRIES):
                 try:
@@ -47,10 +54,14 @@ class Lease:
         return False
 
     async def held_by_me(self) -> bool:
-        return (await self._r.get(self.key)) == self.owner
+        value = await asyncio.wait_for(self._r.get(self.key), timeout=OP_TIMEOUT_S)
+        return value == self.owner
 
     async def release(self) -> None:
         """仅删除仍属于我的租约，绝不删他人抢占后的新租约。"""
+        await asyncio.wait_for(self._release(), timeout=OP_TIMEOUT_S)
+
+    async def _release(self) -> None:
         async with self._r.pipeline() as pipe:
             for _ in range(_RENEW_RETRIES):
                 try:

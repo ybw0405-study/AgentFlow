@@ -78,27 +78,30 @@ http.interceptors.response.use(
   },
 )
 
-export async function get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  const resp = await http.get<{ data: T }>(url, { params })
+/** 五个封装都透传可选 `AbortSignal`：调用方（如执行详情卸载）可取消在途 REST，
+ *  省略时行为与原来完全一致，现有调用点不需要改动。 */
+
+export async function get<T>(url: string, params?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  const resp = await http.get<{ data: T }>(url, { params, signal })
   return resp.data.data
 }
 
-export async function post<T>(url: string, body?: unknown): Promise<T> {
-  const resp = await http.post<{ data: T }>(url, body)
+export async function post<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const resp = await http.post<{ data: T }>(url, body, { signal })
   return resp.data.data
 }
 
-export async function put<T>(url: string, body?: unknown): Promise<T> {
-  const resp = await http.put<{ data: T }>(url, body)
+export async function put<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const resp = await http.put<{ data: T }>(url, body, { signal })
   return resp.data.data
 }
 
-export async function patch<T>(url: string, body?: unknown): Promise<T> {
-  const resp = await http.patch<{ data: T }>(url, body)
+export async function patch<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const resp = await http.patch<{ data: T }>(url, body, { signal })
   return resp.data.data
 }
 
-export async function del<T>(url: string): Promise<T> {
-  const resp = await http.delete<{ data: T }>(url)
+export async function del<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const resp = await http.delete<{ data: T }>(url, { signal })
   return resp.data.data
 }

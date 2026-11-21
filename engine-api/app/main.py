@@ -48,6 +48,7 @@ _ERROR_STATUS = {
     "PREVIEW-GRAPH-001": 422,
     "PREVIEW-STRUCTURE-001": 422,
     "EXEC-GATE_BUSY-001": 409,
+    "EXEC-DISPATCH_REJECTED-001": 409,  # AF-1：接受但未派发 ≠ 202 成功
 }
 
 
@@ -61,7 +62,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+        redis = aioredis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            # TCP 半开时 socket 级超时让每次 Redis 调用最终返回/抛错（AF-7），
+            # 不再把续约循环或租约释放永久挂住。
+            socket_timeout=settings.redis_socket_timeout_s,
+            socket_connect_timeout=settings.redis_socket_connect_timeout_s,
+        )
         store = EventStore(settings.pg_dsn, payload_max_bytes=settings.event_payload_max_bytes)
         await store.connect()
         await run_migrations(store.pool, settings.pg_migrations_path)
@@ -136,9 +144,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = current_trace_id.set(trace_id)
         try:
             path = request.url.path
-            if path.startswith("/internal") and path != "/internal/health":
+            # 探针免鉴权：healthcheck 不带内部令牌。除 liveness/readiness 三个路径外，
+            # 其余 /internal/** 仍强制校验 X-Internal-Token（AF-8）。
+            health_paths = {
+                "/internal/health",
+                "/internal/health/live",
+                "/internal/health/ready",
+            }
+            if path.startswith("/internal") and path not in health_paths:
                 provided = request.headers.get("x-internal-token", "")
-                if not hmac.compare_digest(provided, settings.internal_token):
+                # AF-3：入站只认网关服务端注入的引擎专用凭据，不认控制面共享令牌。
+                if not hmac.compare_digest(provided, settings.engine_token):
                     return problem(401, "AGT-AUTH-001", "Unauthorized")
             response = await call_next(request)
             response.headers["X-Trace-Id"] = trace_id

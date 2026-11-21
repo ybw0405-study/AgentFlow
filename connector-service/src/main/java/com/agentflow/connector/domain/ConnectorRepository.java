@@ -47,10 +47,12 @@ public class ConnectorRepository {
         } catch (Exception e) {
             // 脏 config_json 静默变空配置会把排查方向引向"没配"，至少留一条告警（C-13）。
             // 仍返回空对象以免一条脏数据让整个列表接口 500。
+            // 绝不把原文打进日志：config_json 含 headers / auth.headerName，可能携带
+            // 静态 API key / token（AF-13）。只留 id + 异常类型 + 长度供排查。
             String raw = rs.getString("config_json");
-            log.warn("invalid config_json for connector {}; treating as empty: {}",
-                    rs.getString("id"),
-                    raw == null ? "<null>" : raw.substring(0, Math.min(200, raw.length())));
+            log.warn("invalid config_json for connector {}; treating as empty (type={}, len={})",
+                    rs.getString("id"), e.getClass().getSimpleName(),
+                    raw == null ? 0 : raw.length());
             config = MAPPER.createObjectNode();
         }
         return new ConnectorRow(rs.getString("id"), rs.getString("tenant_id"),

@@ -85,6 +85,11 @@
             "$ref": "#/components/schemas/PolicyIn",
             "default": {}
           },
+          "preview": {
+            "default": false,
+            "title": "Preview",
+            "type": "boolean"
+          },
           "spaceId": {
             "title": "Spaceid",
             "type": "string"
@@ -523,6 +528,7 @@
     },
     "/internal/events": {
       "get": {
+        "description": "事件尾读。AF-3：调用方带 spaceId 时，过滤条件下推到引擎 SQL 层，\n不再无条件返回全租户事件。空/空白视为未指定（系统级投影器走全局路径）。",
         "operationId": "tail_events_internal_events_get",
         "parameters": [
           {
@@ -562,6 +568,22 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "spaceId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Spaceid"
             }
           }
         ],
@@ -912,6 +934,7 @@
     },
     "/internal/health": {
       "get": {
+        "description": "兼容别名（liveness）：进程存活即 200，README/既有探针口径不变。\n\nreadiness 请用 /health/ready —— 它会真探 PG + Redis，依赖 down 返回 503。",
         "operationId": "health_internal_health_get",
         "responses": {
           "200": {
@@ -930,6 +953,46 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/internal/health/live": {
+      "get": {
+        "description": "liveness（AF-8）：恒活，绝不因依赖抖动让编排器把存活实例摘除。",
+        "operationId": "health_live_internal_health_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Live Internal Health Live Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Live"
+      }
+    },
+    "/internal/health/ready": {
+      "get": {
+        "description": "readiness（AF-8）：短超时 SELECT 1 探 PG + Redis PING，任一 down 返回 503。\n\n与 Java 侧 HealthController 的 UP/DEGRADED 口径对齐；每个依赖独立探测，\n单次超时由 settings.health_probe_timeout_s 约束，不会拖住探针调用方。",
+        "operationId": "health_ready_internal_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Ready"
       }
     },
     "/internal/llm/models": {

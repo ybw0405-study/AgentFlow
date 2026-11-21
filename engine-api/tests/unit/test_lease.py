@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
+from app.engine import lease as lease_module
 from app.engine.lease import Lease
 
 
@@ -41,3 +46,35 @@ async def test_release_deletes_own_lease(fake_redis) -> None:
     await lease.release()
 
     assert await fake_redis.get("af:lease:e4") is None
+
+
+class _HangingRedis:
+    """模拟 Redis TCP 半开：调用既不返回也不抛（AF-7 的故障形态）。"""
+
+    async def get(self, *args, **kwargs):
+        await asyncio.Event().wait()
+
+    def pipeline(self):
+        return _HangingPipeline()
+
+
+class _HangingPipeline:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def watch(self, *args, **kwargs):
+        await asyncio.Event().wait()
+
+
+async def test_lease_ops_time_out_on_half_open_redis(monkeypatch):
+    """Redis 半开时 renew / held_by_me 必须超时返回，而不是永久阻塞（AF-7）。"""
+    monkeypatch.setattr(lease_module, "OP_TIMEOUT_S", 0.05)
+    lease = Lease(_HangingRedis(), "af:lease:hang", ttl_ms=1000, owner="worker-a")
+
+    with pytest.raises(TimeoutError):
+        await lease.renew()
+    with pytest.raises(TimeoutError):
+        await lease.held_by_me()

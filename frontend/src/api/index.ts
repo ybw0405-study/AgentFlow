@@ -48,7 +48,8 @@ export const workflowApi = {
     post<{ id: string }>('/workflows', { name, description }),
   list: (params: { status?: string; keyword?: string; cursor?: string; limit?: number }) =>
     get<PageResult<WorkflowDefinitionDto>>('/workflows', params),
-  detail: (id: string) => get<WorkflowDetail>(`/workflows/${id}`),
+  detail: (id: string, signal?: AbortSignal) =>
+    get<WorkflowDetail>(`/workflows/${id}`, undefined, signal),
   patch: (
     id: string,
     body: { name?: string; description?: string; status?: string; maxConcurrent?: number },
@@ -172,13 +173,17 @@ export const executionApi = {
       policy?: { tokenBudget?: number; maxSteps?: number; deadlineMs?: number }
     },
   ) => post<TriggerData>(`/workflows/${definitionId}/executions`, body),
-  detail: (id: string) => get<ExecutionDetail>(`/executions/${id}`),
+  // 下列可选末位 signal 供执行详情页卸载时取消在途 REST；省略时与原有调用完全一致。
+  detail: (id: string, signal?: AbortSignal) =>
+    get<ExecutionDetail>(`/executions/${id}`, undefined, signal),
   list: (params: { status?: string; definitionId?: string; cursor?: string; limit?: number }) =>
     get<PageResult<ExecutionDto>>('/executions', params),
-  events: (id: string, afterSeq = 0, limit = 500) =>
-    get<EventsPage>(`/executions/${id}/events`, { afterSeq, limit }),
-  nodeIo: (id: string, nodeKey: string) => get<NodeIo>(`/executions/${id}/nodes/${nodeKey}/io`),
-  cancel: (id: string) => post<{ ok: boolean; status: string }>(`/executions/${id}/cancel`),
+  events: (id: string, afterSeq = 0, limit = 500, signal?: AbortSignal) =>
+    get<EventsPage>(`/executions/${id}/events`, { afterSeq, limit }, signal),
+  nodeIo: (id: string, nodeKey: string, signal?: AbortSignal) =>
+    get<NodeIo>(`/executions/${id}/nodes/${nodeKey}/io`, undefined, signal),
+  cancel: (id: string, signal?: AbortSignal) =>
+    post<{ ok: boolean; status: string }>(`/executions/${id}/cancel`, undefined, signal),
 }
 
 /** 管理端一行的租户账面：账本用量 + 生效限额 + 限额来源。 */

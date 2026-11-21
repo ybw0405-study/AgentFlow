@@ -3,7 +3,6 @@ package com.agentflow.workflow.execution;
 import com.agentflow.common.tenant.TenantContext.TenantInfo;
 import com.agentflow.workflow.workflow.WorkflowDefinitionMapper;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -69,8 +68,9 @@ public class UsageService {
                 Math.max(record.nodeCount(), 0), Math.max(record.tokenUsed(), 0),
                 record.latencyMs()));
         if (record.tokenUsed() > 0 || record.nodeCount() > 0) {
-            budgets.accrueByTenant(tenantId, Math.max(record.nodeCount(), 0),
-                    Math.max(record.tokenUsed(), 0), monthlyCallLimit, monthlyTokenLimit);
+            budgets.accrueByTenant(tenantId, BudgetLedgerMapper.currentPeriod(),
+                    Math.max(record.nodeCount(), 0), Math.max(record.tokenUsed(), 0),
+                    monthlyCallLimit, monthlyTokenLimit);
         }
     }
 
@@ -110,7 +110,7 @@ public class UsageService {
     }
 
     private Map<String, Object> budgetOf(String tenantId) {
-        String period = YearMonth.now().toString();
+        String period = BudgetLedgerMapper.currentPeriod();
         var row = budgets.find(tenantId, period).orElse(null);
         int callsUsed = row == null ? 0 : row.callsUsed();
         long tokensUsed = row == null ? 0 : row.tokensUsed();

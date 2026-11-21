@@ -1,11 +1,13 @@
 import type { NodeType } from './types'
 import { displayModelName, isLegacyOfflineModel } from './model-presets'
+import {
+  PARALLEL_JOIN_POLICIES,
+  SUBWORKFLOW_VERSION_POLICIES,
+} from './contract-enums'
 
-/** 与引擎 SubworkflowConfig.version_policy / ParallelConfig.join 的 Literal 对齐。
- *  内联下拉与配置抽屉共用这两份取值，contract-enums.spec.ts 会拿 models.py 做快照比对，
- *  防止再出现 PINNED / any / n_of_m 这种引擎不认的枚举漂移。 */
-export const SUBWORKFLOW_VERSION_POLICIES = ['LATEST_PUBLISHED', 'FIXED'] as const
-export const PARALLEL_JOIN_POLICIES = ['all', 'first_success'] as const
+/** CT-1：取值统一来自 contract-enums.ts；这里保留再导出兼容既有 import 路径，
+ *  contract-enums.spec.ts 会拿 models.py 做快照比对，防止枚举漂移。 */
+export { PARALLEL_JOIN_POLICIES, SUBWORKFLOW_VERSION_POLICIES } from './contract-enums'
 
 /** 节点卡片的呈现规则集中在这里：编排画布与执行态画布共用同一套口径。
  *  颜色一律返回设计令牌，不出现原始色值（design-redlines 守卫）。 */

@@ -424,6 +424,13 @@ CREATE TABLE notification (
 );
 ```
 
+> 上面的 `trg_wv_no_update` 是 **V002 的初始定义**。`V019__immutable_version_columns.sql`
+> 会把不可变保护扩展到 `published_at` / `published_by` / `immutable` 本身；AF-10 后该迁移
+> 改为「先建后删」：先 `CREATE TRIGGER IF NOT EXISTS trg_wv_no_update_af10`（新定义），
+> 再 `DROP TRIGGER trg_wv_no_update`（V002 旧定义），避免 DDL 隐式提交造成保护空窗。
+> 因此**升级后库里的 BEFORE UPDATE 触发器名是 `trg_wv_no_update_af10`**，
+> `trg_wv_no_delete` 不变。回滚脚本见 `scripts/rollback/`，顺序见 `scripts/ROLLBACK.md`。
+
 ### 3.2 PostgreSQL（库 `agentflow_events`，独立迁移，Python 独占写入）
 
 ```sql

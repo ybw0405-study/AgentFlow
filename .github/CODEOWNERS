@@ -1,0 +1,45 @@
+# CODEOWNERS
+#
+# 本文件列出各目录的负责人，供 PR 审查自动请求复核使用。
+# 路径均经 `git ls-files` 核实为仓库中真实存在的顶层目录 / 文件（G10）。
+# 语法：<path> <owner...>
+# 文档：https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# 现状（2026-11-21 实测）：main 分支保护已启用（strict=true、enforce_admins=true、
+# 线性历史、required_status_checks 4 项、dismiss_stale_reviews=true）。
+# required_pull_request_reviews 在 Y-super000 接受 write 协作者邀请后设为
+# count=1 + require_code_owner_reviews=true，启用步骤见 CONTRIBUTING.md「分支与评审」。
+#
+# 诚实边界：两个账号由同一自然人持有。这只能构成形式上的第二道门禁，
+# 不等于独立复核；真正的把关来自 required_status_checks 与发布 runbook。
+# PR 作者不能批准自己的 PR，因此 ybw0405-study 开的 PR 必须由 Y-super000 批准。
+
+# 默认兜底：以上未列出的路径由维护者负责
+* @ybw0405-study @Y-super000
+
+# 引擎（Python）
+/engine-api/ @ybw0405-study @Y-super000
+# 前端（Vue / Vite）
+/frontend/ @ybw0405-study @Y-super000
+# Java 控制面各服务
+/agent-gateway/ @ybw0405-study @Y-super000
+/workflow-service/ @ybw0405-study @Y-super000
+/connector-service/ @ybw0405-study @Y-super000
+/audit-service/ @ybw0405-study @Y-super000
+/common/ @ybw0405-study @Y-super000
+# 配置与数据
+/config/ @ybw0405-study @Y-super000
+/db/ @ybw0405-study @Y-super000
+# 文档 / 运维 / 脚本 / 端到端
+/docs/ @ybw0405-study @Y-super000
+/ops/ @ybw0405-study @Y-super000
+/scripts/ @ybw0405-study @Y-super000
+/e2e/ @ybw0405-study @Y-super000
+# CI 与仓库治理
+/.github/ @ybw0405-study @Y-super000
+/pom.xml @ybw0405-study @Y-super000
+/CONTRIBUTING.md @ybw0405-study @Y-super000
+/SECURITY.md @ybw0405-study @Y-super000
+/SUPPORT.md @ybw0405-study @Y-super000
+/CHANGELOG.md @ybw0405-study @Y-super000
+/.gitignore @ybw0405-study @Y-super000

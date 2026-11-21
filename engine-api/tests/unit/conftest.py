@@ -64,14 +64,28 @@ class InMemoryEventStore:
             await self.put_node_io(execution_id, node_key, "OUT", spill)
         return ev
 
+    async def ping(self) -> None:
+        """readiness 探针的内存替身（AF-8 的 API 层测试用）。"""
+        return None
+
     async def read_all(self, execution_id):
         return sorted(
             (e for e in self.events if e.execution_id == execution_id),
             key=lambda e: e.aggregate_version,
         )
 
-    async def tail(self, after_seq, limit):
-        return [e for e in self.events if e.seq > after_seq][:limit]
+    async def tail(self, after_seq, limit, *, space_id=None):
+        events = [e for e in self.events if e.seq > after_seq]
+        if space_id is not None:
+            # 与真实 EventStore 一致：按 spec 的 spaceId 过滤，无 spec 的事件
+            # 无法证明空间归属，一律排除（fail-closed）。
+            events = [
+                e
+                for e in events
+                if (spec := self.specs.get(e.execution_id)) is not None
+                and spec.get("spaceId") == space_id
+            ]
+        return events[:limit]
 
     async def tail_for_execution(self, execution_id, after_seq, limit):
         return [e for e in self.events if e.execution_id == execution_id and e.seq > after_seq][
@@ -108,6 +122,10 @@ class InMemoryEventStore:
     async def get_spec(self, execution_id):
         return self.specs.get(execution_id)
 
+    async def delete_spec(self, execution_id):
+        """AF-6 试跑收口后清理，与真实 EventStore.delete_spec 语义一致。"""
+        self.specs.pop(execution_id, None)
+
     async def put_node_io(self, execution_id, node_key, direction, payload):
         self.io[(execution_id, node_key, direction)] = {"payload": payload, "contentHash": "mem"}
 
@@ -129,7 +147,9 @@ class NullPublisher:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(internal_token="test-token")
+    # AF-3 后入站 /internal/** 认 engine_token；本地测试里显式设为同值，
+    # 让既有「带 X-Internal-Token」的用例继续覆盖 API 行为（生产必须不同）。
+    return Settings(internal_token="test-token", engine_token="test-token")
 
 
 @pytest.fixture

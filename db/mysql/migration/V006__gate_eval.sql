@@ -31,7 +31,7 @@ CREATE TABLE gate_task (
   UNIQUE KEY uq_gate_exec_node (execution_id, node_key),
   KEY idx_gate_inbox (tenant_id, status, seq),
   KEY idx_gate_due (status, timeout_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3) 站内通知（architecture.md §3.1）
 CREATE TABLE notification (
@@ -45,7 +45,7 @@ CREATE TABLE notification (
   created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   KEY idx_ntf_user (user_id, read_at, seq)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4) 裁决 outbox：引擎不可达时裁决必须先落地（用户已经点了按钮），再由 relay 重投。
 --    比「直接 500 让用户重试」更可靠：审批动作不可丢，且重复投递在引擎侧幂等
@@ -66,7 +66,7 @@ CREATE TABLE gate_resolve_outbox (
   PRIMARY KEY (id),
   UNIQUE KEY uq_outbox_exec_node (execution_id, node_key),
   KEY idx_outbox_due (status, next_attempt_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5) 评测集：数据集 → 用例（输入/期望/断言）→ 运行 → 逐用例结果。
 CREATE TABLE eval_dataset (
@@ -82,7 +82,7 @@ CREATE TABLE eval_dataset (
   uq_name     VARCHAR(128) GENERATED ALWAYS AS (IF(deleted_at IS NULL, name, NULL)) VIRTUAL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_ed_tenant_name (tenant_id, uq_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE eval_case (
   id             CHAR(36)     NOT NULL,
@@ -97,7 +97,7 @@ CREATE TABLE eval_case (
   updated_at     DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   KEY idx_ec_dataset (dataset_id, id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE eval_run (
   id            CHAR(36)     NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE eval_run (
   KEY idx_er_dataset (dataset_id, created_at),
   KEY idx_er_status (status, created_at),
   KEY idx_er_experiment (experiment_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE eval_case_result (
   id            CHAR(36)     NOT NULL,
@@ -139,7 +139,7 @@ CREATE TABLE eval_case_result (
   PRIMARY KEY (id),
   UNIQUE KEY uq_ecr_run_case (run_id, case_id),
   KEY idx_ecr_run (run_id, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 6) A/B 实验：同一数据集上跑两个版本，按通过率/耗时/token 出对比结论。
 --    在线流量切分由 P1 的 canary 负责；这里是「离线成对评估」，不混用。
@@ -160,4 +160,4 @@ CREATE TABLE ab_experiment (
   finished_at   DATETIME(3)  NULL,
   PRIMARY KEY (id),
   KEY idx_ab_tenant (tenant_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

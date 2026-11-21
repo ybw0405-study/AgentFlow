@@ -102,4 +102,45 @@ public final class ProductionGuard {
                     "FAIL-FAST: " + name + " must be true in production");
         }
     }
+
+    /**
+     * AF-3：网关→引擎凭据必须与控制面凭据分离。只做「注入」而不强制分离的话，
+     * 拿到控制面共享令牌的人依然可以绕开网关直连引擎 /internal/**。
+     */
+    public static void requireDistinct(String name, String controlPlaneToken,
+                                       String engineToken) {
+        if (!productionEnabled()) {
+            return;
+        }
+        if (controlPlaneToken == null || engineToken == null
+                || controlPlaneToken.isBlank() || engineToken.isBlank()
+                || controlPlaneToken.equals(engineToken)) {
+            throw new IllegalStateException(
+                    "FAIL-FAST: " + name
+                            + " must be a strong value distinct from the control-plane token (AF-3)");
+        }
+    }
+
+    /**
+     * AF-4：生产环境数据源账号必须由环境变量**显式注入**，且与 Spring 实际解析出的
+     * datasource username 完全一致、不得为 root。
+     *
+     * <p>只校验 System.getenv 会漏掉两种绕过：{@code --spring.datasource.username=root}
+     * 命令行覆盖，以及 {@code SPRING_APPLICATION_JSON} 注入。这里同时比对实际生效值，
+     * 覆盖后与 env 不一致一律拒绝启动，least-privilege.sql 的 GRANT 才不会形同虚设。
+     */
+    public static void requireExplicitDbAccount(String envName, String explicitValue,
+                                                 String resolvedValue) {
+        if (!productionEnabled()) {
+            return;
+        }
+        if (explicitValue == null || explicitValue.isBlank()
+                || resolvedValue == null || resolvedValue.isBlank()
+                || !explicitValue.equals(resolvedValue)
+                || "root".equalsIgnoreCase(resolvedValue.trim())) {
+            throw new IllegalStateException(
+                    "FAIL-FAST: " + envName + " must explicitly name the least-privilege DB account "
+                            + "that Spring actually uses (not root, not overridden via CLI/JSON)");
+        }
+    }
 }

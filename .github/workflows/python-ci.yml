@@ -18,15 +18,21 @@ jobs:
   verify:
     # testcontainers 需原生 Docker socket；windows-latest 上 ryu 挂载 /var/run/docker.sock 会失败
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.13'
+          python-version-file: .python-version  # G12：与根目录版本文件对齐
           cache: pip
-      - name: install (locked)
+          cache-dependency-path: engine-api/requirements.lock.txt  # G20：绑定真实锁文件
+      - name: install (locked + verified hashes)
         working-directory: engine-api
-        run: pip install -r requirements.lock.txt
+        # G15：--require-hashes 强制每个依赖都匹配锁文件里的真实 sha256；
+        # 项目本体以 --no-deps -e . 单独安装（--require-hashes 不接受 editable 需求）。
+        run: |
+          pip install --require-hashes -r requirements.lock.txt
+          pip install --no-deps -e .
       - name: ruff check
         working-directory: engine-api
         run: ruff check app tests

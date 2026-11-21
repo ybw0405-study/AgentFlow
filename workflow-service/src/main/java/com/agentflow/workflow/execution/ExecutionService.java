@@ -134,7 +134,7 @@ public class ExecutionService {
         }
         // 月度额度硬约束（P1-9）：budget_ledger 不再只是展示用的记账本。
         // 账期口径与 UsageService / 投影器一致：Asia/Shanghai 的 yyyy-MM。
-        String period = java.time.YearMonth.now(java.time.ZoneId.of("Asia/Shanghai")).toString();
+        String period = BudgetLedgerMapper.currentPeriod();
         var ledger = budgets.find(tenantId, period).orElse(null);
         if (ledger != null
                 && ((ledger.limitCalls() > 0 && ledger.callsUsed() >= ledger.limitCalls())
@@ -213,11 +213,23 @@ public class ExecutionService {
         engineRequest.put("policy", Map.of("tokenBudget", tokenBudget,
                 "maxSteps", maxSteps, "deadlineMs", deadlineMs));
         engineRequest.put("traceId", traceId);
+        Map<String, Object> dispatch;
         try {
-            engine.submitExecution(engineRequest);
+            dispatch = engine.submitExecution(engineRequest);
         } catch (BusinessException e) {
             executions.markFailedDispatch(executionId, "FAILED", ErrorCode.AGT_UPSTREAM_001.code());
             throw e;
+        }
+        // AF-1：引擎「接受但未派发」（租约被占 / 关停中，或旧版引擎的 202+RUNNING）
+        // 会带 note。此时引擎侧根本没有这条执行，绝不能记 EXECUTION_TRIGGERED /
+        // 留下一条永远等不到事件的 PENDING —— 明确收口成 DISPATCH_REJECTED。
+        Object note = dispatch == null ? null : dispatch.get("note");
+        if (note instanceof String text && !text.isBlank()) {
+            executions.markFailedDispatch(executionId, "FAILED", ErrorCode.AGT_UPSTREAM_001.code());
+            audit.publish(AuditMessage.of(tenantId, executionId, userId,
+                    "DISPATCH_REJECTED", Map.of("definitionId", definitionId, "note", text)));
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001,
+                    "engine did not dispatch: " + text);
         }
         audit.publish(AuditMessage.of(tenantId, executionId, userId,
                 "EXECUTION_TRIGGERED", Map.of("definitionId", definitionId,

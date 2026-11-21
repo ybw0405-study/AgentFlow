@@ -68,6 +68,33 @@ class GatewayAuthFilterTest {
     }
 
     @Test
+    void engineRouteOutsideAllowlistIsRejectedEvenWithTheCorrectToken() throws Exception {
+        for (String path : java.util.List.of(
+                "/engine/internal/metrics", "/engine/internal/health/ready",
+                "/engine/internal/mq/status")) {
+            var request = new MockHttpServletRequest("GET", path);
+            request.addHeader("X-Internal-Token", "internal-tok");
+            var response = new MockHttpServletResponse();
+            filter.doFilter(request, response, (req, res) -> ((MockHttpServletResponse) res).setStatus(200));
+            assertEquals(404, response.getStatus(), path + " must not be proxied to the engine");
+        }
+    }
+
+    @Test
+    void allowlistedEngineRouteStillNeedsTheInternalToken() throws Exception {
+        var missing = new MockHttpServletRequest("GET", "/engine/internal/events");
+        var missingResp = new MockHttpServletResponse();
+        filter.doFilter(missing, missingResp, (req, res) -> ((MockHttpServletResponse) res).setStatus(200));
+        assertEquals(404, missingResp.getStatus());
+
+        var ok = new MockHttpServletRequest("GET", "/engine/internal/events");
+        ok.addHeader("X-Internal-Token", "internal-tok");
+        var okResp = new MockHttpServletResponse();
+        filter.doFilter(ok, okResp, (req, res) -> ((MockHttpServletResponse) res).setStatus(200));
+        assertEquals(200, okResp.getStatus());
+    }
+
+    @Test
     void publicPathsSkipped() throws Exception {
         var request = new MockHttpServletRequest("POST", "/api/v1/auth/login");
         var response = new MockHttpServletResponse();

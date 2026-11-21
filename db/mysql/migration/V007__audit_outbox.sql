@@ -23,4 +23,4 @@ CREATE TABLE audit_outbox (
   PRIMARY KEY (id),
   KEY idx_ao_due (status, next_attempt_at),
   KEY idx_ao_sent (status, sent_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

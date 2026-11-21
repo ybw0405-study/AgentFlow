@@ -1,0 +1,196 @@
+name: Release
+
+# G14：tag 驱动的发布，刻意与 CI 分离（CI 的 push 只看 main，推 tag 不会重跑门禁）。
+# 校验与 DocQA release.yml 对齐：tag 严格 vX.Y.Z 格式、真实存在、--verify-tag、
+# tag 指向的 commit 必须是 origin/main 的祖先（git merge-base --is-ancestor）、
+# CHANGELOG 必须有对应版本段；workflow_dispatch 的手工 tag 输入走同一套校验。
+# 另增加 images job：构建多阶段镜像、推送到 GHCR，并把每个镜像的
+# repo:tag@sha256:<digest> 写入 digests.txt 挂到 Release 与 artifact，
+# 让「按 digest 部署上一版本」真正可执行（见 ops/rollback-runbook.md）。
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag already merged into main (e.g. v0.5.1); validated before publish'
+        required: true
+        type: string
+
+# 默认最小权限；publish / images 需要写权限时各自单独提升
+permissions:
+  contents: read
+
+# 按 ref（tag）隔离并发组：不同 tag 互不阻塞，同一 tag 的重跑取代在途运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish GitHub Release from CHANGELOG
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.notes.outputs.tag }}
+      version: ${{ steps.notes.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag & extract its CHANGELOG section
+        id: notes
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # push 事件用 GITHUB_REF_NAME；workflow_dispatch 取显式输入，不从 ref 猜 tag。
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG:-}"
+          else
+            TAG="${GITHUB_REF_NAME:-}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::No tag resolved (neither GITHUB_REF_NAME nor inputs.tag)."
+            exit 1
+          fi
+          # 严格格式校验：挡住 workflow_dispatch 的任意字符串 / 分支名 / shell 元字符。
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Tag '$TAG' is not a valid vX.Y.Z release tag."
+            exit 1
+          fi
+          if ! git rev-parse --verify "refs/tags/${TAG}^{commit}" >/dev/null 2>&1; then
+            echo "::error::Tag '$TAG' does not exist in this repository."
+            exit 1
+          fi
+          TAG_COMMIT="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          # fetch-depth: 0 已拉全 refs；万一 origin/main 不在本地则显式补拉，不用恒真兜底掩盖。
+          if ! git rev-parse --verify origin/main >/dev/null 2>&1; then
+            git fetch origin +refs/heads/main:refs/remotes/origin/main
+          fi
+          MAIN_COMMIT="$(git rev-parse origin/main)"
+          # 核心校验：tag 指向的 commit 必须是 main 的祖先，否则拒绝发布。
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" "$MAIN_COMMIT"; then
+            echo "::error::Tag $TAG ($TAG_COMMIT) is NOT an ancestor of origin/main ($MAIN_COMMIT); refusing to publish."
+            exit 1
+          fi
+          echo "Tag $TAG -> $TAG_COMMIT is an ancestor of main ($MAIN_COMMIT)."
+          VERSION="${TAG#v}"
+
+          awk -v v="$VERSION" '
+            /^## \[/ { if (printing) exit }
+            $0 ~ "^## \\[" v "\\]" { printing = 1; next }
+            printing { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no [$VERSION] section; refusing to publish an empty Release."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Release notes preview'
+            echo '```'
+            cat release-notes.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.notes.outputs.tag }}
+          VERSION: ${{ steps.notes.outputs.version }}
+        run: |
+          set -euo pipefail
+          TITLE="AgentFlow ${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating its notes instead of failing a re-run."
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-notes.md
+          else
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "$TITLE" \
+              --notes-file release-notes.md
+          fi
+          gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,url
+
+  images:
+    name: Build & push images (digest-pinned)
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: 确认 Buildx 可用
+        run: docker buildx version
+
+      - name: 登录 GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+
+      - name: 构建并按真实 digest 推送镜像
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          REPO_LOWER="$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          BASE="${REGISTRY}/${REPO_LOWER}"
+          : > digests.txt
+          build_one() {
+            local target="$1" jar="$2" name="$3"
+            local image="${BASE}-${name}:${VERSION}"
+            local meta="/tmp/${name}-meta.json"
+            local -a args=(--target "$target" --tag "$image" --metadata-file "$meta" --push .)
+            if [ -n "$jar" ]; then
+              args=(--build-arg "JAR_PATH=/out/${jar}.jar" "${args[@]}")
+            fi
+            echo "==> building ${image} (target=${target})"
+            docker buildx build "${args[@]}"
+            local digest
+            digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$meta")"
+            case "$digest" in
+              sha256:*) ;;
+              *) echo "镜像 digest 非法或缺失: ${digest}" >&2; exit 1 ;;
+            esac
+            echo "${image}@${digest}" | tee -a digests.txt
+          }
+          build_one java-service workflow-service   workflow-service
+          build_one java-service agent-gateway      agent-gateway
+          build_one java-service audit-service      audit-service
+          build_one java-service connector-service connector-service
+          build_one engine-api    ""                engine-api
+          build_one frontend      ""                frontend
+          test -s digests.txt
+          {
+            echo '### 镜像 digest 清单'
+            echo '```'
+            cat digests.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 把 digests.txt 挂到 Release（按 digest 部署上一版本）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.publish.outputs.tag }}
+        run: gh release upload "$TAG" digests.txt --clobber
+
+      - name: 上传 digests artifact（可下载）
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-digests-${{ needs.publish.outputs.tag }}
+          path: digests.txt
+          if-no-files-found: error
+          retention-days: 90

@@ -97,8 +97,8 @@ public class ProjectorWriter {
             case "NodeCompleted" -> {
                 upsertNode(e, "SUCCEEDED", p, (String) p.get("outputDigest"), null, null);
                 // 成本中心：节点完成的 token 消耗累加到租户月度账本（同事务，重放不重复计）
-                budgets.accrue(e.executionId(), asInt(p.get("tokenUsed")),
-                        monthlyCallLimit, monthlyTokenLimit);
+                budgets.accrue(e.executionId(), BudgetLedgerMapper.currentPeriod(),
+                        asInt(p.get("tokenUsed")), monthlyCallLimit, monthlyTokenLimit);
             }
             case "NodeFailed" -> upsertNode(e, "FAILED", p, null,
                     (String) p.get("errorCode"), (String) p.get("message"));

@@ -16,4 +16,4 @@ CREATE TABLE preview_usage (
   PRIMARY KEY (id),
   KEY idx_pu_tenant_time (tenant_id, created_at),
   KEY idx_pu_definition (definition_id, tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -10,18 +10,28 @@ on:
 permissions:
   contents: read
 
+# 同一 ref 上的重跑/新推送取消在途任务，避免排队积压与陈旧检查结论
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   engine-openapi:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.13'
+          python-version-file: .python-version  # G12
           cache: pip
-      - name: install engine (locked)
+          cache-dependency-path: engine-api/requirements.lock.txt  # G20：真实锁文件
+      - name: install engine (locked + verified hashes)
         working-directory: engine-api
-        run: pip install -r requirements.lock.txt
+        # G15：与 python-ci 同一套 --require-hashes 安装口径
+        run: |
+          pip install --require-hashes -r requirements.lock.txt
+          pip install --no-deps -e .
       - name: dump openapi
         run: python scripts/dump-openapi.py
       - name: diff against committed baseline
@@ -35,11 +45,12 @@ jobs:
   java-route-guard:
     name: Java 路由粗筛（秒级，无需起服务）
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.13'
+          python-version-file: .python-version  # G12
       - name: 静态比对 Controller 路由与入库基线
         run: python scripts/check-java-routes.py
 
@@ -48,10 +59,11 @@ jobs:
   grant-guard:
     name: 最小授权脚本与迁移表集合对账
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.13'
+          python-version-file: .python-version  # G12
       - name: 迁移表集合 == grants 表集合（含权限语义）
         run: python scripts/check-grants.py

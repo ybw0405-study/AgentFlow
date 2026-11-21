@@ -149,6 +149,27 @@ class ExecutionServiceTest {
     }
 
     @Test
+    void engineAcceptsButDoesNotDispatchIsNotRecordedAsTriggered() {
+        givenDefinitionAndVersion();
+        // 租约被占：引擎返回 200/202 带 note，但根本没建任务、没落事件（AF-1）
+        when(engine.submitExecution(any())).thenReturn(Map.of(
+                "status", "RUNNING", "note", "lease held by another worker"));
+
+        var ex = assertThrows(BusinessException.class, () -> service.trigger(
+                editor, "d1", null, "idem-12345678", Map.of(), null, "trace-1"));
+
+        assertEquals(ErrorCode.AGT_UPSTREAM_001, ex.errorCode());
+        verify(executions).markFailedDispatch(anyString(), eq("FAILED"),
+                eq("AGT-UPSTREAM-001"));
+        var captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(audit, Mockito.atLeastOnce()).publish(captor.capture());
+        assertTrue(captor.getAllValues().stream()
+                .noneMatch(m -> "EXECUTION_TRIGGERED".equals(m.eventType())));
+        assertTrue(captor.getAllValues().stream()
+                .anyMatch(m -> "DISPATCH_REJECTED".equals(m.eventType())));
+    }
+
+    @Test
     void noPublishedVersionIs409() {
         when(definitions.findByIdAndTenant("d1", "space-1"))
                 .thenReturn(new WorkflowDefinitionMapper.DefinitionRow(

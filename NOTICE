@@ -1,0 +1,21 @@
+AgentFlow
+Copyright (c) 2026 ybw0405-study
+
+This product is licensed under the MIT License; see the file LICENSE for the
+full license text.
+
+MIT NOTICE: the MIT License requires that the above copyright notice and this
+permission notice be included in all copies or substantial portions of the
+Software. This file is the consolidated notice for distributions of AgentFlow.
+
+Third-party components: AgentFlow is built on open-source components governed
+by their own licenses (the Java / Spring ecosystem, Vue / Vite, the Python
+FastAPI / Pydantic stack, and the container images pinned by digest in
+ops/docker-compose.infra.yml). THIRD-PARTY-LICENSES.md lists the license
+families actually observed in the local dependency set; the authoritative,
+versioned inventory (package, version, license and hash) is the downloadable
+SBOM artifact produced by .github/workflows/sbom.yml.
+
+The license text shipped inside each third-party distribution takes precedence
+over any summary in this repository. This notice does not grant additional
+rights and is not legal advice.

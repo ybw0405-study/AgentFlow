@@ -91,6 +91,27 @@ async def test_terminal_event_marks_tracker(store):
     assert eid not in await store.open_executions()
 
 
+async def test_terminal_tracker_is_irreversible(store):
+    """AF-9：终态优先 + 终态后拒绝非终态事件（真实 PG 语义）。
+
+    迟到/乱序事件不得把 tracker 回写成 OPEN，否则恢复扫描会把已完成执行
+    重新捞出去续跑（真实模型重复调用、重复计费）。
+    """
+    from app.errors import EventTerminalError
+
+    eid = uuid.uuid4()
+    await store.append(eid, "ExecutionCreated", {"traceId": "t"})
+    assert eid in await store.open_executions()
+    await store.append(eid, "ExecutionCompleted", {"result": {}})
+    assert eid not in await store.open_executions()
+
+    with pytest.raises(EventTerminalError):
+        await store.append(eid, "NodeStarted", {"i": 1}, node_key="late")
+    assert eid not in await store.open_executions()
+    events = await store.read_all(eid)
+    assert all(e.event_type != EventType.NODE_STARTED for e in events)
+
+
 async def test_tail_cursor(store):
     eid = uuid.uuid4()
     seqs = []

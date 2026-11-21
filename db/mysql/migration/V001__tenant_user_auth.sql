@@ -12,7 +12,7 @@ CREATE TABLE tenant (
   PRIMARY KEY (id),
   UNIQUE KEY uq_tenant_parent_name (uq_parent, uq_name),
   KEY idx_tenant_parent (parent_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE app_user (
   id            CHAR(36)     NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE app_user (
   uq_email      VARCHAR(255) GENERATED ALWAYS AS (IF(deleted_at IS NULL, email, NULL)) VIRTUAL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_user_email (uq_email)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE refresh_token (
   id          CHAR(36)     NOT NULL,
@@ -41,7 +41,7 @@ CREATE TABLE refresh_token (
   UNIQUE KEY uq_rt_hash (token_hash),
   KEY idx_rt_user (user_id),
   KEY idx_rt_family (family_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tenant_member (
   tenant_id  CHAR(36)     NOT NULL,
@@ -51,4 +51,4 @@ CREATE TABLE tenant_member (
   created_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (tenant_id, user_id),
   KEY idx_tm_user (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

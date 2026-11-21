@@ -12,17 +12,74 @@ cd frontend; npm install; cd ..
 日常开发用 `./scripts/start-dev.ps1`（WSL2 用 `bash scripts/start-dev.sh`）拉起基础设施与全部服务，
 `./scripts/stop-dev.ps1` 停止。脚本只处理本仓库的进程，不会动同机其他项目。
 
-## 分支与评审（强制）
+## 分支与评审（约定与现状，如实说明）
 
 仓库早期历史是集中式导入（108 个提交全部直推 `main`、无 PR、无 review），这段历史不可追溯，
-**也不代表推荐流程**。自此之后所有变更必须走可评审单元：
+**也不代表推荐流程**。
+
+### 远端现状（2026-11-21 实测，已由本轮启用）
+
+- `main` 分支保护**已启用**（原为 `404 Branch not protected`）：`strict=true`、
+  required status checks 取 PR #11 实测名（`verify` / `engine-openapi` /
+  `Java 路由粗筛（秒级，无需起服务）` / `最小授权脚本与迁移表集合对账`）、
+  `enforce_admins=true`、线性历史、禁 force push / 删除、`dismiss_stale_reviews=true`、
+  要求解决所有 conversation。
+- **审批门槛仍为 0**：`required_approving_review_count=0`、`require_code_owner_reviews=false`。
+  原因见下节「单人仓库无法做到第二人复核」——设成 1 会让唯一维护者无法合并自己的 PR。
+  这是当前唯一有意保留的弱门禁，需要第二个 GitHub 账号才能补强。
+- 仓库级安全开关**已启用 3 项**：`dependabot_security_updates` / `secret_scanning` /
+  `secret_scanning_push_protection`（可用 `gh api repos/ybw0405-study/AgentFlow --jq .security_and_analysis` 反查）。
+  `secret_scanning_non_provider_patterns` 与 `secret_scanning_validity_checks` 经 API 提交后
+  仍回 `disabled`，需到 Settings → Code security and analysis 网页确认是否受账户计划限制。
+- `.github/workflows/` 的流水线与 `security.yml`、`CODEOWNERS` 仍**需合并推送到 `main`**
+  才会对 PR 生效；文件入仓 ≠ 已经跑过。
+- PR #11 与 DocQA PR #26 已打 `do-not-merge` 标签并附发布顺序说明（runbook 见
+  `修复执行报告.md` 第 5 节）。
+
+### 回读校验 / 剩余待办
+
+```bash
+gh api repos/ybw0405-study/AgentFlow/branches/main/protection \
+  --jq '{contexts:.required_status_checks.contexts, strict:.required_status_checks.strict,
+         reviews:.required_pull_request_reviews, enforce_admins:.enforce_admins.enabled,
+         linear:.required_linear_history.enabled}'
+gh api repos/ybw0405-study/AgentFlow --jq '.security_and_analysis'
+```
+
+> `contexts` 必须与 PR 上**实际出现的检查名逐字一致**；新增 workflow 时先跑
+> `gh pr checks <PR 号>` 核对，再同步更新分支保护，否则 required check 会永远 pending。
+
+补强审批门槛（**需先有第二个 GitHub 账号**，否则会卡死合并）：
+
+```bash
+gh api -X PATCH \
+  repos/ybw0405-study/AgentFlow/branches/main/protection/required_pull_request_reviews \
+  -H "Accept: application/vnd.github+json" --input - <<'JSON'
+{
+  "dismiss_stale_reviews": true,
+  "require_code_owner_reviews": true,
+  "required_approving_review_count": 1
+}
+JSON
+```
+
+### 评审边界：单人仓库无法做到「第二人复核」
+
+**本仓库由单人维护，物理上不存在第二个账号来做独立复核**，不能假装做到了：
+
+- 即便在远端配好 `required_approving_review_count=1` + `require_code_owner_reviews=true`，
+  单人仓库也会变成「自己审自己」或因无人可审而卡死。替代方案：自审 PR +
+  强制检查清单（验证方式 / 回滚方式 / `git diff --check` 输出）+ 延迟合并（留冷却期回看）
+  + 依赖 6 条 CI 全绿作为客观门禁。
+- 涉及数据库迁移、鉴权、跨语言契约、审计表结构的 PR 仍必须在描述里写清
+  「验证方式 + 回滚方式」并附门禁输出与 `git diff --check` 结果；这是**人工纪律**，
+  在分支保护启用前没有机器强制力。
+
+### 其余约定
 
 - 从 `main` 切短生命周期分支（`fix/<scope>-<简述>` / `feat/<scope>-<简述>`），一个 PR 只表达一个意图；
   格式化、依赖升级与业务改动分开提交，便于二分定位。
-- `main` 启用分支保护：required status checks 指向 `java-ci` / `python-ci` / `frontend-ci` / `contract-drift`，
-  禁 force push、要求线性历史；涉及契约或全栈行为时手动跑 `e2e` 并把结果贴进 PR。
-- 涉及数据库迁移、鉴权、跨语言契约、审计表结构的 PR 需第二人复核；单人维护也必须在 PR 描述里写清
-  「验证方式 + 回滚方式」，并附门禁输出与 `git diff --check` 结果。
+- 涉及契约或全栈行为时手动跑 `e2e` 并把结果贴进 PR。
 - 新增迁移时同步 `db/mysql/grants/least-privilege.sql`，CI 的授权表集合守卫会拦截漏授权。
 
 ## 提交前必须跑门禁
@@ -110,6 +167,7 @@ engine-api/.venv/Scripts/pip freeze > engine-api/requirements.lock.txt
 
 ## Pull Request
 
-按 `.github/workflows/` 的五条流水线自查（`java-ci` / `frontend-ci` / `python-ci` /
-`contract-drift` / `e2e`），并在 PR 描述里写清影响面（改到哪些服务、是否需要迁移、
-是否影响线上契约）。涉及安全的改动请先看 [SECURITY.md](SECURITY.md)。
+按 `.github/workflows/` 的六条流水线自查（`java-ci` / `frontend-ci` / `python-ci` /
+`contract-drift` / `e2e` / `security`），并在 PR 描述里写清影响面（改到哪些服务、是否需要迁移、
+是否影响线上契约）。`security` 是本轮新增的依赖 / 代码扫描门禁（G9），合并到 `main` 后方生效。
+涉及安全的改动请先看 [SECURITY.md](SECURITY.md)。

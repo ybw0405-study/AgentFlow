@@ -19,6 +19,10 @@ import org.springframework.stereotype.Component;
  * 因此与 ExecutionReaper / TriggerScheduler 同款，先用 {@link RedisLease} 抢「同一时刻只有
  * 一个副本投影」的尽力租约（Redis 不可用时 fail-open）。租约是减少重复劳动的优化，不是
  * 正确性依赖——部署上必须保证投影器单实例运行，或由下游唯一约束兜底。
+ *
+ * <p><b>空间范围（AF-3）</b>：默认 {@code agentflow.projector.space-id} 为空，投影器作为
+ * 系统级组件读取全部事件（游标仍是单条全局 projector_cursor）。按 space 分片部署时，
+ * 显式配置该值，引擎会把 {@code spaceId} 谓词下推到事件流 SQL，投影器只看到本分片事件。
  */
 @Component
 public class EventProjector {
@@ -32,14 +36,18 @@ public class EventProjector {
     private final ProjectorWriter writer;
     private final RedisLease lease;
     private final int pageSize;
+    /** AF-3：非空时把投影范围下推到指定 space；空（默认）为系统级全局投影。 */
+    private final String spaceId;
 
     public EventProjector(EngineGatewayClient engine, ProjectorWriter writer,
                           StringRedisTemplate redis,
-                          @Value("${agentflow.engine.poll-interval-ms:500}") int pollIntervalMs) {
+                          @Value("${agentflow.engine.poll-interval-ms:500}") int pollIntervalMs,
+                          @Value("${agentflow.projector.space-id:}") String spaceId) {
         this.engine = engine;
         this.writer = writer;
         this.lease = new RedisLease(redis);
         this.pageSize = 500;
+        this.spaceId = spaceId;
     }
 
     @Scheduled(fixedDelayString = "${agentflow.engine.poll-interval-ms:500}",
@@ -54,7 +62,7 @@ public class EventProjector {
             while (true) {
                 EngineGatewayClient.EventsPage page;
                 try {
-                    page = engine.tailEvents(cursor, pageSize);
+                    page = engine.tailEvents(cursor, pageSize, spaceId);
                 } catch (Exception e) {
                     log.debug("engine tail unavailable: {}", e.getMessage());
                     return;  // 下一轮再试；游标不动

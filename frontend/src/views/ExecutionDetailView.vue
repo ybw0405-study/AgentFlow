@@ -33,6 +33,9 @@ const liveNote = ref('')
 let sse: SseSession | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
+/** 视图级 AbortController：卸载时取消所有在途 REST，旧响应不会再写已卸载组件。 */
+const requestController = new AbortController()
+const signal = requestController.signal
 let reconnectDelay = 1000
 /**
  * 已处理事件的最大 seq。SSE 本身保序，但断线重连会从 afterSeq 重新回放，
@@ -63,7 +66,9 @@ function statusClass(s: string): string {
 }
 
 async function load(): Promise<void> {
-  detail.value = await executionApi.detail(executionId)
+  const snapshot = await executionApi.detail(executionId, signal)
+  if (disposed) return
+  detail.value = snapshot
   // 图的 DSL 是附加信息，不能阻塞 SSE 连接：实时态必须按原来的时序建立。
   void loadDsl()
 }
@@ -75,13 +80,15 @@ async function loadDsl(): Promise<void> {
   if (!exec) return
   dslLoading.value = true
   try {
-    const workflow = await workflowApi.detail(exec.definitionId)
+    const workflow = await workflowApi.detail(exec.definitionId, signal)
+    if (disposed) return
     const version = workflow.versions.find((v) => v.id === exec.versionId)
     dsl.value = version ? (JSON.parse(version.dslJson) as WorkflowDsl) : null
   } catch {
+    if (disposed) return
     dsl.value = null
   } finally {
-    dslLoading.value = false
+    if (!disposed) dslLoading.value = false
   }
   if (!dsl.value) viewMode.value = 'list'
 }
@@ -96,7 +103,8 @@ async function loadDsl(): Promise<void> {
  */
 async function catchUpSeq(): Promise<void> {
   try {
-    const page = await executionApi.events(executionId, lastSeq.value, 500)
+    const page = await executionApi.events(executionId, lastSeq.value, 500, signal)
+    if (disposed) return
     if (typeof page.lastSeq === 'number') lastSeq.value = Math.max(lastSeq.value, page.lastSeq)
   } catch {
     // 追平失败不阻断连接
@@ -108,16 +116,20 @@ async function selectNode(nodeKey: string): Promise<void> {
   ioLoading.value = true
   io.value = null
   try {
-    io.value = await executionApi.nodeIo(executionId, nodeKey)
+    const data = await executionApi.nodeIo(executionId, nodeKey, signal)
+    if (disposed) return
+    io.value = data
   } catch {
+    if (disposed) return
     io.value = null
   } finally {
-    ioLoading.value = false
+    if (!disposed) ioLoading.value = false
   }
 }
 
 async function cancel(): Promise<void> {
-  await executionApi.cancel(executionId)
+  await executionApi.cancel(executionId, signal)
+  if (disposed) return
   await load()
 }
 
@@ -218,6 +230,7 @@ function connectSse(): void {
   const url = `/api/v1/executions/${executionId}/events/stream?afterSeq=${lastSeq.value}`
   sse = openSse(url, { headers }, {
     onFrame: (frame) => {
+      if (disposed) return
       // 收到任意帧说明链路已恢复：复位退避，避免网络闪断一次后永远等 15s。
       reconnectDelay = 1000
       if (frame.event === 'engine-event') {
@@ -249,19 +262,23 @@ onMounted(async () => {
   try {
     await load()
   } catch (e) {
+    if (disposed) return
     error.value = errorText(e)
     return
   }
+  if (disposed) return
   if (TERMINAL.has(detail.value?.execution.status ?? '')) {
     liveNote.value = '执行已结束'
     return
   }
   await catchUpSeq()
+  if (disposed) return
   connectSse()
 })
 
 onUnmounted(() => {
   disposed = true
+  requestController.abort()
   if (reconnectTimer !== null) clearTimeout(reconnectTimer)
   sse?.close()
   sse = null

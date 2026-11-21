@@ -34,6 +34,10 @@ from .state import ExecutionState
 
 logger = logging.getLogger(__name__)
 
+# 关停 / 故障清理（B4、AF-7）：finally 里的续约循环与租约释放必须带超时，
+# Redis TCP 半开时它们既不抛也不返回，无条件 await 会让 _run 永久卡在收尾。
+_CLEANUP_AWAIT_TIMEOUT_S = 3.0
+
 
 class Dispatcher:
     def __init__(
@@ -57,8 +61,18 @@ class Dispatcher:
         self._tasks: dict[uuid.UUID, asyncio.Task] = {}
         self._sweep_task: asyncio.Task | None = None
         self._gate_task: asyncio.Task | None = None
+        self._stopping = False  # 关停第一级：停止接收（submit / 扫描不再派发）
 
     async def submit(self, req: ExecuteRequest) -> dict[str, Any]:
+        if self._stopping:
+            # 关停中不再接收新派发：不建任务、不落事件，避免收尾窗口里又冒出
+            # 一个会撞上已关闭连接池的执行（B4 第一级）。
+            return {
+                "executionId": str(req.execution_id),
+                "status": "SHUTTING_DOWN",
+                "resumed": False,
+                "note": "dispatcher is shutting down",
+            }
         events = await self._store.read_all(req.execution_id)
         if events and events[-1].event_type in TERMINAL_EVENTS:
             return {
@@ -183,8 +197,18 @@ class Dispatcher:
             logger.exception("execution %s worker crashed", req.execution_id)
         finally:
             renew_stop.set()
-            await renew_task
-            await lease.release()
+            # Redis 半开时 renew_task / lease.release 可能既不返回也不抛（AF-7）：
+            # gather + return_exceptions 让两步清理互不牵连，外层 wait_for 兜底，
+            # 且无论清理成功与否都移除 _tasks —— 否则「租约不释放 + _tasks 不清」
+            # 会让 start_sweep 因 eid in _tasks 永不接管，执行永久僵死。
+            cleanup = asyncio.gather(renew_task, lease.release(), return_exceptions=True)
+            try:
+                await asyncio.wait_for(cleanup, timeout=_CLEANUP_AWAIT_TIMEOUT_S)
+            except TimeoutError:
+                cleanup.cancel()
+                logger.warning(
+                    "cleanup of execution %s timed out; forcing task removal", req.execution_id
+                )
             self._tasks.pop(req.execution_id, None)
 
     async def _renew_loop(self, lease: Lease, stop: asyncio.Event, state: ExecutionState) -> None:
@@ -262,10 +286,54 @@ class Dispatcher:
         for execution_id in open_ids:
             await self._recover_one(execution_id, attempts=3)
 
+    async def finalize_preview(self, execution_id: uuid.UUID) -> None:
+        """AF-6：试跑无条件收口 —— 正常结束 / 超时 / 异常 / 恢复扫描都要走这里。
+
+        顺序不可颠倒：**先落终态，再删 spec**。spec 是恢复扫描唯一能识别
+        「这是试跑」的依据；若先删 spec 而 tracker 仍为 OPEN，下一轮扫描就会
+        把它当崩溃业务执行续跑。终态事件同时让 AF-9 的终态保护拒绝任何迟到的
+        节点事件，避免试跑超时后仍继续消费模型额度。
+        """
+        task = self._tasks.pop(execution_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(task, return_exceptions=True), timeout=2.0
+                )
+            except TimeoutError:
+                logger.warning("preview task %s did not stop within 2s", execution_id)
+
+        try:
+            events = await self._store.read_all(execution_id)
+            if not events or events[-1].event_type not in TERMINAL_EVENTS:
+                await self._event_log.append(
+                    execution_id,
+                    EventType.EXECUTION_CANCELLED,
+                    {"requestedBy": "preview-finalizer", "reason": "preview scope closed"},
+                )
+        except Exception:
+            logger.exception("failed to force terminal state for preview %s", execution_id)
+            return  # 保留 spec：让下一轮恢复扫描重新收口，绝不留下无标记的 OPEN
+
+        for key in (f"af:lease:{execution_id}", f"af:cancel:{execution_id}"):
+            try:
+                await self._redis.delete(key)
+            except Exception as exc:
+                logger.warning("preview cleanup failed for %s: %s", key, exc)
+        try:
+            await self._store.delete_spec(execution_id)
+        except Exception:
+            logger.exception("failed to delete spec for preview %s", execution_id)
+
     async def _recover_one(self, execution_id: uuid.UUID, *, attempts: int) -> None:
         spec = await self._store.get_spec(execution_id)
         if spec is None:
             logger.error("open execution %s has no spec; skipping", execution_id)
+            return
+        if spec.get("preview") is True:
+            logger.info("preview execution %s is not recoverable; forcing terminal", execution_id)
+            await self.finalize_preview(execution_id)
             return
         for i in range(attempts):
             result = await self.submit(ExecuteRequest.model_validate(spec))
@@ -413,6 +481,8 @@ class Dispatcher:
         async def loop() -> None:
             while True:
                 await asyncio.sleep(interval)
+                if self._stopping:
+                    return
                 try:
                     await self.sweep_gates()
                 except Exception as exc:
@@ -425,6 +495,8 @@ class Dispatcher:
         async def loop() -> None:
             while True:
                 await asyncio.sleep(interval_s)
+                if self._stopping:
+                    return
                 try:
                     for eid in await self._store.open_executions():
                         if eid in self._tasks:
@@ -452,11 +524,33 @@ class Dispatcher:
         self._sweep_task = asyncio.create_task(loop())
 
     async def shutdown(self) -> None:
-        """关停后台扫描任务：cancel 后 await 收尾，避免关停窗口内撞已关闭的连接池。
+        """三级收口（B4 / 不变量 I6）：停止接收 → drain 在途 → 停后台 → 调用方关连接池。
 
-        main 的 lifespan 在关闭 store/redis 之前调用它（ARCH-3）；以前直接 cancel
-        私有任务且不 await，sweep loop 可能在连接池关闭后仍访问 Redis/PG。
+        main 的 lifespan 在 store.close()/redis.aclose() 之前调用它；_tasks 里的
+        执行与续约循环必须先全部结束，否则下一个事件写入会撞已关闭的连接池，
+        租约还要等 30s TTL 才被接管（误导性 "worker crashed" 刷屏）。
         """
+        self._stopping = True  # 第一级：submit / 扫描不再派发新任务
+
+        # 第二级：cancel 在途执行并等它们收口（带上限，绝不永久阻塞）
+        running = [t for t in self._tasks.values() if not t.done()]
+        for task in running:
+            task.cancel()
+        if running:
+            drain = asyncio.gather(*running, return_exceptions=True)
+            try:
+                await asyncio.wait_for(drain, timeout=self._settings.shutdown_drain_timeout_s)
+            except TimeoutError:
+                drain.cancel()
+                logger.warning(
+                    "%d execution task(s) did not drain within %.1fs; closing dependencies anyway",
+                    len(running),
+                    self._settings.shutdown_drain_timeout_s,
+                )
+        # 兜底：即使某个任务超时未收口，也不把幽灵条目留给恢复扫描判断。
+        self._tasks.clear()
+
+        # 第三级：停后台扫描
         tasks = [t for t in (self._sweep_task, self._gate_task) if t is not None]
         for task in tasks:
             task.cancel()
