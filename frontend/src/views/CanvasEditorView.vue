@@ -690,7 +690,10 @@ function pasteNode(): void {
       ...(JSON.parse(JSON.stringify(source)) as FlowNodeLike),
       id: key,
       position: { x: source.position.x + 48, y: source.position.y + 48 },
-      data: { ...source.data, label: key },
+      data: {
+        ...(JSON.parse(JSON.stringify(source.data)) as FlowNodeLike['data']),
+        label: key,
+      },
     },
   ]
   selectNode(key)

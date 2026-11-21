@@ -126,23 +126,46 @@ async function loadPreview(): Promise<void> {
 
 watch(cronDraft, schedulePreview)
 
-async function run<T>(action: () => Promise<T>, message: string): Promise<void> {
+async function run<T>(action: () => Promise<T>, message: string): Promise<T | null> {
   busy.value = true
   error.value = null
   notice.value = null
   try {
-    await action()
+    const result = await action()
     notice.value = message
     await load()
+    return result
   } catch (e) {
     error.value = describeError(e)
+    return null
   } finally {
     busy.value = false
   }
 }
 
+/**
+ * 一次性明文密钥只存在于 create/rotate 的响应里（SEC-3）。list 不再回传，
+ * 因此用单独的 ref 承接；切走/刷新后清空，避免明文滞留在页面状态里。
+ */
+const revealedSecret = ref<string | null>(null)
+const secretText = computed(() =>
+  revealedSecret.value ?? (webhook.value?.hasSecret ? '' : null),
+)
+const secretHint = computed(() =>
+  revealedSecret.value !== null
+    ? '请现在复制保存；离开或刷新页面后不再显示。'
+    : webhook.value?.hasSecret
+      ? '密钥已设置。出于安全不回显，点击「轮换」可重新获取一次。'
+      : '尚未设置密钥。',
+)
+
 function createWebhook(): void {
-  void run(() => triggerApi.create(workflowId, { type: 'WEBHOOK' }), 'Webhook 已创建，复制链接即可接入')
+  void run(
+    () => triggerApi.create(workflowId, { type: 'WEBHOOK' }),
+    'Webhook 已创建，请复制签名密钥并复制链接',
+  ).then((created) => {
+    if (created?.secret) revealedSecret.value = created.secret
+  })
 }
 
 function createSchedule(): void {
@@ -194,7 +217,9 @@ function rotate(): void {
   const current = webhook.value
   if (!current) return
   if (!window.confirm('轮换后旧链接立即失效，确认继续？')) return
-  void run(() => triggerApi.rotate(current.id), '已轮换令牌，请更新调用方')
+  void run(() => triggerApi.rotate(current.id), '已轮换令牌，请更新调用方').then((rotated) => {
+    if (rotated?.secret) revealedSecret.value = rotated.secret
+  })
 }
 
 function remove(item: TriggerDto): void {
@@ -313,18 +338,20 @@ onMounted(() => {
           <input
             class="af-input mono"
             :type="showSecret ? 'text' : 'password'"
-            :value="webhook.secret"
+            :value="secretText ?? ''"
             readonly
           >
           <button
             class="af-btn af-btn--sm"
+            :disabled="secretText === null"
             @click="showSecret = !showSecret"
           >
             {{ showSecret ? '隐藏' : '显示' }}
           </button>
           <button
             class="af-btn af-btn--sm"
-            @click="copy(webhook.secret, '密钥')"
+            :disabled="!secretText"
+            @click="copy(secretText ?? '', '密钥')"
           >
             复制
           </button>
@@ -333,6 +360,7 @@ onMounted(() => {
           class="af-faint"
           style="margin: 0 0 10px; font-size: 11px; line-height: 1.7"
         >
+          {{ secretHint }}
           签名可选：带上 <code>X-AF-Signature: sha256=HMAC_SHA256(secret, 原始请求体)</code>
           就会校验，建议同时带 <code>X-AF-Timestamp</code>（秒）防止重放；
           幂等用 <code>X-AF-Idempotency-Key</code>，重复投递不会重复执行。

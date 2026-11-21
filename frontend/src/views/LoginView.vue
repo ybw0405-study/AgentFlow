@@ -31,14 +31,26 @@ function fill(account: DemoAccount): void {
   password.value = account.password
 }
 
+/** next 只接受站内绝对路径：必须以单个 / 开头，排除 //（协议相对外链）与反斜杠。 */
+function safeNext(raw: unknown): string {
+  if (
+    typeof raw !== 'string'
+    || !raw.startsWith('/')
+    || raw.startsWith('//')
+    || raw.includes(String.fromCharCode(92))
+  ) {
+    return '/workflows'
+  }
+  return raw
+}
+
 async function submit(): Promise<void> {
   errorMain.value = ''
   errorDebug.value = ''
   busy.value = true
   try {
     await auth.login(email.value, password.value)
-    const next = typeof route.query.next === 'string' ? route.query.next : '/workflows'
-    void router.push(next)
+    void router.push(safeNext(route.query.next))
   } catch (e) {
     errorMain.value = errorText(e)
     errorDebug.value = errorDebugInfo(e)

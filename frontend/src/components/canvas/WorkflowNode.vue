@@ -53,7 +53,13 @@ const fields = computed(() => inlineFields(props.data.nodeType, props.data.confi
 const summary = computed(() => nodeSummary(props.data.nodeType, props.data.config ?? {}))
 
 function write(fieldKey: string, kind: string, raw: string): void {
-  emit('update-config', { [fieldKey]: kind === 'number' ? Number(raw) : raw })
+  if (kind === 'number') {
+    const n = Number(raw)
+    // 清空/非法输入写 undefined（落 DSL 时被忽略），避免 Number('')===0 或 NaN→null
+    emit('update-config', { [fieldKey]: Number.isFinite(n) && n > 0 ? n : undefined })
+  } else {
+    emit('update-config', { [fieldKey]: raw })
+  }
 }
 </script>
 

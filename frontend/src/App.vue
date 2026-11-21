@@ -62,7 +62,8 @@ async function logout() {
       </button>
     </header>
     <main class="af-main">
-      <router-view />
+      <!-- 切换 SPACE 后强制重建视图：X-Space-Id 从下一请求才生效，旧页面不能继续显示上个空间的数据 -->
+      <router-view :key="auth.currentSpaceId ?? ''" />
     </main>
   </div>
 </template>

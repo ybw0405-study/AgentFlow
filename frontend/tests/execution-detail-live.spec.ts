@@ -39,7 +39,8 @@ vi.mock('@/api/sse', () => ({
 }))
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'ce79f253-5d00-4ffa-b760-b6065223c685' } }),
+  useRoute: () => ({ params: { id: 'ce79f253-5d00-4ffa-b760-b6065223c685' }, fullPath: '/executions/ce79f253' }),
+  useRouter: () => ({ push: vi.fn() }),
 }))
 
 function node(status: string): NodeExecutionDto {

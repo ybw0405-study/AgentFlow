@@ -218,6 +218,8 @@ function connectSse(): void {
   const url = `/api/v1/executions/${executionId}/events/stream?afterSeq=${lastSeq.value}`
   sse = openSse(url, { headers }, {
     onFrame: (frame) => {
+      // 收到任意帧说明链路已恢复：复位退避，避免网络闪断一次后永远等 15s。
+      reconnectDelay = 1000
       if (frame.event === 'engine-event') {
         try {
           handleLiveEvent(JSON.parse(frame.data) as EngineEvent)

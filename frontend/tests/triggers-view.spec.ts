@@ -56,14 +56,14 @@ function detail(published = true) {
 }
 
 const WEBHOOK = {
-  id: 'tr-1', type: 'WEBHOOK' as const, token: 'tok-abc', secret: 'sec-123',
+  id: 'tr-1', type: 'WEBHOOK' as const, token: 'tok-abc', secret: 'sec-123', hasSecret: true,
   cron: null, timezone: 'Asia/Shanghai', enabled: true, variables: {},
   versionId: null, lastFiredAt: null, lastSlotAt: null, nextFireAt: null,
   nextFireTimes: [], createdAt: '2026-01-01T00:00:00Z',
 }
 
 const SCHEDULE = {
-  id: 'tr-2', type: 'SCHEDULE' as const, token: 'tok-sch', secret: 'sec-sch',
+  id: 'tr-2', type: 'SCHEDULE' as const, token: 'tok-sch', secret: 'sec-sch', hasSecret: true,
   cron: '0 0 9 * * *', timezone: 'Asia/Shanghai', enabled: true,
   misfirePolicy: 'CATCH_UP_LATEST' as const, variables: {},
   versionId: null, lastFiredAt: '2026-11-20T01:37:00Z', lastSlotAt: '2026-11-20 09:00',
@@ -196,6 +196,30 @@ describe('触发页', () => {
 
     const save = wrapper.findAll('button').find((b) => b.text() === '保存上限')
     expect((save!.element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('list 不回密钥明文时只提示已设置，create 后一次性显示明文', async () => {
+    // 后端 SEC-3：list 只给 hasSecret，不给 secret 明文
+    mocks.list.mockResolvedValue([{ ...WEBHOOK, secret: null }])
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('密钥已设置')
+    const secretInput = wrapper.findAll('input[readonly]')[1]
+    expect((secretInput.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('创建 webhook 后展示一次性返回的密钥明文', async () => {
+    mocks.list.mockResolvedValue([])
+    mocks.create.mockResolvedValue({ ...WEBHOOK, secret: 'one-time-secret' })
+    const wrapper = await mountView()
+    // 真实后端 create 同步落库后，list 立即包含新 webhook（只是不再回传 secret 明文）
+    mocks.list.mockResolvedValue([{ ...WEBHOOK, secret: null }])
+    const create = wrapper.findAll('button').find((b) => b.text() === '创建 Webhook')
+    await create!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('请现在复制保存')
+    // 输入框显示的是 create 响应里的一次性明文，而不是 list 的空值
+    const secretInput = wrapper.findAll('input[readonly]')[1]
+    expect((secretInput.element as HTMLInputElement).value).toBe('one-time-secret')
   })
 
   it('预览失败时把后端原因就地显示', async () => {

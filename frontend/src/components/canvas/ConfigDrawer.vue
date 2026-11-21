@@ -143,14 +143,26 @@ function setCfg(key: string, value: unknown): void {
   emit('update', { ...props.node, config: { ...props.node.config, [key]: value } })
 }
 
+/** 数字配置：清空/非法输入写 undefined，避免 Number('')===0 或 NaN→null 触发后端类型错。 */
+function setNumberCfg(key: string, raw: string): void {
+  const n = Number(raw)
+  setCfg(key, Number.isFinite(n) && n > 0 ? n : undefined)
+}
+
 function setName(value: string): void {
   if (!props.node) return
   emit('update', { ...props.node, name: value || undefined })
 }
 
+/** 节点超时是引擎 NodeBase 的顶层字段，不能写进 config（extra=forbid）；
+ *  human_gate 的审批超时才是 config.timeoutMs，在那个模板里单独用 setCfg 维护。 */
 function setTimeoutMs(value: string): void {
+  if (!props.node) return
   const n = Number(value)
-  setCfg('timeoutMs', Number.isFinite(n) && n > 0 ? n : undefined)
+  emit('update', {
+    ...props.node,
+    timeoutMs: Number.isFinite(n) && n > 0 ? n : undefined,
+  })
 }
 
 // paramsMapping / resultMapping 行编辑
@@ -511,7 +523,7 @@ function editBody(): void {
         class="af-input mono"
         type="number"
         :value="cfg('maxTokens', 1024)"
-        @input="setCfg('maxTokens', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('maxTokens', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">temperature</label>
       <input
@@ -521,7 +533,7 @@ function editBody(): void {
         min="0"
         max="2"
         :value="cfg('temperature', 0.7)"
-        @input="setCfg('temperature', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('temperature', ($event.target as HTMLInputElement).value)"
       >
     </template>
 
@@ -589,7 +601,7 @@ function editBody(): void {
         min="1"
         max="50"
         :value="cfg('topK', 5)"
-        @input="setCfg('topK', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('topK', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">minScore（0~1）</label>
       <input
@@ -599,7 +611,7 @@ function editBody(): void {
         min="0"
         max="1"
         :value="cfg('minScore', 0)"
-        @input="setCfg('minScore', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('minScore', ($event.target as HTMLInputElement).value)"
       >
       <p
         class="af-faint"
@@ -863,7 +875,7 @@ function editBody(): void {
         class="af-input mono"
         type="number"
         :value="cfg('timeoutMs', 86400000)"
-        @input="setCfg('timeoutMs', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('timeoutMs', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">超时动作</label>
       <select
@@ -1017,7 +1029,7 @@ function editBody(): void {
           min="1"
           max="1000"
           :value="cfg('maxIterations', 100)"
-          @input="setCfg('maxIterations', Number(($event.target as HTMLInputElement).value))"
+          @input="setNumberCfg('maxIterations', ($event.target as HTMLInputElement).value)"
         >
         <input
           class="af-input mono"
@@ -1025,7 +1037,7 @@ function editBody(): void {
           min="1"
           max="16"
           :value="cfg('concurrency', 1)"
-          @input="setCfg('concurrency', Number(($event.target as HTMLInputElement).value))"
+          @input="setNumberCfg('concurrency', ($event.target as HTMLInputElement).value)"
         >
       </div>
       <label class="af-label">body 子图</label>
@@ -1092,7 +1104,7 @@ function editBody(): void {
         min="1"
         max="16"
         :value="cfg('maxConcurrency', 4)"
-        @input="setCfg('maxConcurrency', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('maxConcurrency', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">branches 子图</label>
       <div

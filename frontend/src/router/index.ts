@@ -26,6 +26,11 @@ const router = createRouter({
       path: '/executions',
       name: 'executions',
       component: () => import('@/views/ExecutionListView.vue'),
+      props: (route) => {
+        const q = route.query.definitionId
+        const value = Array.isArray(q) ? q[0] : q
+        return { definitionId: typeof value === 'string' ? value : undefined }
+      },
     },
     {
       path: '/executions/:id',
