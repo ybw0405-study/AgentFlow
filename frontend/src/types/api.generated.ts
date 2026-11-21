@@ -1475,11 +1475,11 @@ export interface components {
             scanned?: number;
         };
         TriggerData: {
-            eventsUrl?: string;
-            executionId?: string;
-            idempotentReplay?: boolean;
-            status?: string;
-            streamUrl?: string;
+            eventsUrl: string;
+            executionId: string;
+            idempotentReplay: boolean;
+            status: string;
+            streamUrl: string;
         };
         TriggerRequest: {
             idempotencyKey: string;
@@ -1487,7 +1487,7 @@ export interface components {
             variables?: {
                 [key: string]: unknown;
             };
-            versionId?: string;
+            versionId: string;
         };
         TriggerView: {
             createdAt?: string;
