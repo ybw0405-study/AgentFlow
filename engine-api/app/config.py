@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # 未显式配置时回退 AF_INTERNAL_TOKEN，保证本地 dev 与现有部署零改动；生产模式
     # 由 _guard_production 强制要求显式配置且与控制面令牌不同。
     engine_token: str = Field(
-        default="dev-internal-token",  # noqa: S105
+        default="dev-internal-token",
         validation_alias=AliasChoices("AF_ENGINE_INTERNAL_TOKEN", "AF_INTERNAL_TOKEN"),
     )
     gateway_base_url: str = "http://127.0.0.1:8080"  # 引擎回调控制面的唯一入口（§5.2）
@@ -130,7 +130,8 @@ def _guard_production(settings: "Settings") -> None:
     ):
         raise RuntimeError(
             "FAIL-FAST: AF_ENGINE_INTERNAL_TOKEN must be set to a strong value distinct from "
-            "AF_INTERNAL_TOKEN in production (AF-3: engine ingress credentials are server-injected)."
+            "AF_INTERNAL_TOKEN in production "
+            "(AF-3: engine ingress credentials are server-injected)."
         )
     if settings.llm_api_key:
         insecure = not settings.llm_base_url.startswith("https://")

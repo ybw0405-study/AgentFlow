@@ -136,11 +136,13 @@ jobs:
           # 三件事都要成立才算就绪：引擎活着、网关（连带 Redis 探活）返回 UP、
           # 且网关能真正转发到 workflow-service（登录接口返回业务 4xx 而不是 5xx/连接失败）。
           for i in $(seq 1 60); do
-            engine="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/internal/health)"
-            ready="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health)"
-            login="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            # run 走 bash -e：命令替换里的 curl 在服务尚未监听时会返回 exit 7，
+            # 直接终止整个步骤，使「等待 120s 就绪」形同虚设。用 || 兜底成 000 继续轮询。
+            engine="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/internal/health)" || engine="000"
+            ready="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health)" || ready="000"
+            login="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' -X POST \
               http://127.0.0.1:8080/api/v1/auth/login \
-              -H 'Content-Type: application/json' -d '{}')"
+              -H 'Content-Type: application/json' -d '{}')" || login="000"
             if [ "$engine" = "200" ] && [ "$ready" = "200" ] \
               && { [ "$login" = "400" ] || [ "$login" = "401" ] || [ "$login" = "422" ]; }; then
               echo "stack up after ~$((i * 2))s (engine=$engine ready=$ready login=$login)"
