@@ -15,7 +15,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
     ports:
-      - "3307:3306"  # 本机 3306 已被 Windows MySQL 占用
+      - "127.0.0.1:3307:3306"  # 本机 3306 已被 Windows MySQL 占用
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -65,7 +65,7 @@ services:
       POSTGRES_PASSWORD: agentflow
       POSTGRES_DB: agentflow_events
     ports:
-      - "5433:5432"  # 本机 127.0.0.1:5432 已被 Windows PostgreSQL 占用
+      - "127.0.0.1:5433:5432"  # 本机 127.0.0.1:5432 已被 Windows PostgreSQL 占用
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
@@ -78,7 +78,7 @@ services:
     image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499  # 原 tag: redis:7-alpine
     container_name: agentflow-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -91,7 +91,7 @@ services:
     image: apache/rocketmq:5.3.1@sha256:d2b231c1b9204129e4f4dd65ec1521c81b8d6826e5f1fe8daa521dab0db5bf16  # 原 tag: apache/rocketmq:5.3.1
     container_name: agentflow-rmq-namesrv
     ports:
-      - "9876:9876"
+      - "127.0.0.1:9876:9876"
     command: sh mqnamesrv
     volumes:
       - rmq-namesrv:/home/rocketmq/logs
@@ -110,8 +110,8 @@ services:
       rocketmq-namesrv:
         condition: service_healthy
     ports:
-      - "10911:10911"
-      - "10909:10909"
+      - "127.0.0.1:10911:10911"
+      - "127.0.0.1:10909:10909"
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
     command:

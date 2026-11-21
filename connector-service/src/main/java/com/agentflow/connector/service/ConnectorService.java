@@ -144,7 +144,9 @@ public class ConnectorService {
 
     /** 生成 OAuth2 授权地址；state 带 HMAC 防伪与 10 分钟时效。 */
     public Map<String, String> oauthAuthorizeUrl(TenantInfo tenant, String id) {
-        ConnectorRow row = requireVisible(tenant, id);
+        // 授权会写入凭据，属写操作：与 authorize()/callback 统一为 owner 租户 ADMIN，
+        // 否则子租户可对祖先共享连接器发起授权并覆盖其 OAuth 凭据（跨租户写越权）。
+        ConnectorRow row = requireOwned(tenant, id);
         if (!"OAUTH2".equals(row.authType())) {
             throw new BusinessException(ErrorCode.COM_VALIDATION_001, "connector is not OAUTH2");
         }
@@ -172,7 +174,9 @@ public class ConnectorService {
     /** 回调：校验 state → 换 token → 加密存储。 */
     public void oauthCallback(TenantInfo tenant, String id, String code, String state,
                               String traceId) {
-        ConnectorRow row = requireVisible(tenant, id);
+        // 回调写 access_token 到 row.tenantId()（连接器 owner），必须由 owner 租户 ADMIN 触发；
+        // 原先的 requireVisible 允许子租户用自身 state 覆写祖先连接器的凭据。
+        ConnectorRow row = requireOwned(tenant, id);
         requireAdmin(tenant);
         verifyState(state, row.id(), tenant.tenantId());
         JsonNode oauth = row.config().path("oauth");

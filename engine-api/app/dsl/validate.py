@@ -580,6 +580,17 @@ def _nested_edge_errors(graph_nodes: dict[str, Any], edges: list[Any]) -> list[D
                     message="start node must not have incoming edges",
                 )
             )
+
+    # 子图环检测（与顶层同一 Kahn 实现）：发布期就拦下，避免运行期误报 NODE-INTERNAL-001。
+    cycle = _find_cycle(graph_nodes, edges=edges)
+    if cycle:
+        errors.append(
+            DslError(
+                code=DSL_CYCLE,
+                node_key=sorted(cycle)[0],
+                message="cycle in subgraph: " + ", ".join(sorted(cycle)),
+            )
+        )
     return errors
 
 
@@ -604,10 +615,22 @@ def _ancestors_of(graph_nodes: dict[str, Any], edges: list[Any]) -> dict[str, se
     return ancestors
 
 
-def _find_cycle(nodes: dict[str, Any], dsl: WorkflowDsl) -> set[str]:
+def _find_cycle(
+    nodes: dict[str, Any],
+    dsl: WorkflowDsl | None = None,
+    *,
+    edges: list[Any] | None = None,
+) -> set[str]:
+    """任意边集上的 Kahn 环检测；顶层传 dsl，子图传具名 edges。
+
+    子图（loop.body / parallel.branches）此前不查环，含环子图能过发布校验，
+    到运行期 compile_dag 才抛裸 ValueError 并被误归类为 NODE-INTERNAL-001。
+    """
+    if edges is None:
+        edges = list(dsl.edges) if dsl is not None else []
     in_degree = {k: 0 for k in nodes}
     out: dict[str, list[str]] = {k: [] for k in nodes}
-    for e in dsl.edges:
+    for e in edges:
         if e.from_ in nodes and e.to in nodes:
             in_degree[e.to] += 1
             out[e.from_].append(e.to)

@@ -52,30 +52,37 @@ def load_migrations(migrations_path: str) -> list[MigrationFile]:
 async def run_migrations(pool: asyncpg.Pool, migrations_path: str) -> None:
     migrations = load_migrations(migrations_path)
     async with pool.acquire() as conn:
-        await conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            " version INT PRIMARY KEY,"
-            " filename TEXT NOT NULL,"
-            " checksum TEXT NOT NULL,"
-            " applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-        )
-        rows = await conn.fetch("SELECT version, checksum FROM schema_migrations")
-        applied = {r["version"]: r["checksum"] for r in rows}
+        # advisory lock 是会话级的：同一把锁必须在同一连接上释放。多引擎实例
+        # 滚动发布时会并存，没有这把锁就会并发执行同一批 DDL（重复建表/唯一冲突），
+        # 让后启动的一方失败。锁的 key 固定，所有实例抢同一把。
+        await conn.execute("SELECT pg_advisory_lock(hashtext('af_schema_migration'))")
+        try:
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                " version INT PRIMARY KEY,"
+                " filename TEXT NOT NULL,"
+                " checksum TEXT NOT NULL,"
+                " applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+            )
+            rows = await conn.fetch("SELECT version, checksum FROM schema_migrations")
+            applied = {r["version"]: r["checksum"] for r in rows}
 
-        for m in migrations:
-            if m.version in applied:
-                if applied[m.version] != m.checksum:
-                    raise RuntimeError(
-                        f"migration {m.filename} was modified after being applied — forbidden"
+            for m in migrations:
+                if m.version in applied:
+                    if applied[m.version] != m.checksum:
+                        raise RuntimeError(
+                            f"migration {m.filename} was modified after being applied — forbidden"
+                        )
+                    continue
+                async with conn.transaction():
+                    await conn.execute(m.sql)
+                    await conn.execute(
+                        "INSERT INTO schema_migrations (version, filename, checksum)"
+                        " VALUES ($1, $2, $3)",
+                        m.version,
+                        m.filename,
+                        m.checksum,
                     )
-                continue
-            async with conn.transaction():
-                await conn.execute(m.sql)
-                await conn.execute(
-                    "INSERT INTO schema_migrations (version, filename, checksum)"
-                    " VALUES ($1, $2, $3)",
-                    m.version,
-                    m.filename,
-                    m.checksum,
-                )
-            logger.info("applied PG migration %s", m.filename)
+                logger.info("applied PG migration %s", m.filename)
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(hashtext('af_schema_migration'))")

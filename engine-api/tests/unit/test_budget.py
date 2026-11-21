@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.governance.budget import BudgetLedger
+from app.governance.budget import BUDGET_KEY_TTL_SECONDS, BudgetLedger
 
 
 async def test_reserve_within_budget(fake_redis):
@@ -139,3 +139,18 @@ async def test_exists_tracks_ledger_key(fake_redis):
     assert await ledger.exists(eid) is True
     await ledger.reconcile(eid, used=3, reset_inflight=True)
     assert await ledger.exists(eid) is True
+
+
+async def test_budget_key_carries_ttl(fake_redis):
+    """主键必须带兜底 TTL，否则每个执行都在 Redis 留下一个永久键。"""
+    ledger = BudgetLedger(fake_redis)
+    eid = uuid.uuid4()
+    await ledger.reserve(eid, budget=100, requested=10)
+    ttl = await fake_redis.ttl(ledger._key(eid))
+    assert 0 < ttl <= BUDGET_KEY_TTL_SECONDS
+
+    # reconcile 重建键时同样要带 TTL
+    other = uuid.uuid4()
+    await ledger.reconcile(other, used=5, reset_inflight=True)
+    ttl2 = await fake_redis.ttl(ledger._key(other))
+    assert 0 < ttl2 <= BUDGET_KEY_TTL_SECONDS

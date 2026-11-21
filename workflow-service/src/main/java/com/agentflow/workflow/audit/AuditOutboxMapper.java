@@ -28,8 +28,9 @@ public interface AuditOutboxMapper {
     /**
      * 多副本捞同一批会重复投递（消费端幂等兜底，但白费一次出网）。
      * {@code FOR UPDATE SKIP LOCKED} 让拿到锁的副本锁住本批、其它副本跳过已锁行去捞下一批；
-     * 它必须处在事务里才有效（由 {@link AuditOutboxRelay#relay()} 的 {@code @Transactional}
-     * 提供），否则 autocommit 下锁在 SELECT 结束即释放，等于没加。
+     * 它必须处在事务里才有效——由 {@link OutboxClaimer#claim(int)} 的 {@code @Transactional}
+     * 提供（短事务：捞取 + claim 成 PROCESSING 后即提交），autocommit 下锁在 SELECT 结束
+     * 即释放，等于没加。
      */
     @Select("SELECT id, tenant_id AS tenantId, event_type AS eventType,"
             + " message_json AS messageJson, attempts, next_attempt_at AS nextAttemptAt"
@@ -37,21 +38,33 @@ public interface AuditOutboxMapper {
             + " ORDER BY seq LIMIT #{limit} FOR UPDATE SKIP LOCKED")
     List<OutboxRow> due(@Param("limit") int limit);
 
+    /** PENDING -> PROCESSING：领取标记，使其它对副本的 due() 不再看见该行。 */
+    @Update("UPDATE audit_outbox SET status = 'PROCESSING', claimed_at = NOW(3)"
+            + " WHERE id = #{id} AND status = 'PENDING'")
+    int claim(@Param("id") String id);
+
+    /** 崩溃恢复：领取超过 lease 秒仍未完成的，退回 PENDING 供下一轮捞取。 */
+    @Update("UPDATE audit_outbox SET status = 'PENDING', claimed_at = NULL,"
+            + " next_attempt_at = NOW(3)"
+            + " WHERE status = 'PROCESSING' AND claimed_at < DATE_SUB(NOW(3), INTERVAL #{leaseSeconds} SECOND)")
+    int reclaimExpired(@Param("leaseSeconds") int leaseSeconds);
+
     @Update("UPDATE audit_outbox SET status = 'SENT', attempts = attempts + 1,"
-            + " sent_at = NOW(3), last_error = NULL WHERE id = #{id}")
+            + " sent_at = NOW(3), last_error = NULL, claimed_at = NULL WHERE id = #{id}")
     int markSent(@Param("id") String id);
 
-    @Update("UPDATE audit_outbox SET attempts = #{attempts}, last_error = #{lastError},"
+    @Update("UPDATE audit_outbox SET status = 'PENDING', attempts = #{attempts},"
+            + " last_error = #{lastError}, claimed_at = NULL,"
             + " next_attempt_at = DATE_ADD(NOW(3), INTERVAL #{delaySeconds} SECOND)"
-            + " WHERE id = #{id}")
+            + " WHERE id = #{id} AND status = 'PROCESSING'")
     int markRetry(@Param("id") String id, @Param("attempts") int attempts,
                   @Param("lastError") String lastError,
                   @Param("delaySeconds") int delaySeconds);
 
     /** 迁入隔离区：只挡住自动重投，message_json 原样留着供人工排查与重放。 */
     @Update("UPDATE audit_outbox SET status = 'DEAD', dead_at = NOW(3),"
-            + " dead_reason = #{reason}, last_error = #{lastError}"
-            + " WHERE id = #{id} AND status = 'PENDING'")
+            + " dead_reason = #{reason}, last_error = #{lastError}, claimed_at = NULL"
+            + " WHERE id = #{id} AND status = 'PROCESSING'")
     int markDead(@Param("id") String id, @Param("reason") String reason,
                  @Param("lastError") String lastError);
 

@@ -29,7 +29,10 @@ public class AuditOutboxRelay {
     private static final int BATCH = 200;
 
     private final AuditOutboxMapper outbox;
+    private final OutboxClaimer claimer;
     private final AuditDelivery delivery;
+    /** 领取租约（秒）：崩溃残留的 PROCESSING 超过此时长后由下一轮回收。 */
+    private static final int CLAIM_LEASE_SECONDS = 120;
     private final int degradeAfter;
     private final int deadAfter;
     private final ObjectMapper json = new ObjectMapper();
@@ -37,16 +40,25 @@ public class AuditOutboxRelay {
     @Value("${agentflow.audit.purge-days:7}")
     private int purgeDays = 7;
 
-    public AuditOutboxRelay(AuditOutboxMapper outbox, AuditDelivery delivery,
+    /** Spring 注入：claimer 是独立 Bean，其 @Transactional 经代理生效。 */
+    public AuditOutboxRelay(AuditOutboxMapper outbox, OutboxClaimer claimer,
+                            AuditDelivery delivery,
                             @Value("${agentflow.audit.degrade-after-attempts:3}")
                             int degradeAfter,
                             @Value("${agentflow.audit.dead-after-attempts:24}")
                             int deadAfter) {
         this.outbox = outbox;
+        this.claimer = claimer;
         this.delivery = delivery;
         this.degradeAfter = Math.max(1, degradeAfter);
         // 至少给降级通道几次机会，不能刚降级就隔离
         this.deadAfter = Math.max(this.degradeAfter + 1, deadAfter);
+    }
+
+    /** 测试构造：claimer 直接包同一次 mapper，无 Spring 代理需求。 */
+    AuditOutboxRelay(AuditOutboxMapper outbox, AuditDelivery delivery,
+                     int degradeAfter, int deadAfter) {
+        this(outbox, new OutboxClaimer(outbox), delivery, degradeAfter, deadAfter);
     }
 
     @Scheduled(fixedDelayString = "${agentflow.audit.relay-interval-ms:2000}",
@@ -54,7 +66,11 @@ public class AuditOutboxRelay {
     public void relay() {
         List<AuditOutboxMapper.OutboxRow> rows;
         try {
-            rows = outbox.due(BATCH);
+            // 短事务领取：FOR UPDATE SKIP LOCKED + claim 成 PROCESSING 后提交，
+            // 本批行由当前副本独占；网络投递在事务外完成，不拉长事务。
+            rows = claimer.claim(BATCH);
+            // 崩溃残留的 PROCESSING 超过租约后回收，避免永久卡在领取态。
+            outbox.reclaimExpired(CLAIM_LEASE_SECONDS);
         } catch (RuntimeException e) {
             // 库暂时不可用：下一轮再来，不抛（避免调度器停摆）
             log.warn("audit outbox scan failed: {}", e.toString());
