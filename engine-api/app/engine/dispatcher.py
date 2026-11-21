@@ -298,9 +298,7 @@ class Dispatcher:
         if task is not None and not task.done():
             task.cancel()
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(task, return_exceptions=True), timeout=2.0
-                )
+                await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=2.0)
             except TimeoutError:
                 logger.warning("preview task %s did not stop within 2s", execution_id)
 

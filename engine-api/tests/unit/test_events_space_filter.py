@@ -77,10 +77,7 @@ async def test_inmemory_tail_is_scoped_and_fail_closed(mem_store):
     assert [e.execution_id for e in await mem_store.tail(0, 100, space_id="space-b")] == [b]
     assert await mem_store.tail(0, 100, space_id="space-z") == []
     for space in ("space-a", "space-b"):
-        assert all(
-            e.execution_id != orphan
-            for e in await mem_store.tail(0, 100, space_id=space)
-        )
+        assert all(e.execution_id != orphan for e in await mem_store.tail(0, 100, space_id=space))
 
 
 @pytest.mark.asyncio
@@ -107,9 +104,7 @@ async def test_api_tail_events_forwards_space_id(settings, mem_store):
         global_page = await client.get("/internal/events", headers=headers)
         assert len(global_page.json()["events"]) == 2
 
-        blank = await client.get(
-            "/internal/events", params={"spaceId": "   "}, headers=headers
-        )
+        blank = await client.get("/internal/events", params={"spaceId": "   "}, headers=headers)
         assert blank.status_code == 200
         assert len(blank.json()["events"]) == 2  # 空白 spaceId 视为未指定
 
@@ -121,8 +116,7 @@ def test_af3_space_id_contract_across_services():
         "EngineGatewayClient.java"
     ).read_text(encoding="utf-8")
     projector_src = (
-        ROOT / "workflow-service/src/main/java/com/agentflow/workflow/projector/"
-        "EventProjector.java"
+        ROOT / "workflow-service/src/main/java/com/agentflow/workflow/projector/EventProjector.java"
     ).read_text(encoding="utf-8")
     internal_src = (ROOT / "engine-api/app/api/internal.py").read_text(encoding="utf-8")
 
@@ -132,8 +126,6 @@ def test_af3_space_id_contract_across_services():
     assert 'Query(None, alias="spaceId")' in internal_src
     assert "tail(after, limit, space_id=scope)" in internal_src
 
-    spec = json.loads(
-        (ROOT / "docs/openapi/engine-api.json").read_text(encoding="utf-8")
-    )
+    spec = json.loads((ROOT / "docs/openapi/engine-api.json").read_text(encoding="utf-8"))
     params = spec["paths"]["/internal/events"]["get"]["parameters"]
     assert any(p["name"] == "spaceId" for p in params), "OpenAPI 基线缺少 spaceId 参数"

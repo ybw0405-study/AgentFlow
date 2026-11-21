@@ -73,11 +73,7 @@ class EventStore:
                         "SELECT status FROM execution_tracker WHERE execution_id = $1",
                         execution_id,
                     )
-                    if (
-                        tracker is not None
-                        and tracker["status"] == "TERMINAL"
-                        and not terminal
-                    ):
+                    if tracker is not None and tracker["status"] == "TERMINAL" and not terminal:
                         raise EventTerminalError(
                             f"execution {execution_id} already terminal; rejecting {etype}"
                         )
@@ -137,9 +133,7 @@ class EventStore:
             )
         return [self._row_to_event(r) for r in rows]
 
-    async def tail(
-        self, after_seq: int, limit: int, *, space_id: str | None = None
-    ) -> list[Event]:
+    async def tail(self, after_seq: int, limit: int, *, space_id: str | None = None) -> list[Event]:
         """全局事件尾读。AF-3：space_id 非空时把空间谓词下推到 SQL。
 
         execution_spec.spec 是提交的 ExecuteRequest 快照（canonical_dump，
@@ -271,9 +265,7 @@ class EventStore:
         """
         pool = self._require_pool()
         async with pool.acquire() as conn:
-            await conn.execute(
-                "DELETE FROM execution_spec WHERE execution_id = $1", execution_id
-            )
+            await conn.execute("DELETE FROM execution_spec WHERE execution_id = $1", execution_id)
 
     async def get_node_io(self, execution_id: uuid.UUID, node_key: str) -> dict[str, Any]:
         pool = self._require_pool()

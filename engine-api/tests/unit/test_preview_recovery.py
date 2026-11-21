@@ -5,6 +5,7 @@
 钉住四件事：打标随 spec 持久化、恢复扫描跳过并强制终态、收口幂等、写终态失败时
 保留标记（否则下次扫描就认不出它是试跑）。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -40,9 +41,10 @@ def test_preview_flag_survives_the_spec_roundtrip() -> None:
     assert ExecuteRequest.model_validate(spec).preview is True
     # 未打标的存量 spec 默认按业务执行处理，恢复行为不回归
     assert _request(preview=False).canonical_dump()["preview"] is False
-    assert ExecuteRequest.model_validate(
-        {k: v for k, v in spec.items() if k != "preview"}
-    ).preview is False
+    assert (
+        ExecuteRequest.model_validate({k: v for k, v in spec.items() if k != "preview"}).preview
+        is False
+    )
 
 
 @pytest.mark.asyncio

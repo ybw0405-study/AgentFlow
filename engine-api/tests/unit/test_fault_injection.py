@@ -526,9 +526,7 @@ async def test_shutdown_cancels_and_awaits_sweepers(settings, fake_redis, mem_st
     assert dispatcher._tasks == {}, "drain 后不得残留幽灵 _tasks 条目"
     assert "cleanup-failed" in order  # release 真的抛了，且没有拖垮收口
     assert "task-finished" in order
-    assert order.index("task-finished") < order.index("store-closed") < order.index(
-        "redis-closed"
-    )
+    assert order.index("task-finished") < order.index("store-closed") < order.index("redis-closed")
 
 
 @pytest.mark.asyncio
