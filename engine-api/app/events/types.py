@@ -33,6 +33,10 @@ class EventType(StrEnum):
     COMMAND_ISSUED = "CommandIssued"
     COMMAND_COMPLETED = "CommandCompleted"
     COMMAND_FAILED = "CommandFailed"
+    # 输出增量（extra）：LLM 逐 token 流式展示的展示层事件。
+    # 语义上从属于一次 Command：COMMAND_ISSUED → (OUTPUT_DELTA*) → COMMAND_COMPLETED，
+    # 且绝不影响节点结果 —— 下游 condition/JSON 校验/变量引用仍只消费 COMMAND_COMPLETED 的完整结果。
+    OUTPUT_DELTA = "OutputDelta"
 
 
 TERMINAL_EVENTS: frozenset[EventType] = frozenset(

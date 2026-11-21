@@ -246,3 +246,53 @@ async def test_settles_grant_when_provider_raises(
     assert budget.requested is not None
     # 关键断言：异常路径用 0 结算，且只结算一次
     assert budget.settled == [(budget.requested, 0)]
+
+
+class _StreamingProvider(_FixedProvider):
+    """返回带 deltas 的结果，模拟 AF_LLM_STREAM=true 的 openai-compatible。"""
+
+    def __init__(self, deltas: list[str]) -> None:
+        super().__init__("deepseek-chat")
+        self._deltas = deltas
+
+    async def complete(self, **kwargs: Any) -> CommandResult:
+        result = await super().complete(**kwargs)
+        result.extra["deltas"] = self._deltas
+        return result
+
+
+async def test_stream_deltas_emitted_as_output_delta_before_completed() -> None:
+    """流式增量必须以 OutputDelta 事件逐个推送，且严格排在 CommandCompleted 之前。"""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    executor = LlmExecutor({"openai-compatible": _StreamingProvider(["事件", "溯源"])})
+
+    result = await executor.execute(_node("deepseek-chat"), _ctx(emitted))
+
+    # 完整结果不变，仍走 CommandCompleted 的既有语义
+    assert result.output["text"] == "ok"
+
+    event_names = [t for t, _ in emitted]
+    deltas = [p for t, p in emitted if t == str(EventType.OUTPUT_DELTA)]
+    completed_idx = event_names.index(str(EventType.COMMAND_COMPLETED))
+
+    # 增量按序逐个推送，callId 与 CommandCompleted 一致（由 make_call_id 确定性派生）
+    assert len(deltas) == 2
+    assert [d["text"] for d in deltas] == ["事件", "溯源"]
+    assert [d["index"] for d in deltas] == [0, 1]
+    assert deltas[0]["callId"] == deltas[1]["callId"]
+    completed = next(p for t, p in emitted if t == str(EventType.COMMAND_COMPLETED))
+    assert deltas[0]["callId"] == completed["callId"]
+    # OutputDelta 必须排在 CommandCompleted 之前
+    assert event_names.index(str(EventType.OUTPUT_DELTA)) < completed_idx
+
+
+async def test_no_deltas_emits_no_output_delta_events() -> None:
+    """非流式 / 无增量时，事件序列里不应出现 OutputDelta，行为与旧版逐字节一致。"""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    executor = LlmExecutor({"openai-compatible": _FixedProvider("deepseek-chat")})
+
+    await executor.execute(_node("deepseek-chat"), _ctx(emitted))
+
+    event_names = [t for t, _ in emitted]
+    assert str(EventType.OUTPUT_DELTA) not in event_names
+    assert str(EventType.COMMAND_COMPLETED) in event_names

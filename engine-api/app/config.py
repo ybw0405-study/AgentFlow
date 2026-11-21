@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     llm_json_response_format: bool = True  # 上游不支持 response_format 时置 false
     llm_send_seed: bool = False  # 部分厂商支持 seed，用于重放确定性；不支持时须关闭
     llm_allow_insecure_http: bool = False  # 生产默认禁止明文 http 外送密钥
+    llm_stream: bool = False  # LLM 节点逐 token 流式（OutputDelta 展示事件）；opt-in，默认关闭
 
 
 _WEAK_INTERNAL_TOKENS = {"dev-internal-token", ""}

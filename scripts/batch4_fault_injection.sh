@@ -75,14 +75,16 @@ case "$case_name" in
   mq-backlog)
     say "目的：MQ 堆积 / 迟到事件下，终态不可逆（AF-2/AF-9）、投影单调（I1）。"
     say "前置：记录基线堆积深度；确认事件流 last_seq 单调、execution_tracker 终态守卫。"
-    say "注入思路：暂停 EventProjector / 批量投递事件，制造堆积与乱序重放。"
-    run "echo 'TODO: 按真实 MQ SDK 投递 N 条（含乱序/重复）事件；本骨架不内嵌 MQ 客户端'"
-    run "echo 'TODO: 暂停 projector consumer 持续 ${DURATION}s'"
+    say "注入思路：暂停 EventProjector 消费 / 批量投递事件，制造堆积与乱序重放。"
+    run "docker pause ${TARGET:-agentflow-workflow} || true"
+    say "  # 上一条暂停 workflow 容器（projector consumer 所在进程）；如需投递乱序/重复事件，"
+    say "  # 用项目自带 e2e 的 MQ 客户端注入，或对 af-audit-event topic 直接投递测试消息。"
+    say "  # TODO(可选)：用真实 RocketMQ SDK 投递含乱序/重复的 N 条事件（本骨架默认只做「暂停消费」注入）。"
     say "观测点："
     say "  - 终态后迟到的非终态事件不得把 tracker 回写成 OPEN"
     say "  - markTerminal 的 WHERE 带前置状态，CANCELLED 不被改回 SUCCEEDED"
     say "  - 恢复消费后 last_seq 单调、投影终态与事件流一致"
-    say "恢复：恢复 consumer；清理本次注入的测试事件（勿动业务 topic 存量）"
+    say "恢复：docker unpause ${TARGET:-agentflow-workflow}；清理本次注入的测试事件（勿动业务 topic 存量）"
     say "判据：终态零回写、投影零漂移、堆积回落到基线。"
     ;;
 
@@ -90,14 +92,15 @@ case "$case_name" in
     say "目的：SIGTERM 滚动发布时 shutdown 三级收口，在途执行先 drain 再关 store/redis（B4/I6）。"
     say "前置：至少 2 个实例、注入一个真实在跑任务（不要空 _tasks）、LB 摘流、记录 digest。"
     say "注入思路：逐个实例 SIGTERM，观察在途任务收口顺序。"
-    run "echo 'TODO: 对 ${TARGET:-<instance>} 发 SIGTERM（docker stop / kill -TERM），间隔 ${DURATION}s 逐个执行'"
+    run "docker stop --signal=SIGTERM --time=${DURATION} ${TARGET:-agentflow-engine}"
+    say "  # 逐个实例发 SIGTERM；多实例时重复对下一个 --target 执行，间隔 ${DURATION}s"
     say "观测点："
     say "  - shutdown 顺序：置停止接收 -> gather(*_tasks, return_exceptions=True) -> sweep/gate -> 才关 store/redis"
     say "  - 在途执行不撞已关闭连接池、不出现 'Task was destroyed but it is pending!'"
     say "  - 租约在 TTL 内被正常接管（不误导为 worker crashed）"
     say "  - preview 执行不因重启被恢复扫描续跑（AF-6）"
     say "  - 新实例 readiness 变绿后才接流量"
-    say "恢复：按 digest 拉起实例；确认 /internal/health readiness 200"
+    say "恢复：按 digest 拉起实例（docker start ${TARGET:-agentflow-engine}）；确认 /internal/health readiness 200"
     say "判据：零在途丢失、store/redis 在任务结束后才关闭、租约接管时延 < SLO。"
     ;;
 

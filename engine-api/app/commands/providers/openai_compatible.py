@@ -54,6 +54,7 @@ def build_chat_payload(
     output_schema: dict[str, Any] | None,
     json_response_format: bool,
     seed_value: int | None = None,
+    stream: bool = False,
 ) -> dict[str, Any]:
     """构造 OpenAI 兼容 {@code /chat/completions} 请求体。
 
@@ -80,7 +81,7 @@ def build_chat_payload(
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "stream": False,
+        "stream": stream,
     }
     if output_mode == "json" and json_response_format:
         payload["response_format"] = {"type": "json_object"}
@@ -158,6 +159,7 @@ class OpenAICompatibleProvider:
         max_response_chars: int = 100_000,
         json_response_format: bool = True,
         send_seed: bool = False,
+        stream: bool = False,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._base_url = (base_url or "").rstrip("/")
@@ -173,6 +175,7 @@ class OpenAICompatibleProvider:
         self._max_response_chars = max_response_chars
         self._json_response_format = json_response_format
         self._send_seed = send_seed
+        self._stream = stream
         # 端点用绝对 URL 传，不依赖 base_url 合并语义，避免 /v1 前缀被覆盖。
         self._client = httpx.AsyncClient(
             timeout=timeout_s,
@@ -190,6 +193,7 @@ class OpenAICompatibleProvider:
             max_response_chars=settings.llm_max_response_chars,
             json_response_format=settings.llm_json_response_format,
             send_seed=settings.llm_send_seed,
+            stream=settings.llm_stream,
         )
 
     @property
@@ -302,6 +306,7 @@ class OpenAICompatibleProvider:
         trace_id: str,
         call_id: str = "",
         space_id: str = "",
+        stream: bool | None = None,
     ) -> CommandResult:
         started = time.monotonic()
         if not self.configured:
@@ -311,6 +316,9 @@ class OpenAICompatibleProvider:
                 started,
                 "set AF_LLM_BASE_URL and AF_LLM_API_KEY in engine-api environment",
             )
+
+        # 是否流式由配置（AF_LLM_STREAM）决定；调用方可显式覆盖。JSON 模式由节点层禁用流式。
+        use_stream = self._stream if stream is None else stream
 
         resolved_model = self._resolve_model(model)
         seed_value = int(seed[:8], 16) % (2**31) if self._send_seed else None
@@ -325,6 +333,7 @@ class OpenAICompatibleProvider:
             output_schema=output_schema,
             json_response_format=self._json_response_format,
             seed_value=seed_value,
+            stream=use_stream,
         )
 
         headers = {
@@ -332,6 +341,18 @@ class OpenAICompatibleProvider:
             "Content-Type": "application/json",
             "X-Trace-Id": trace_id,
         }
+
+        if use_stream:
+            return await self._complete_stream(
+                started=started,
+                payload=payload,
+                headers=headers,
+                prompt=prompt,
+                system=system,
+                output_mode=output_mode,
+                resolved_model=resolved_model,
+            )
+
         try:
             resp = await self._client.post(self._endpoint, json=payload, headers=headers)
         except httpx.TimeoutException as exc:
@@ -394,6 +415,120 @@ class OpenAICompatibleProvider:
                 "model": resolved_model,
             },
         )
+
+    async def _complete_stream(
+        self,
+        *,
+        started: float,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        prompt: str,
+        system: str | None,
+        output_mode: str,
+        resolved_model: str,
+    ) -> CommandResult:
+        """流式路径：逐 SSE 事件读取增量，最终仍组装成与一次性调用完全一致的完整结果。
+
+        关键不变式（流式是纯展示层增强，不得改变节点语义）：
+        - 返回的 ``CommandResult.data`` 与 ``extra.usage`` 与非流式路径完全一致；
+        - 增量以 ``extra["deltas"]`` 单独携带（list[str]，去空、不重复计费），
+          供调用方在 COMMAND_COMPLETED 前逐个推成 OutputDelta 展示事件；
+        - 上游若不支持/未返回流式增量，回退成单条完整文本，语义无损。
+        """
+        try:
+            async with self._client.stream(
+                "POST", self._endpoint, json=payload, headers=headers
+            ) as resp:
+                if resp.status_code != 200:
+                    code, transient = self._classify_status(resp.status_code)
+                    detail = f"status={resp.status_code}"
+                    return self._failure(code, transient, started, detail)
+
+                parts: list[str] = []
+                deltas: list[str] = []
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    chunk = line[5:].strip()
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(chunk)
+                    except ValueError:
+                        # 上游偶发空行/心跳；跳过不中断整段流。
+                        continue
+                    delta = self._extract_delta(event)
+                    if delta:
+                        parts.append(delta)
+                        deltas.append(delta)
+        except httpx.TimeoutException as exc:
+            return self._failure("LLM-TIMEOUT-001", True, started, type(exc).__name__)
+        except httpx.HTTPError as exc:
+            return self._failure("LLM-UPSTREAM-001", True, started, type(exc).__name__)
+
+        text = "".join(parts).strip()
+        if not text:
+            return self._failure(
+                "LLM-RESPONSE-001", False, started, "empty content (stream returned no delta)"
+            )
+        if len(text) > self._max_response_chars:
+            return self._failure(
+                "LLM-RESPONSE-001", False, started, "content exceeds AF_LLM_MAX_RESPONSE_CHARS"
+            )
+
+        parsed: dict[str, Any] | list[Any] | None = None
+        if output_mode == "json":
+            try:
+                parsed = json.loads(text)
+            except ValueError as exc:
+                return self._failure("LLM-RESPONSE-001", False, started, f"invalid json: {exc}")
+
+        fallback_prompt_tokens = estimate_tokens(prompt + (system or ""))
+        # 流式响应通常不携带 usage（除非 include_usage），completion 侧退回本地估算。
+        completion_tokens = estimate_tokens(text)
+        total_tokens = fallback_prompt_tokens + completion_tokens
+
+        return CommandResult(
+            ok=True,
+            data={"text": text, "parsed": parsed},
+            token_usage=total_tokens,
+            latency_ms=self._ms(started),
+            extra={
+                "usage": {
+                    "prompt": fallback_prompt_tokens,
+                    "completion": completion_tokens,
+                    "total": total_tokens,
+                },
+                "provider": self.name,
+                "model": resolved_model,
+                "deltas": deltas,
+            },
+        )
+
+    @staticmethod
+    def _extract_delta(event: dict[str, Any]) -> str:
+        """从单个 SSE 事件取出文本增量（仅 content，忽略 reasoning_content 与 tool_call）。"""
+        if not isinstance(event, dict):
+            return ""
+        choices = event.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+        first = choices[0]
+        if not isinstance(first, dict):
+            return ""
+        delta = first.get("delta")
+        if not isinstance(delta, dict):
+            return ""
+        raw = delta.get("content")
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, list):
+            return "".join(
+                str(part.get("text", ""))
+                for part in raw
+                if isinstance(part, dict) and part.get("type") in (None, "text")
+            )
+        return ""
 
     @staticmethod
     def _classify_status(status: int) -> tuple[str, bool]:

@@ -7,9 +7,10 @@ import com.agentflow.common.tenant.TenantHierarchyResolver;
 import com.agentflow.connector.crypto.CredentialCipher;
 import com.agentflow.connector.domain.ConnectorRepository;
 import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
-import com.agentflow.connector.web.ConnectorDtos.ConnectorView;
-import com.agentflow.connector.web.ConnectorDtos.CreateRequest;
-import com.agentflow.connector.web.ConnectorDtos.UpdateRequest;
+import com.agentflow.connector.dto.ConnectorDtos.ConnectorView;
+import com.agentflow.connector.dto.ConnectorDtos.CreateRequest;
+import com.agentflow.connector.dto.ConnectorDtos.IdSummary;
+import com.agentflow.connector.dto.ConnectorDtos.UpdateRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.InputStream;
@@ -248,10 +249,12 @@ public class ConnectorService {
         }
     }
 
-    /** 内部：模块间查询某空间可见（已启用）的连接器。 */
-    public List<ConnectorRow> visibleEnabled(String spaceId) {
+    /** 内部：模块间查询某空间可见（已启用）的连接器。返回 DTO，避免 domain record 泄漏到 web 层。 */
+    public List<IdSummary> visibleEnabled(String spaceId) {
         return repo.listByTenants(chainOf(spaceId)).stream()
-                .filter(ConnectorRow::enabled).toList();
+                .filter(ConnectorRow::enabled)
+                .map(row -> new IdSummary(row.id(), row.name(), row.tenantId()))
+                .toList();
     }
 
     /**

@@ -158,4 +158,22 @@ describe('执行详情的实时事件合并', () => {
     expect(wrapper.find('.af-topbar .af-status').text()).toBe('RUNNING')
     expect(wrapper.find('.af-tree__row .af-status').text()).toBe('RUNNING')
   })
+
+  it('OutputDelta 逐 token 累加展示，CommandCompleted 清空避免与最终结果重复', async () => {
+    const wrapper = await mountView('RUNNING', 'RUNNING', 38)
+
+    mocks.handlers?.onFrame(frame(39, 'OutputDelta', { text: '事件' }))
+    mocks.handlers?.onFrame(frame(40, 'OutputDelta', { text: '溯源' }))
+    await flushPromises()
+
+    // 两个增量已累加，打字机区域显示完整片段 + 光标
+    const streamBlock = wrapper.findAll('pre.mono').find((p) => p.text().includes('事件溯源'))
+    expect(streamBlock).toBeTruthy()
+    expect(streamBlock!.text()).toContain('事件溯源')
+
+    // 完整结果落库（CommandCompleted），流式增量被清除，不与最终 output 重复
+    mocks.handlers?.onFrame(frame(41, 'CommandCompleted', { tokenUsed: 10 }))
+    await flushPromises()
+    expect(wrapper.findAll('pre.mono').find((p) => p.text().includes('事件溯源'))).toBeUndefined()
+  })
 })

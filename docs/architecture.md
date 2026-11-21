@@ -653,6 +653,16 @@ stateDiagram-v2
 
 **重试分层**：provider 不做重试，只把上游状态精确分类为瞬时/永久（`LLM-RATE_LIMIT-001` / `LLM-TIMEOUT-001` / `LLM-UPSTREAM-001` 为瞬时；`LLM-AUTH-001` / `LLM-REQUEST-001` / `LLM-RESPONSE-001` / `LLM-NOT_CONFIGURED-001` 为永久）。重试由 §5.4 的引擎 RetryPolicy 统一执行，避免双层重试导致重复计费。
 
+**逐 token 流式（opt-in）**：`AF_LLM_STREAM=true` 时，直连 `openai-compatible` 路径对纯文本模式开启 SSE 逐 token 流式。上游增量以 `OutputDelta` 事件逐个推送（`COMMAND_ISSUED → OutputDelta* → COMMAND_COMPLETED`），供前端做「打字机」展示。三条不变式保证这是**纯展示层增强、不改节点语义**：
+
+- 流式与非流式返回的 `CommandResult.data` / `usage` 完全一致；`OutputDelta` 只出现在 `CommandCompleted` 之前，下游 condition / JSON 校验 / 变量引用仍只消费完整结果。
+- JSON 输出模式（`output_mode=json`）强制非流式——schema 校验需要完整结果，流式无法保证 JSON 合法性。
+- 连接器路径（`connector`）不流式：它经 connector-service 单跳代理（256KB 裁剪、非流式 JSON 信封），拿不到 SSE 增量，保持非流式是明确边界，不影响可用性。
+
+连接器路径不流式的**技术依据**（不是未实现，而是架构冲突）：`ConnectorInvoker.invoke` 是同步阻塞调用（`HttpClient.send` 一次性收全响应体），结果经 `BoundedBodyReader` 裁剪到 256KB 后以 JSON 写入 Redis 幂等缓存（`af:conncall:*`），再由同步 `@PostMapping` 一次性返回。流式与这套模型在三个层面根本冲突——(1) SSE 增量无法塞进「一次 JSON 结果 + 幂等缓存重放」的形态；(2) 流无法在崩溃后按 callId 从缓存重放，幂等语义需另造一套；(3) 响应裁剪与 `InvokeResult` 同步返回都是「整包」假设。要支持流式需新增一条独立的流式透传通道（connector-service 的 `SseEmitter`/`Flux` 端点 + 上游 `BodyHandlers.ofLines` 流读 + 网关 SSE 透传 + Python 侧流式客户端），且与现有幂等/裁剪语义并存时需重新设计边界。当前定位为**明确不覆盖**，而非缺陷；确有需求时按上述通道独立演进。
+
+默认关闭（`AF_LLM_STREAM` 缺省 `false`），避免对不支持流式或行为有差异的上游造成回归。
+
 **与 §5.3 的差异（必须知晓）**：真实模型是外部非确定性副作用，且上游普遍不支持按 callId 幂等去重。因此 §5.3 的「恰好一次」论断对真实 provider 降级为 **at-least-once**：`CommandIssued` 已落但 `CommandCompleted` 未落时崩溃恢复会重发调用，可能产生重复计费。`AF_LLM_SEND_SEED=true` 可向上游传递确定性 seed 提高复现性，但不构成幂等保证。需要强幂等时应接入支持 idempotency key 的上游，或在 connector 层加结果缓存。
 
 ---

@@ -1,5 +1,8 @@
 -- 演示种子（P0 验收）：1 Org + 2 Space + 4 用户（密码统一 agentflow123，仅本地演示）
--- 通过 scripts/start-dev.* 或 docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow < seed-demo.sql 注入
+-- 通过 scripts/start-dev.* 注入，或：docker exec -i agentflow-mysql mysql \
+--   --default-character-set=utf8mb4 -u"$AF_MYSQL_ROOT_USER" -p"$AF_MYSQL_ROOT_PASSWORD" agentflow < seed-demo.sql
+-- 注意：上例中的 root 账号/密码由环境变量注入，仓库内不含可被直接利用的明文 root 口令。
+-- 演示账号 agentflow123 仅用于本地验收，生产环境由 AF_DEMO_ACCOUNTS=false（默认）关闭。
 -- 幂等：可重复执行。
 
 INSERT IGNORE INTO tenant (id, name, type, parent_id) VALUES
