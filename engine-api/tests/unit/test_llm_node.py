@@ -10,9 +10,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import pytest
+
 from app.commands.base import CommandResult
 from app.commands.providers.model_capabilities import REASONING_MIN_OUTPUT_TOKENS
 from app.dsl.models import LlmConfig, LlmNode
+from app.errors import PermanentNodeError
 from app.events.types import EventType
 from app.nodes.base import NodeContext, Policy
 from app.nodes.llm import LlmExecutor
@@ -166,6 +169,26 @@ async def test_explicit_large_max_tokens_is_not_lowered() -> None:
     await executor.execute(node, _ctx([]))
 
     assert provider.max_tokens == 8192
+
+
+async def test_connection_id_requires_authorization_like_tool_path() -> None:
+    """SEC-4：LLM 走 connectionId 时也必须校验授权集合，与 tool 节点同口径。"""
+    node = LlmNode(
+        key="draft",
+        type="llm",
+        config=LlmConfig(
+            connection_id="conn-not-authorized",
+            model="deepseek-chat",
+            prompt_template="{{ vars.question }}",
+        ),
+    )
+    # connector_llms 传入但授权集合为空 → 必须在取 provider 前就被拒
+    executor = LlmExecutor({}, connector_llms=object())  # type: ignore[arg-type]
+
+    with pytest.raises(PermanentNodeError) as exc:
+        await executor.execute(node, _ctx([]))
+
+    assert exc.value.code == "CONN-FORBIDDEN-001"
 
 
 async def test_reasoning_raise_is_included_in_budget_reservation() -> None:

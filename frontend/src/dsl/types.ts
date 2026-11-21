@@ -1,20 +1,11 @@
-/** DSL TypeScript 类型（与 engine-api app/dsl/models.py 一一对应）。 */
+/** DSL TypeScript 类型（与 engine-api app/dsl/models.py 一一对应）。
+ *  CT-1：所有枚举联合类型从 contract-enums.ts 派生，避免与取值数组各写一份。 */
+import type { LlmProvider, NodeType, OutputMode, VariableType } from './contract-enums'
 
-export type NodeType =
-  | 'start'
-  | 'end'
-  | 'llm'
-  | 'retrieval'
-  | 'tool'
-  | 'condition'
-  | 'loop'
-  | 'parallel'
-  | 'transform'
-  | 'subworkflow'
-  | 'human_gate'
+export type { LlmProvider, NodeType, OutputMode, VariableType } from './contract-enums'
 
 export interface VariableSpec {
-  type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array'
+  type: VariableType
   required?: boolean
   default?: unknown
   pii?: boolean
@@ -42,7 +33,7 @@ export interface DslDefaults {
 }
 
 export interface LlmConfig {
-  provider?: 'openai-compatible'
+  provider?: LlmProvider
   /** 模型连接 id：端点与密钥由服务端托管，DSL 里只留这个引用。 */
   connectionId?: string
   model: string
@@ -50,7 +41,7 @@ export interface LlmConfig {
   systemPrompt?: string
   temperature?: number
   maxTokens?: number
-  outputMode?: 'text' | 'json'
+  outputMode?: OutputMode
   outputSchema?: Record<string, unknown>
 }
 

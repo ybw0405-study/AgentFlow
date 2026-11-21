@@ -17,16 +17,23 @@ concurrency:
 jobs:
   verify:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version-file: .nvmrc  # G12：与根目录版本文件对齐
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json  # G20：真实锁文件
       - name: npm ci
         working-directory: frontend
         run: npm ci
+      # CT-2：OpenAPI 是唯一契约源，前端类型必须由它生成，且生成物不得被手写漂移。
+      - name: 生成 API 类型（OpenAPI 单源）
+        working-directory: frontend
+        run: npm run gen:api-types
+      - name: 生成物不得漂移
+        run: git diff --exit-code -- frontend/src/types/api.generated.ts
       - name: typecheck
         working-directory: frontend
         run: npm run typecheck

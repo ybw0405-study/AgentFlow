@@ -29,6 +29,8 @@ public enum ErrorCode {
     WF_STATE_001("WF-STATE-001", HttpStatus.CONFLICT, "state", "非法状态转移"),
     WF_CONCURRENCY_001("WF-CONCURRENCY-001", HttpStatus.TOO_MANY_REQUESTS, "concurrency",
             "并发执行已达上限"),
+    WF_BUDGET_001("WF-BUDGET-001", HttpStatus.TOO_MANY_REQUESTS, "budget-exceeded",
+            "月度调用/额度已用尽，新的执行被拒绝"),
     WF_POLICY_CLAMPED_001("WF-POLICY_CLAMPED-001", HttpStatus.OK, "policy-clamped", "policy 被下调至租户上限"),
 
     DSL_VALIDATION_001("DSL-VALIDATION-001", HttpStatus.UNPROCESSABLE_ENTITY, "dsl", "DSL 校验失败"),

@@ -1,5 +1,7 @@
 package com.agentflow.workflow.execution;
 
+import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.apache.ibatis.annotations.Mapper;
@@ -14,15 +16,27 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface BudgetLedgerMapper {
 
+    /**
+     * 账期唯一来源（AF-5 / 不变量 I5）：Asia/Shanghai 的 yyyy-MM。
+     *
+     * <p>SQL 里的 {@code DATE_FORMAT(NOW(3),'%Y-%m')} 按数据库时区算，与 Java 侧
+     * （Asia/Shanghai）在跨月边界会分裂成两个月账本：月度额度硬约束查空账本失效、
+     * 用量少算。因此 period 一律由 Java 算好后作为参数传给 SQL，禁止 SQL 再碰 NOW()。
+     */
+    static String currentPeriod() {
+        return YearMonth.now(ZoneId.of("Asia/Shanghai")).toString();
+    }
+
     @Update("INSERT INTO budget_ledger (tenant_id, period, calls_used, tokens_used,"
             + " limit_calls, limit_tokens)"
-            + " SELECT e.tenant_id, DATE_FORMAT(NOW(3), '%Y-%m'), 1, #{tokens},"
+            + " SELECT e.tenant_id, #{period}, 1, #{tokens},"
             + " #{limitCalls}, #{limitTokens}"
             + " FROM workflow_execution e WHERE e.id = #{executionId}"
             + " ON DUPLICATE KEY UPDATE calls_used = calls_used + 1,"
             + " tokens_used = tokens_used + #{tokens}")
-    int accrue(@Param("executionId") String executionId, @Param("tokens") int tokens,
-               @Param("limitCalls") int limitCalls, @Param("limitTokens") long limitTokens);
+    int accrue(@Param("executionId") String executionId, @Param("period") String period,
+               @Param("tokens") int tokens, @Param("limitCalls") int limitCalls,
+               @Param("limitTokens") long limitTokens);
 
     /**
      * 按租户直接累加（试跑用）：试跑没有 workflow_execution 行，{@link #accrue} 会静默插不进任何东西。
@@ -31,12 +45,13 @@ public interface BudgetLedgerMapper {
      */
     @Update("INSERT INTO budget_ledger (tenant_id, period, calls_used, tokens_used,"
             + " limit_calls, limit_tokens)"
-            + " VALUES (#{tenantId}, DATE_FORMAT(NOW(3), '%Y-%m'), #{calls}, #{tokens},"
+            + " VALUES (#{tenantId}, #{period}, #{calls}, #{tokens},"
             + " #{limitCalls}, #{limitTokens})"
             + " ON DUPLICATE KEY UPDATE calls_used = calls_used + #{calls},"
             + " tokens_used = tokens_used + #{tokens}")
-    int accrueByTenant(@Param("tenantId") String tenantId, @Param("calls") int calls,
-                       @Param("tokens") int tokens, @Param("limitCalls") int limitCalls,
+    int accrueByTenant(@Param("tenantId") String tenantId, @Param("period") String period,
+                       @Param("calls") int calls, @Param("tokens") int tokens,
+                       @Param("limitCalls") int limitCalls,
                        @Param("limitTokens") long limitTokens);
 
     @Select("SELECT tenant_id AS tenantId, period, calls_used AS callsUsed,"

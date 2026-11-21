@@ -17,7 +17,7 @@ CREATE TABLE tool_connector (
   PRIMARY KEY (id),
   UNIQUE KEY uq_tc_tenant_name (tenant_id, uq_name),
   KEY idx_tc_tenant (tenant_id, enabled)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tool_credential (
   id               CHAR(36) NOT NULL,
@@ -33,4 +33,4 @@ CREATE TABLE tool_credential (
   PRIMARY KEY (id),
   UNIQUE KEY uq_tcr_conn (connector_id),
   KEY idx_tcr_tenant (tenant_id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

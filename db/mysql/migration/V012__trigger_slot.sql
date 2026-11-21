@@ -2,5 +2,15 @@
 -- 调度器停机后恢复时，last_fired_at 会是一个很晚的时间（比如 09:37），
 -- 只有 last_slot_at 才能回答「这一跑代表的是 09:00 那一档，迟到了 37 分钟」。
 -- 幂等键也从档位生成：崩溃在派发与记账之间时，重扫会算出同一个档位，走幂等回放而不是再跑一次。
-ALTER TABLE workflow_trigger
-  ADD COLUMN last_slot_at DATETIME(3) NULL AFTER last_fired_at;
+--
+-- AF-10：ADD COLUMN 幂等守卫（见 V008 注释），已迁移库重放直接跳过。
+SET @af_ddl = (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'workflow_trigger'
+             AND COLUMN_NAME = 'last_slot_at'),
+    'DO 0',
+    'ALTER TABLE workflow_trigger ADD COLUMN last_slot_at DATETIME(3) NULL AFTER last_fired_at'));
+PREPARE af_stmt FROM @af_ddl;
+EXECUTE af_stmt;
+DEALLOCATE PREPARE af_stmt;

@@ -34,6 +34,9 @@ spring:
 agentflow:
   engine:
     base-url: ${AF_ENGINE_SERVICE:http://127.0.0.1:8000}
+    # AF-3：网关→引擎的独立凭据，由服务端注入、客户端头一律剥离。
+    # 未显式配置时回退控制面令牌（兼容本地 dev / 现有部署）；生产必须设为不同的强值。
+    internal-token: ${AF_ENGINE_INTERNAL_TOKEN:${AF_INTERNAL_TOKEN:dev-internal-token}}
   jwt:
     secret: ${AF_JWT_SECRET:dev-only-secret-key-0123456789abcdef}
   internal-token: ${AF_INTERNAL_TOKEN:dev-internal-token}

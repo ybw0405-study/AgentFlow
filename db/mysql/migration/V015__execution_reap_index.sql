@@ -6,6 +6,28 @@
 --
 -- 两条索引各管一个分支：截止时间一条、派发宽限一条。代价是每次写入多维护两个索引，
 -- 执行行的写入频率远低于节点行，可以接受。
-ALTER TABLE workflow_execution
-  ADD KEY idx_we_due (status, deadline_at),
-  ADD KEY idx_we_pending (status, created_at);
+--
+-- AF-10：ADD KEY 幂等守卫。MySQL 8 无 `ADD KEY IF NOT EXISTS`，用
+-- information_schema.STATISTICS 判定 + PREPARE 动态执行；已迁移库重放不再报
+-- "Duplicate key name"。两条索引分别判定，一条已存在不影响另一条补建。
+SET @af_ddl = (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.STATISTICS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'workflow_execution'
+             AND INDEX_NAME = 'idx_we_due'),
+    'DO 0',
+    'ALTER TABLE workflow_execution ADD KEY idx_we_due (status, deadline_at)'));
+PREPARE af_stmt FROM @af_ddl;
+EXECUTE af_stmt;
+DEALLOCATE PREPARE af_stmt;
+
+SET @af_ddl = (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.STATISTICS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'workflow_execution'
+             AND INDEX_NAME = 'idx_we_pending'),
+    'DO 0',
+    'ALTER TABLE workflow_execution ADD KEY idx_we_pending (status, created_at)'));
+PREPARE af_stmt FROM @af_ddl;
+EXECUTE af_stmt;
+DEALLOCATE PREPARE af_stmt;

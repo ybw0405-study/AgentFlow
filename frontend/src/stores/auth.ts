@@ -8,6 +8,8 @@ interface AuthState {
   user: MeData | null
   currentSpaceId: string | null
   restored: boolean
+  /** 已主动登出：拦截任何自动续期，避免退出后在途 401 把会话又「救」回来。 */
+  signedOut: boolean
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -16,15 +18,23 @@ export const useAuthStore = defineStore('auth', {
     user: null,
     currentSpaceId: null,
     restored: false,
+    signedOut: false,
   }),
   getters: {
     isAuthenticated: (s) => s.accessToken !== null,
     currentSpace: (s) =>
       s.user?.memberships.find((m) => m.tenantId === s.currentSpaceId) ?? null,
+    /** 管理端入口判定：与 ConnectorsView 一致，取当前空间 membership.role。 */
+    isAdmin: (s) => {
+      const role = s.user?.memberships.find((m) => m.tenantId === s.currentSpaceId)?.role
+      return role === 'OWNER' || role === 'ADMIN'
+    },
   },
   actions: {
     async login(email: string, password: string): Promise<void> {
       const data = await authApi.login(email, password)
+      // 重新登录成功后恢复正常的 401 自动续期；失败时保持原状态不误清。
+      this.signedOut = false
       this.accessToken = data.accessToken
       await this.loadMe()
     },
@@ -33,8 +43,10 @@ export const useAuthStore = defineStore('auth', {
      */
     async restore(): Promise<boolean> {
       if (this.restored) return this.isAuthenticated
-      this.restored = true
-      return this.refreshSession()
+      const ok = await this.refreshSession()
+      // 仅成功时置位：首屏 refresh 抖动失败仍保持 false，守卫下次导航可重试而不是卡死。
+      if (ok) this.restored = true
+      return ok
     },
     /**
      * 强制刷新 access token。与 {@link restore} 的区别是不受 restored 短路，
@@ -42,8 +54,13 @@ export const useAuthStore = defineStore('auth', {
      * 当成「会话有效」，重试必然再 401 且不会跳登录页。
      */
     async refreshSession(): Promise<boolean> {
+      // 登出后一切自动续期都禁止：响应拦截器收到的在途 401 会走到这里，
+      // 若放行就会用仍有效的刷新 Cookie 换回新 token，造成「退出后又被自动登录」。
+      if (this.signedOut) return false
       try {
         const data = await authApi.refresh()
+        // 刷新往返期间用户可能已登出，此时不能把新 token 写回本地。
+        if (this.signedOut) return false
         this.accessToken = data.accessToken
         await this.loadMe()
         return true
@@ -60,10 +77,14 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async logout(): Promise<void> {
+      // 先置位：logout 请求期间到达的其它在途 401 也不能续期。
+      this.signedOut = true
       try {
         await authApi.logout()
       } finally {
         this.$reset()
+        // $reset() 会把 signedOut 清回初始值，必须重新置位，否则登出后仍会被续期。
+        this.signedOut = true
         this.restored = true
       }
     },

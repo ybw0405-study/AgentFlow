@@ -1,22 +1,98 @@
 version: 2
 
-# 只自动提安全更新：版本升级由人工按 CONTRIBUTING「依赖升级」处理，
-# 避免大版本跳跃未经评估就进入主分支（open-pull-requests-limit: 0 仅关闭常规版本 PR）。
+# 依赖更新策略（与 CONTRIBUTING「依赖升级」一致）
+# - 每个生态按月检查，最多同时 5 个「版本更新」PR（open-pull-requests-limit: 5）。
+# - 主版本升级由维护者手工评估：下面的 ignore 把 semver-major 全部排除，
+#   次版本 / 补丁版本按生态聚合成一个 PR（groups），便于集中评审后合入。
+# - 安全更新（Dependabot security updates / alerts）是**仓库级开关**，需在
+#   GitHub Settings → Code security 单独启用，本文件只管「版本更新」，不再声称
+#   「只自动提安全更新」。旧配置三处 open-pull-requests-limit: 0 实际会关闭全部
+#   版本更新 PR（并非「只关大版本」），且缺 pip / docker 生态，文件头注释与实配
+#   不符，均已纠正。
 updates:
-  - package-ecosystem: maven
-    directory: /
+  - package-ecosystem: "maven"
+    directory: "/"
     schedule:
-      interval: monthly
-    open-pull-requests-limit: 0
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(java)"
+    labels:
+      - "dependencies"
+    groups:
+      maven-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
 
-  - package-ecosystem: npm
-    directory: /frontend
+  - package-ecosystem: "npm"
+    directory: "/frontend"
     schedule:
-      interval: monthly
-    open-pull-requests-limit: 0
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(frontend)"
+    labels:
+      - "dependencies"
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
 
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: "pip"
+    directory: "/engine-api"
     schedule:
-      interval: monthly
-    open-pull-requests-limit: 0
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(python)"
+    labels:
+      - "dependencies"
+    groups:
+      pip-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(actions)"
+    labels:
+      - "dependencies"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    # 仓库当前没有任何 Dockerfile（G17 待办）；按 G5 要求以 "/" 作为占位目录。
+    # ops/docker-compose.infra.yml 的镜像版本目前由人工维护（G16 计划改 digest 固定），
+    # 待新增 Dockerfile 后此生态会自动纳入版本跟踪，届时按实际路径调整 directory。
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(docker)"
+    labels:
+      - "dependencies"

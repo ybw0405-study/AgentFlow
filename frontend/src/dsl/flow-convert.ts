@@ -3,7 +3,7 @@
  * 注意：为避开 Vue Flow 深层泛型在 vue-tsc 下的实例化爆炸，本模块只用
  * 结构化的 FlowNodeLike/FlowEdgeLike；视图层在边界处一次性断言。 */
 
-import type { DslEdge, DslNode, NodeType, WorkflowDsl } from './types'
+import type { DslEdge, DslNode, NodeType, RetryPolicy, WorkflowDsl } from './types'
 
 export const AF_NODE_TYPE = 'af'
 
@@ -11,6 +11,9 @@ export interface FlowNodeData {
   nodeType: NodeType
   label: string
   config: Record<string, unknown>
+  /** 引擎 NodeBase 的顶层字段，与 config 平级：不能写进 config（extra=forbid）。 */
+  timeoutMs?: number
+  retry?: RetryPolicy
 }
 
 export interface FlowNodeLike {
@@ -37,7 +40,13 @@ export function dslToFlow(dsl: WorkflowDsl): FlowGraph {
     id: n.key,
     type: AF_NODE_TYPE,
     position: n.position ?? { x: 80 + i * 220, y: 120 + (i % 3) * 90 },
-    data: { nodeType: n.type, label: n.name ?? n.key, config: n.config },
+    data: {
+      nodeType: n.type,
+      label: n.name ?? n.key,
+      config: n.config,
+      ...(n.timeoutMs !== undefined ? { timeoutMs: n.timeoutMs } : {}),
+      ...(n.retry !== undefined ? { retry: n.retry } : {}),
+    },
   }))
   const edges: FlowEdgeLike[] = dsl.edges.map((e) => ({
     id: edgeId(e),
@@ -57,6 +66,8 @@ export function flowToDsl(
     key: n.id,
     type: n.data.nodeType,
     name: n.data.label === n.id ? undefined : n.data.label,
+    ...(n.data.timeoutMs !== undefined ? { timeoutMs: n.data.timeoutMs } : {}),
+    ...(n.data.retry !== undefined ? { retry: n.data.retry } : {}),
     position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     config: n.data.config ?? {},
   }))

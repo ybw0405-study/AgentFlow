@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
@@ -15,13 +16,19 @@ from app.events.types import TERMINAL_EVENTS, Event, EventType
 
 
 class InMemoryEventStore:
-    """EventStore 的内存替身（单元测试用；PG 行为由集成测试覆盖）。"""
+    """EventStore 的内存替身（单元测试用；PG 行为由集成测试覆盖）。
 
-    def __init__(self) -> None:
+    max_bytes 非空时模拟真实 EventStore 的 256KB 溢出（D5）：完整 payload 转存
+    node_io(OUT)，事件只保留 {"_overflow": ...} 引用，用于覆盖「溢出 × 重放/恢复」
+    交叉路径。默认 None（不溢出），保证既有测试行为不变。
+    """
+
+    def __init__(self, *, max_bytes: int | None = None) -> None:
         self.events: list[Event] = []
         self.io: dict[tuple, dict] = {}
         self.specs: dict[uuid.UUID, dict] = {}
         self._seq = 0
+        self.max_bytes = max_bytes
 
     async def append(self, execution_id, event_type, payload, *, node_key=None, node_io_spill=None):
         self._seq += 1
@@ -32,19 +39,34 @@ class InMemoryEventStore:
             )
             + 1
         )
+        raw = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+        stored = json.loads(json.dumps(payload, default=str))
+        spill = node_io_spill
+        if self.max_bytes is not None and len(raw) > self.max_bytes and node_key is not None:
+            # 与 EventStore.append 一致：完整内容落 node_io，事件只存引用+digest
+            spill = payload
+            stored = {
+                "_overflow": True,
+                "digest": hashlib.sha256(raw).hexdigest(),
+                "size": len(raw),
+            }
         ev = Event(
             seq=self._seq,
             execution_id=execution_id,
             event_type=EventType(event_type),
             node_key=node_key,
-            payload=json.loads(json.dumps(payload, default=str)),
+            payload=stored,
             aggregate_version=version,
             created_at=datetime.now(UTC),
         )
         self.events.append(ev)
-        if node_io_spill is not None and node_key is not None:
-            await self.put_node_io(execution_id, node_key, "OUT", node_io_spill)
+        if spill is not None and node_key is not None:
+            await self.put_node_io(execution_id, node_key, "OUT", spill)
         return ev
+
+    async def ping(self) -> None:
+        """readiness 探针的内存替身（AF-8 的 API 层测试用）。"""
+        return None
 
     async def read_all(self, execution_id):
         return sorted(
@@ -52,8 +74,18 @@ class InMemoryEventStore:
             key=lambda e: e.aggregate_version,
         )
 
-    async def tail(self, after_seq, limit):
-        return [e for e in self.events if e.seq > after_seq][:limit]
+    async def tail(self, after_seq, limit, *, space_id=None):
+        events = [e for e in self.events if e.seq > after_seq]
+        if space_id is not None:
+            # 与真实 EventStore 一致：按 spec 的 spaceId 过滤，无 spec 的事件
+            # 无法证明空间归属，一律排除（fail-closed）。
+            events = [
+                e
+                for e in events
+                if (spec := self.specs.get(e.execution_id)) is not None
+                and spec.get("spaceId") == space_id
+            ]
+        return events[:limit]
 
     async def tail_for_execution(self, execution_id, after_seq, limit):
         return [e for e in self.events if e.execution_id == execution_id and e.seq > after_seq][
@@ -90,6 +122,10 @@ class InMemoryEventStore:
     async def get_spec(self, execution_id):
         return self.specs.get(execution_id)
 
+    async def delete_spec(self, execution_id):
+        """AF-6 试跑收口后清理，与真实 EventStore.delete_spec 语义一致。"""
+        self.specs.pop(execution_id, None)
+
     async def put_node_io(self, execution_id, node_key, direction, payload):
         self.io[(execution_id, node_key, direction)] = {"payload": payload, "contentHash": "mem"}
 
@@ -111,7 +147,9 @@ class NullPublisher:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(internal_token="test-token")
+    # AF-3 后入站 /internal/** 认 engine_token；本地测试里显式设为同值，
+    # 让既有「带 X-Internal-Token」的用例继续覆盖 API 行为（生产必须不同）。
+    return Settings(internal_token="test-token", engine_token="test-token")
 
 
 @pytest.fixture

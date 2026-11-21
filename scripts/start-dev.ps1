@@ -70,6 +70,8 @@ if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-t
 if ($null -eq $env:AF_JWT_SECRET) { $env:AF_JWT_SECRET = 'dev-only-secret-key-0123456789abcdef' }
 # 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
 if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
+# 本地开发才下发演示账号方便登录页一键填充；生产默认 false（SEC-1/GIT-4）
+if ($null -eq $env:AF_DEMO_ACCOUNTS) { $env:AF_DEMO_ACCOUNTS = 'true' }
 # 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 if ($null -eq $env:AF_RATE_LIMIT_TRIGGER_MAX) { $env:AF_RATE_LIMIT_TRIGGER_MAX = '300' }
 if ($null -eq $env:AF_RATE_LIMIT_LOGIN_MAX) { $env:AF_RATE_LIMIT_LOGIN_MAX = '300' }

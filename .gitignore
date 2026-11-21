@@ -19,9 +19,21 @@ node_modules/
 logs/
 *.log
 
-# --- 环境 ---
+# --- 环境与密钥（防止误提交）---
 .env
-.env.local
+.env.*
+!.env.example
+!**/.env.example
+local.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+*_secret*
+!ops/**/*.example
 
 # --- IDE ---
 .idea/

@@ -26,6 +26,8 @@ export AF_INTERNAL_TOKEN="${AF_INTERNAL_TOKEN:-dev-internal-token}"
 export AF_JWT_SECRET="${AF_JWT_SECRET:-dev-only-secret-key-0123456789abcdef}"
 # 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
 export AF_COOKIE_SECURE="${AF_COOKIE_SECURE:-false}"
+# 本地开发才下发演示账号方便登录页一键填充；生产默认 false（SEC-1/GIT-4）
+export AF_DEMO_ACCOUNTS="${AF_DEMO_ACCOUNTS:-true}"
 # 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 export AF_RATE_LIMIT_TRIGGER_MAX="${AF_RATE_LIMIT_TRIGGER_MAX:-300}"
 export AF_RATE_LIMIT_LOGIN_MAX="${AF_RATE_LIMIT_LOGIN_MAX:-300}"

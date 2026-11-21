@@ -14,7 +14,7 @@ from typing import Any
 
 import asyncpg
 
-from ..errors import EventConcurrencyError
+from ..errors import EventConcurrencyError, EventTerminalError
 from .types import TERMINAL_EVENTS, Event, EventType
 
 
@@ -31,6 +31,12 @@ class EventStore:
         if self._pool:
             await self._pool.close()
             self._pool = None
+
+    async def ping(self) -> None:
+        """readiness 探针（AF-8）：短超时 SELECT 1 确认连接池可用。"""
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
 
     async def append(
         self,
@@ -60,6 +66,17 @@ class EventStore:
                         "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
                         str(execution_id),
                     )
+                    # 终态不可逆（AF-9）：advisory lock 已把同一执行的写入者串行化，
+                    # 读到 TERMINAL 即说明执行已结束。迟到的非终态事件一律拒绝，
+                    # 否则下面的 upsert 会把 tracker 回写成 OPEN，恢复扫描又捞出去续跑。
+                    tracker = await conn.fetchrow(
+                        "SELECT status FROM execution_tracker WHERE execution_id = $1",
+                        execution_id,
+                    )
+                    if tracker is not None and tracker["status"] == "TERMINAL" and not terminal:
+                        raise EventTerminalError(
+                            f"execution {execution_id} already terminal; rejecting {etype}"
+                        )
                     row = await conn.fetchrow(
                         "SELECT COALESCE(MAX(aggregate_version), 0) + 1 AS v "
                         "FROM execution_event WHERE execution_id = $1",
@@ -84,7 +101,9 @@ class EventStore:
                         "INSERT INTO execution_tracker (execution_id, status, last_seq)"
                         " VALUES ($1, $2, $3)"
                         " ON CONFLICT (execution_id) DO UPDATE"
-                        " SET status = EXCLUDED.status, last_seq = EXCLUDED.last_seq,"
+                        " SET status = CASE WHEN execution_tracker.status = 'TERMINAL'"
+                        "        THEN 'TERMINAL' ELSE EXCLUDED.status END,"
+                        "     last_seq = EXCLUDED.last_seq,"
                         "     updated_at = now()",
                         execution_id,
                         "TERMINAL" if terminal else "OPEN",
@@ -114,16 +133,37 @@ class EventStore:
             )
         return [self._row_to_event(r) for r in rows]
 
-    async def tail(self, after_seq: int, limit: int) -> list[Event]:
+    async def tail(self, after_seq: int, limit: int, *, space_id: str | None = None) -> list[Event]:
+        """全局事件尾读。AF-3：space_id 非空时把空间谓词下推到 SQL。
+
+        execution_spec.spec 是提交的 ExecuteRequest 快照（canonical_dump，
+        camelCase 键 spaceId）。用 EXISTS 关联而不是给事件表加列：事件表是
+        append-only 且已有数据无法回填，快照是唯一可追溯的空间归属来源。
+        fail-closed：没有 spec 的事件（无法证明空间归属）不出现在任何按空间
+        的读取里；space_id 为 None 时保持全局语义，供系统级 EventProjector 使用。
+        """
         pool = self._require_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
+        if space_id is None:
+            sql = (
                 "SELECT seq, execution_id, event_type, node_key, payload,"
                 "       aggregate_version, created_at"
-                " FROM execution_event WHERE seq > $1 ORDER BY seq LIMIT $2",
-                after_seq,
-                limit,
+                " FROM execution_event WHERE seq > $1 ORDER BY seq LIMIT $2"
             )
+            args: tuple = (after_seq, limit)
+        else:
+            sql = (
+                "SELECT e.seq, e.execution_id, e.event_type, e.node_key, e.payload,"
+                "       e.aggregate_version, e.created_at"
+                " FROM execution_event e"
+                " WHERE e.seq > $1"
+                "   AND EXISTS (SELECT 1 FROM execution_spec s"
+                "               WHERE s.execution_id = e.execution_id"
+                "                 AND s.spec->>'spaceId' = $2)"
+                " ORDER BY e.seq LIMIT $3"
+            )
+            args = (after_seq, space_id, limit)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *args)
         return [self._row_to_event(r) for r in rows]
 
     async def tail_for_execution(
@@ -218,6 +258,14 @@ class EventStore:
                 "SELECT spec FROM execution_spec WHERE execution_id = $1", execution_id
             )
         return json.loads(row["spec"]) if row else None
+
+    async def delete_spec(self, execution_id: uuid.UUID) -> None:
+        """AF-6：试跑收口后清理 spec。只在 tracker 已落终态之后调用，
+        否则恢复扫描会丢失 preview 标记、把调试执行当成崩溃业务执行续跑。
+        """
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM execution_spec WHERE execution_id = $1", execution_id)
 
     async def get_node_io(self, execution_id: uuid.UUID, node_key: str) -> dict[str, Any]:
         pool = self._require_pool()

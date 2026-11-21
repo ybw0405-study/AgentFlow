@@ -3,15 +3,27 @@
 import os
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AF_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="AF_", env_file=".env", extra="ignore", populate_by_name=True
+    )
 
     pg_dsn: str = "postgresql://agentflow:agentflow@127.0.0.1:5433/agentflow_events"
     redis_url: str = "redis://127.0.0.1:6379/0"
+    # 出站回调控制面用的共享令牌（gateway / workflow-service / connector-service 认它）。
     internal_token: str = "dev-internal-token"  # noqa: S105  # 本地默认值；部署必须经 AF_INTERNAL_TOKEN 覆盖
+    # AF-3：入站 /internal/** 专用凭据。网关转发时会**剥离客户端的 X-Internal-Token**
+    # 并注入这个值；客户端即使持有控制面令牌也无法直连引擎的全局事件/执行接口。
+    # 未显式配置时回退 AF_INTERNAL_TOKEN，保证本地 dev 与现有部署零改动；生产模式
+    # 由 _guard_production 强制要求显式配置且与控制面令牌不同。
+    engine_token: str = Field(
+        default="dev-internal-token",
+        validation_alias=AliasChoices("AF_ENGINE_INTERNAL_TOKEN", "AF_INTERNAL_TOKEN"),
+    )
     gateway_base_url: str = "http://127.0.0.1:8080"  # 引擎回调控制面的唯一入口（§5.2）
     pg_migrations_path: str = "../db/postgres/migration"
 
@@ -52,6 +64,12 @@ class Settings(BaseSettings):
     checkpoint_interval: int = 10  # 每 N 个事件写一次 CheckpointCreated
     lease_ttl_ms: int = 30_000  # 执行租约 TTL
     lease_renew_ms: int = 10_000  # 续约间隔
+    # Redis TCP 半开防护（AF-7）：socket 级超时防止单次调用永久阻塞；
+    # 关停 drain 上限防止某个在途任务卡死整个 lifespan 收尾（B4）。
+    redis_socket_timeout_s: float = 2.0
+    redis_socket_connect_timeout_s: float = 2.0
+    shutdown_drain_timeout_s: float = 15.0
+    health_probe_timeout_s: float = 1.0  # readiness 单次依赖探测超时（AF-8）
     event_payload_max_bytes: int = 256 * 1024  # 溢出转 node_io（D5）
     default_max_parallelism: int = 4
     event_tail_max_limit: int = 500
@@ -101,6 +119,19 @@ def _guard_production(settings: "Settings") -> None:
         raise RuntimeError(
             "FAIL-FAST: AF_INTERNAL_TOKEN still uses a development default. "
             "Provide a strong value in production."
+        )
+    # AF-3：入站凭据必须与控制面凭据分离，否则「剥离客户端令牌」形同虚设 ——
+    # 拿到控制面令牌的人依然可以直连引擎 /internal/**。
+    engine_token = settings.engine_token
+    if (
+        engine_token == token
+        or engine_token in _WEAK_INTERNAL_TOKENS
+        or engine_token.startswith("dev-")
+    ):
+        raise RuntimeError(
+            "FAIL-FAST: AF_ENGINE_INTERNAL_TOKEN must be set to a strong value distinct from "
+            "AF_INTERNAL_TOKEN in production "
+            "(AF-3: engine ingress credentials are server-injected)."
         )
     if settings.llm_api_key:
         insecure = not settings.llm_base_url.startswith("https://")

@@ -25,7 +25,7 @@ CREATE TABLE workflow_execution (
   KEY idx_we_tenant_status (tenant_id, status, seq),
   KEY idx_we_def (definition_id, seq),
   KEY idx_we_trace (trace_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE node_execution (
   seq           BIGINT AUTO_INCREMENT UNIQUE,
@@ -50,4 +50,4 @@ CREATE TABLE node_execution (
   UNIQUE KEY uq_ne_exec_node_attempt (execution_id, node_key, attempt),
   KEY idx_ne_exec_order (execution_id, display_order),
   KEY idx_ne_exec_status (execution_id, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

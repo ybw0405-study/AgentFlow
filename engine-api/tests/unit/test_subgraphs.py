@@ -266,3 +266,87 @@ async def test_loop_body_result_uses_executed_end(settings, fake_redis, mem_stor
 
     loop_done = next(e for e in events if e.event_type == "NodeCompleted" and e.node_key == "loop")
     assert loop_done.payload["output"]["collected"] == ["a", "b"]
+
+
+def _parallel_cancel_dsl() -> dict:
+    """定义顺序 slow 在前、fast 在后：first_success 应取 fast 并取消 slow。"""
+    return {
+        "dslVersion": "1.0",
+        "variables": {},
+        "defaults": {"timeoutMs": 5000, "maxParallelism": 4},
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "par",
+                "type": "parallel",
+                "config": {
+                    "join": "first_success",
+                    "maxConcurrency": 2,
+                    "branches": {
+                        "slow": {
+                            "nodes": [
+                                {
+                                    "key": "nap",
+                                    "type": "tool",
+                                    "config": {
+                                        "connectorId": "test.echo",
+                                        "operation": "sleep",
+                                        "paramsMapping": {"sleepMs": "600"},
+                                    },
+                                },
+                                {
+                                    "key": "end",
+                                    "type": "end",
+                                    "config": {"resultMapping": {"side": "slow"}},
+                                },
+                            ],
+                            "edges": [{"from": "nap", "to": "end"}],
+                        },
+                        "fast": {
+                            "nodes": [
+                                {
+                                    "key": "t",
+                                    "type": "transform",
+                                    "config": {
+                                        "mappings": [{"target": "vars.fast_out", "template": "F"}]
+                                    },
+                                },
+                                {
+                                    "key": "end",
+                                    "type": "end",
+                                    "config": {"resultMapping": {"side": "fast"}},
+                                },
+                            ],
+                            "edges": [{"from": "t", "to": "end"}],
+                        },
+                    },
+                },
+            },
+            {"key": "end", "type": "end", "config": {"resultMapping": {"done": "ok"}}},
+        ],
+        "edges": [{"from": "start", "to": "par"}, {"from": "par", "to": "end"}],
+    }
+
+
+async def test_parallel_first_success_cancels_remaining(settings, fake_redis, mem_store):
+    """首个成功后取消其余分支：不按定义顺序取结果，也不白跑慢分支。"""
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    req = ExecuteRequest.model_validate(
+        make_execute_request(_parallel_cancel_dsl(), initialVariables={})
+    )
+    await dispatcher.submit(req)
+    assert await wait_terminal(mem_store, req.execution_id) == "SUCCEEDED"
+
+    events = await mem_store.read_all(req.execution_id)
+    out = next(
+        e.payload["output"]
+        for e in events
+        if e.event_type == "NodeCompleted" and e.node_key == "par"
+    )
+    assert out["branch"] == "fast", out
+    # slow 分支被取消：没有落 NodeCompleted，也没有产生 tool 副作用计费
+    assert not any(
+        e.event_type == "NodeCompleted" and (e.node_key or "").startswith("par#slow#")
+        for e in events
+    )
+    assert await fake_redis.get("af:fakecount:test.echo:sleep") is None

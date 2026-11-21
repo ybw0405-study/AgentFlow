@@ -36,6 +36,7 @@ public class ExecutionService {
     private final AuditPublisher audit;
     private final CanaryService canary;
     private final UsageService usage;
+    private final BudgetLedgerMapper budgets;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final int defaultTokenBudget;
     private final int defaultMaxSteps;
@@ -47,7 +48,7 @@ public class ExecutionService {
     public ExecutionService(
             WorkflowExecutionMapper executions, WorkflowDefinitionMapper definitions,
             WorkflowVersionMapper versions, EngineGatewayClient engine, AuditPublisher audit,
-            CanaryService canary, UsageService usage,
+            CanaryService canary, UsageService usage, BudgetLedgerMapper budgets,
             @Value("${agentflow.tenant.default-token-budget}") int defaultTokenBudget,
             @Value("${agentflow.tenant.default-max-steps}") int defaultMaxSteps,
             @Value("${agentflow.tenant.default-deadline-ms}") int defaultDeadlineMs,
@@ -59,6 +60,7 @@ public class ExecutionService {
         this.audit = audit;
         this.canary = canary;
         this.usage = usage;
+        this.budgets = budgets;
         this.defaultTokenBudget = defaultTokenBudget;
         this.defaultMaxSteps = defaultMaxSteps;
         this.defaultDeadlineMs = defaultDeadlineMs;
@@ -130,6 +132,19 @@ public class ExecutionService {
             throw new BusinessException(ErrorCode.WF_CONCURRENCY_001,
                     "workflow already has " + def.maxConcurrent() + " running executions");
         }
+        // 月度额度硬约束（P1-9）：budget_ledger 不再只是展示用的记账本。
+        // 账期口径与 UsageService / 投影器一致：Asia/Shanghai 的 yyyy-MM。
+        String period = BudgetLedgerMapper.currentPeriod();
+        var ledger = budgets.find(tenantId, period).orElse(null);
+        if (ledger != null
+                && ((ledger.limitCalls() > 0 && ledger.callsUsed() >= ledger.limitCalls())
+                || (ledger.limitTokens() > 0 && ledger.tokensUsed() >= ledger.limitTokens()))) {
+            audit.publish(AuditMessage.of(tenantId, null, userId, "EXECUTION_REJECTED",
+                    Map.of("definitionId", definitionId, "reason", "BUDGET_EXCEEDED",
+                            "period", period, "callsUsed", ledger.callsUsed(),
+                            "limitCalls", ledger.limitCalls())));
+            throw new BusinessException(ErrorCode.WF_BUDGET_001, "monthly budget exhausted");
+        }
         // 灰度分流（P1）：未显式指定版本时，按 canary 配置路由到新旧版本；审计留痕。
         String effectiveVersionId = versionId;
         if (versionId == null) {
@@ -198,11 +213,23 @@ public class ExecutionService {
         engineRequest.put("policy", Map.of("tokenBudget", tokenBudget,
                 "maxSteps", maxSteps, "deadlineMs", deadlineMs));
         engineRequest.put("traceId", traceId);
+        Map<String, Object> dispatch;
         try {
-            engine.submitExecution(engineRequest);
+            dispatch = engine.submitExecution(engineRequest);
         } catch (BusinessException e) {
             executions.markFailedDispatch(executionId, "FAILED", ErrorCode.AGT_UPSTREAM_001.code());
             throw e;
+        }
+        // AF-1：引擎「接受但未派发」（租约被占 / 关停中，或旧版引擎的 202+RUNNING）
+        // 会带 note。此时引擎侧根本没有这条执行，绝不能记 EXECUTION_TRIGGERED /
+        // 留下一条永远等不到事件的 PENDING —— 明确收口成 DISPATCH_REJECTED。
+        Object note = dispatch == null ? null : dispatch.get("note");
+        if (note instanceof String text && !text.isBlank()) {
+            executions.markFailedDispatch(executionId, "FAILED", ErrorCode.AGT_UPSTREAM_001.code());
+            audit.publish(AuditMessage.of(tenantId, executionId, userId,
+                    "DISPATCH_REJECTED", Map.of("definitionId", definitionId, "note", text)));
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001,
+                    "engine did not dispatch: " + text);
         }
         audit.publish(AuditMessage.of(tenantId, executionId, userId,
                 "EXECUTION_TRIGGERED", Map.of("definitionId", definitionId,

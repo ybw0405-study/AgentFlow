@@ -2,6 +2,19 @@
 import { computed, ref, watch } from 'vue'
 import { approverExpressionError } from '@/dsl/approver-expr'
 import { mergeFacts } from '@/dsl/model-capabilities'
+import {
+  APPROVER_ROLES,
+  APPROVER_TYPE_LABELS,
+  APPROVER_TYPES,
+  LLM_PROVIDERS,
+  LLM_PROVIDER_LABELS,
+  PARALLEL_JOIN_LABELS,
+  PARALLEL_JOIN_POLICIES,
+  SUBWORKFLOW_VERSION_POLICIES,
+  SUBWORKFLOW_VERSION_POLICY_LABELS,
+  TIMEOUT_ACTIONS,
+  TIMEOUT_ACTION_LABELS,
+} from '@/dsl/contract-enums'
 import type { SubgraphRef } from '@/dsl/subgraph'
 import type { DslNode } from '@/dsl/types'
 import type { ModelFactsDto, ProbeModelItem } from '@/types/api'
@@ -143,14 +156,26 @@ function setCfg(key: string, value: unknown): void {
   emit('update', { ...props.node, config: { ...props.node.config, [key]: value } })
 }
 
+/** 数字配置：清空/非法输入写 undefined，避免 Number('')===0 或 NaN→null 触发后端类型错。 */
+function setNumberCfg(key: string, raw: string): void {
+  const n = Number(raw)
+  setCfg(key, Number.isFinite(n) && n > 0 ? n : undefined)
+}
+
 function setName(value: string): void {
   if (!props.node) return
   emit('update', { ...props.node, name: value || undefined })
 }
 
+/** 节点超时是引擎 NodeBase 的顶层字段，不能写进 config（extra=forbid）；
+ *  human_gate 的审批超时才是 config.timeoutMs，在那个模板里单独用 setCfg 维护。 */
 function setTimeoutMs(value: string): void {
+  if (!props.node) return
   const n = Number(value)
-  setCfg('timeoutMs', Number.isFinite(n) && n > 0 ? n : undefined)
+  emit('update', {
+    ...props.node,
+    timeoutMs: Number.isFinite(n) && n > 0 ? n : undefined,
+  })
 }
 
 // paramsMapping / resultMapping 行编辑
@@ -456,8 +481,12 @@ function editBody(): void {
           :value="cfg('provider', 'openai-compatible')"
           @change="setCfg('provider', ($event.target as HTMLSelectElement).value)"
         >
-          <option value="openai-compatible">
-            openai-compatible（真实模型）
+          <option
+            v-for="p in LLM_PROVIDERS"
+            :key="p"
+            :value="p"
+          >
+            {{ LLM_PROVIDER_LABELS[p] }}
           </option>
         </select>
         <label class="af-label">model</label>
@@ -511,7 +540,7 @@ function editBody(): void {
         class="af-input mono"
         type="number"
         :value="cfg('maxTokens', 1024)"
-        @input="setCfg('maxTokens', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('maxTokens', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">temperature</label>
       <input
@@ -521,7 +550,7 @@ function editBody(): void {
         min="0"
         max="2"
         :value="cfg('temperature', 0.7)"
-        @input="setCfg('temperature', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('temperature', ($event.target as HTMLInputElement).value)"
       >
     </template>
 
@@ -589,7 +618,7 @@ function editBody(): void {
         min="1"
         max="50"
         :value="cfg('topK', 5)"
-        @input="setCfg('topK', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('topK', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">minScore（0~1）</label>
       <input
@@ -599,7 +628,7 @@ function editBody(): void {
         min="0"
         max="1"
         :value="cfg('minScore', 0)"
-        @input="setCfg('minScore', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('minScore', ($event.target as HTMLInputElement).value)"
       >
       <p
         class="af-faint"
@@ -784,14 +813,12 @@ function editBody(): void {
         :value="approvers.type"
         @change="patchApprovers({ type: ($event.target as HTMLSelectElement).value as Approvers['type'] })"
       >
-        <option value="ROLE">
-          按角色
-        </option>
-        <option value="USERS">
-          按用户
-        </option>
-        <option value="EXPRESSION">
-          按表达式
+        <option
+          v-for="t in APPROVER_TYPES"
+          :key="t"
+          :value="t"
+        >
+          {{ APPROVER_TYPE_LABELS[t] }}
         </option>
       </select>
       <template v-if="approvers.type === 'ROLE'">
@@ -801,17 +828,12 @@ function editBody(): void {
           :value="approvers.role ?? 'ADMIN'"
           @change="patchApprovers({ role: ($event.target as HTMLSelectElement).value })"
         >
-          <option value="OWNER">
-            OWNER
-          </option>
-          <option value="ADMIN">
-            ADMIN
-          </option>
-          <option value="EDITOR">
-            EDITOR
-          </option>
-          <option value="VIEWER">
-            VIEWER
+          <option
+            v-for="r in APPROVER_ROLES"
+            :key="r"
+            :value="r"
+          >
+            {{ r }}
           </option>
         </select>
       </template>
@@ -863,7 +885,7 @@ function editBody(): void {
         class="af-input mono"
         type="number"
         :value="cfg('timeoutMs', 86400000)"
-        @input="setCfg('timeoutMs', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('timeoutMs', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">超时动作</label>
       <select
@@ -871,11 +893,12 @@ function editBody(): void {
         :value="onTimeout.action"
         @change="patchTimeout({ action: ($event.target as HTMLSelectElement).value })"
       >
-        <option value="REJECT">
-          自动驳回
-        </option>
-        <option value="DEFAULT_BRANCH">
-          走默认分支
+        <option
+          v-for="a in TIMEOUT_ACTIONS"
+          :key="a"
+          :value="a"
+        >
+          {{ TIMEOUT_ACTION_LABELS[a] }}
         </option>
       </select>
       <template v-if="onTimeout.action === 'DEFAULT_BRANCH'">
@@ -909,11 +932,12 @@ function editBody(): void {
         :value="cfg('versionPolicy', 'LATEST_PUBLISHED')"
         @change="setCfg('versionPolicy', ($event.target as HTMLSelectElement).value)"
       >
-        <option value="LATEST_PUBLISHED">
-          LATEST_PUBLISHED（跟随最新发布）
-        </option>
-        <option value="FIXED">
-          FIXED（锁定版本）
+        <option
+          v-for="p in SUBWORKFLOW_VERSION_POLICIES"
+          :key="p"
+          :value="p"
+        >
+          {{ p }}（{{ SUBWORKFLOW_VERSION_POLICY_LABELS[p] }}）
         </option>
       </select>
       <template v-if="cfg<string>('versionPolicy', 'LATEST_PUBLISHED') === 'FIXED'">
@@ -1017,7 +1041,7 @@ function editBody(): void {
           min="1"
           max="1000"
           :value="cfg('maxIterations', 100)"
-          @input="setCfg('maxIterations', Number(($event.target as HTMLInputElement).value))"
+          @input="setNumberCfg('maxIterations', ($event.target as HTMLInputElement).value)"
         >
         <input
           class="af-input mono"
@@ -1025,7 +1049,7 @@ function editBody(): void {
           min="1"
           max="16"
           :value="cfg('concurrency', 1)"
-          @input="setCfg('concurrency', Number(($event.target as HTMLInputElement).value))"
+          @input="setNumberCfg('concurrency', ($event.target as HTMLInputElement).value)"
         >
       </div>
       <label class="af-label">body 子图</label>
@@ -1078,11 +1102,12 @@ function editBody(): void {
         :value="cfg('join', 'all')"
         @change="setCfg('join', ($event.target as HTMLSelectElement).value)"
       >
-        <option value="all">
-          all（全部分支成功）
-        </option>
-        <option value="first_success">
-          first_success（首个成功即返回）
+        <option
+          v-for="j in PARALLEL_JOIN_POLICIES"
+          :key="j"
+          :value="j"
+        >
+          {{ j }}（{{ PARALLEL_JOIN_LABELS[j] }}）
         </option>
       </select>
       <label class="af-label">maxConcurrency</label>
@@ -1092,7 +1117,7 @@ function editBody(): void {
         min="1"
         max="16"
         :value="cfg('maxConcurrency', 4)"
-        @input="setCfg('maxConcurrency', Number(($event.target as HTMLInputElement).value))"
+        @input="setNumberCfg('maxConcurrency', ($event.target as HTMLInputElement).value)"
       >
       <label class="af-label">branches 子图</label>
       <div

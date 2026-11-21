@@ -66,6 +66,14 @@ def test_webhook_triggers_real_execution(client, editor_token, admin_token):
     hook = _create_webhook(client, editor_token, wf_id)
     assert hook["token"] and hook["secret"] and hook["enabled"] is True
 
+    # SEC-3：create 一次性回明文，list 只回 hasSecret，不再回传密钥本体
+    listed = client.get(f"/api/v1/workflows/{wf_id}/triggers",
+                        headers=headers(editor_token, SPACE_A))
+    assert listed.status_code == 200, listed.text
+    listed_hook = next(t for t in listed.json()["data"] if t["id"] == hook["id"])
+    assert listed_hook["hasSecret"] is True
+    assert listed_hook.get("secret") is None
+
     resp = client.post(f"/api/v1/hooks/{hook['token']}", json={"question": "来自 webhook"})
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
@@ -91,10 +99,17 @@ def test_webhook_verifies_signature_when_present(client, editor_token, admin_tok
                                                   "Content-Type": "application/json"})
     assert bad.status_code == 403, bad.text
 
-    digest = hmac.new(hook["secret"].encode(), body.encode(), hashlib.sha256).hexdigest()
+    ts = str(int(time.time()))
+    digest = hmac.new(hook["secret"].encode(), f"{ts}.{body}".encode(), hashlib.sha256).hexdigest()
+    # 签名覆盖时间戳：剥离 X-AF-Timestamp 后同一签名必然验签失败（P1-8）。
+    no_ts = client.post(url, content=body, headers={
+        "X-AF-Signature": f"sha256={digest}",
+        "Content-Type": "application/json",
+    })
+    assert no_ts.status_code == 403, no_ts.text
     good = client.post(url, content=body, headers={
         "X-AF-Signature": f"sha256={digest}",
-        "X-AF-Timestamp": str(int(time.time())),
+        "X-AF-Timestamp": ts,
         "Content-Type": "application/json",
     })
     assert good.status_code == 200, good.text

@@ -1591,6 +1591,13 @@
             "type": "string"
           }
         },
+        "required": [
+          "eventsUrl",
+          "executionId",
+          "idempotentReplay",
+          "status",
+          "streamUrl"
+        ],
         "type": "object"
       },
       "TriggerRequest": {
@@ -1612,7 +1619,8 @@
           }
         },
         "required": [
-          "idempotencyKey"
+          "idempotencyKey",
+          "versionId"
         ],
         "type": "object"
       },
@@ -1625,6 +1633,9 @@
             "type": "string"
           },
           "enabled": {
+            "type": "boolean"
+          },
+          "hasSecret": {
             "type": "boolean"
           },
           "id": {

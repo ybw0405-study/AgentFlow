@@ -22,4 +22,4 @@ CREATE TABLE workflow_trigger (
   UNIQUE KEY uq_wt_token (token),
   KEY idx_wt_definition (definition_id, tenant_id),
   KEY idx_wt_schedule (trigger_type, enabled)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -3,6 +3,53 @@
 记录对外可见的行为变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本；`0.x` 期间不保证向后兼容。
 
+## [Unreleased]
+
+### 第二轮：安全边界 / 试跑隔离 / CI 可信度
+
+- **AF-3**：`/engine/**` 收敛为方法 + 路径白名单（新增 `EnginePathPolicy`）；网关转发剥离客户端
+  `X-Internal-Token` / `Authorization` / `Cookie` / `X-Api-Key`，改由服务端注入独立的
+  `AF_ENGINE_INTERNAL_TOKEN`；引擎入站只认该令牌，生产强制它与控制面令牌不同。
+- **AF-4**：4 个启动类改为在 Environment 就绪时校验**实际生效值**（不再只读 `System.getenv`），
+  新增 `requireDistinct` / `requireExplicitDbAccount`，拦住 `--xxx`、`SPRING_APPLICATION_JSON` 覆盖
+  与生产以 root 连库。
+- **AF-6**：`ExecuteRequest.preview` 打标 + `finalize_preview()`（先落终态再删 spec）+ 恢复扫描跳过，
+  试跑超时不再被当崩溃执行续跑、重复计费。
+- **CT-4 / CT-6**：前端 HTTP 封装透传 `AbortSignal`、详情页卸载 abort + disposed 守卫、SSE 校验
+  `text/event-stream` 与缓冲上限；`/admin` 路由角色判定、`restore()` 仅成功置位、登出后禁止自动续期。
+- **G6 / 治理**：两仓 workflow 的 action 全部固定到联网核实的 40 位 SHA；修掉
+  `dependency-review-action@v4` 这个远端并不存在的 tag。远端 `main` 分支保护与 secret scanning /
+  push protection / Dependabot 安全更新已启用；PR #11 打 `do-not-merge` 标注。
+- 版本号仍未 bump，避免与现有 tag 不一致。
+
+> 第一轮仅改工程化 / 治理文件；第二轮已改业务代码（见上）。两轮**均未 bump 版本号**（仍为 `0.5.1`）。
+> 是否 bump 到 `0.5.2` 与下发 tag 属版本治理决策，待维护者决定，避免与现有 tag 不一致。
+
+### 新增
+
+- **安全扫描工作流** `.github/workflows/security.yml`（G9）：PR 触发 `dependency-review-action`、
+  `npm audit --omit=dev --audit-level=high`（`frontend/`）、CodeQL
+  `java-kotlin` / `javascript-typescript` / `python` 三语言 matrix；最小 `permissions` 与
+  `timeout-minutes` 齐备。
+- **配置单源**：新增 `ops/env/local.env.example`（覆盖 4 份 `application.yml` 的全部 59 个
+  `AF_*` 占位符，`AF_MYSQL_USER` 默认空串）与 `scripts/check_env_contract.py`（G11），
+  断言 `application*.yml` 的 `${VAR}` ⊆ env.example 键集合，缺键即非零退出。
+- **仓库治理文件**：新增 `.github/CODEOWNERS`（G10，路径经 `git ls-files` 核实）与
+  `SUPPORT.md`（支持渠道贴合真实目录结构）。
+
+### 变更 / 修复
+
+- `.github/dependabot.yml`（G5）：删除三处 `open-pull-requests-limit: 0` 改为分组 +
+  `limit: 5`，补 `pip`（`/engine-api`）与 `docker`（`/`，仓库暂无 Dockerfile 已注明）生态，
+  修正文件头「只自动提安全更新」的失实注释。
+- 所有 workflow 补 `timeout-minutes`；`contract-drift.yml` 补 `concurrency`；
+  最小 `permissions: contents: read`（G7）。
+- `SECURITY.md`（G13）：支持版本表 `main（0.4.x）` → `main（0.5.x，当前 0.5.1）`，
+  与 `pom.xml` / `frontend/package.json` 实际版本一致。
+- `CONTRIBUTING.md`（B5）：删除「`main` 已启用分支保护」的不实声明，改为如实描述
+  `404 Branch not protected` 现状 + `gh api -X PUT .../branches/main/protection` 建议参数 +
+  单人仓库无法第二人复核的评审边界；PR 自查清单同步为 6 条流水线（含 `security`）。
+
 ## [0.5.1] - 2026-11-20
 
 ### 修复

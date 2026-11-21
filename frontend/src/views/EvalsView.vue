@@ -27,6 +27,8 @@ const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const busy = ref(false)
 let timer: number | undefined
+/** 轮询连续失败计数：达到 3 次就停止自动刷新，避免每 3s 一条 unhandled rejection。 */
+let pollFailures = 0
 
 const datasetForm = reactive({ name: '', description: '' })
 const caseForm = reactive({
@@ -213,10 +215,16 @@ async function openRun(run: EvalRunDto): Promise<void> {
 
 async function refreshRun(): Promise<void> {
   if (!runDetail.value) return
-  const detail = await evalApi.run(runDetail.value.run.id)
-  runDetail.value = detail
-  if (selectedId.value) runs.value = await evalApi.runs(selectedId.value)
-  if (detail.run.status !== 'RUNNING') stopPolling()
+  try {
+    const detail = await evalApi.run(runDetail.value.run.id)
+    runDetail.value = detail
+    if (selectedId.value) runs.value = await evalApi.runs(selectedId.value)
+    pollFailures = 0
+    if (detail.run.status !== 'RUNNING') stopPolling()
+  } catch (e) {
+    error.value = describe(e)
+    if (++pollFailures >= 3) stopPolling()
+  }
 }
 
 function ensurePolling(): void {

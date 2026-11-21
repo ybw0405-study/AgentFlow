@@ -8,7 +8,7 @@ CREATE TABLE idempotency_key (
   expires_at  DATETIME(3)  NOT NULL,
   PRIMARY KEY (tenant_id, scope, ikey),
   KEY idx_ik_expires (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE audit_event (
   seq              BIGINT AUTO_INCREMENT UNIQUE,
@@ -26,7 +26,7 @@ CREATE TABLE audit_event (
   KEY idx_ae_tenant (tenant_id, seq),
   KEY idx_ae_trace (trace_id),
   KEY idx_ae_exec (execution_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DELIMITER $$
 CREATE TRIGGER trg_ae_no_update BEFORE UPDATE ON audit_event FOR EACH ROW
@@ -48,11 +48,11 @@ CREATE TABLE budget_ledger (
   limit_tokens BIGINT      NOT NULL,
   updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (tenant_id, period)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE projector_cursor (
   projector  VARCHAR(64)  NOT NULL,
   last_seq   BIGINT       NOT NULL DEFAULT 0,
   updated_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (projector)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

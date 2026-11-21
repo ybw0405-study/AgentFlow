@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -16,8 +18,13 @@ public class AuthService {
 
     private static final String DUMMY_HASH =
             "$2a$12$C6UzMDM.H6dfI/f/IKcEeO7ZBUYbI2fUL5jH9hTDN6Q8eQZbB5D7K";
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private static final int MAX_FAILURES = 5;
     private static final long WINDOW_MS = 60_000;
+    /** 超过这个数才做一次全量过期回收：避免每次失败登录都 O(n) 遍历整表。 */
+    private static final int PRUNE_THRESHOLD = 1_024;
+    /** 硬上限：活跃 key 真的撑到这个量级时整表清空兜底，宁可短暂放开这一层也不撑爆堆。 */
+    private static final int MAX_TRACKED_KEYS = 10_000;
 
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder encoder;
@@ -67,6 +74,7 @@ public class AuthService {
     }
 
     private void recordFailure(String key) {
+        pruneExpired();
         failures.compute(key, (k, w) -> {
             if (w == null || !w.inWindow()) {
                 return new Window();
@@ -74,6 +82,22 @@ public class AuthService {
             w.count.incrementAndGet();
             return w;
         });
+    }
+
+    /**
+     * 过期窗口回收（C-18）：key 含调用方可控的 email 前缀，若只增不删，攻击者用不同邮箱
+     * 慢慢刷就能让堆无限涨。常态下只清理过期项；真被活跃 key 撑到硬上限时整表清空兜底
+     * （网关还有第二层限流，短暂放开这一层可接受）。
+     */
+    private void pruneExpired() {
+        if (failures.size() < PRUNE_THRESHOLD) {
+            return;
+        }
+        failures.entrySet().removeIf(e -> !e.getValue().inWindow());
+        if (failures.size() >= MAX_TRACKED_KEYS) {
+            failures.clear();
+            log.warn("login failure map hit cap {}; cleared to bound memory", MAX_TRACKED_KEYS);
+        }
     }
 
     private static final class Window {

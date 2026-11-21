@@ -14,7 +14,7 @@ CREATE TABLE knowledge_base (
   deleted_at  DATETIME(3)   NULL,
   PRIMARY KEY (id),
   KEY idx_kb_tenant (tenant_id, deleted_at, created_at)
-) DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE knowledge_document (
   id          CHAR(36)      NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE knowledge_document (
   deleted_at  DATETIME(3)   NULL,
   PRIMARY KEY (id),
   KEY idx_kd_kb (tenant_id, kb_id, deleted_at, created_at)
-) DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE knowledge_chunk (
   id          CHAR(36)      NOT NULL,
@@ -42,4 +42,4 @@ CREATE TABLE knowledge_chunk (
   token_count INT           NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   KEY idx_kc_kb (tenant_id, kb_id)
-) DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

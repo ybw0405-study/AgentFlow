@@ -1,6 +1,7 @@
 package com.agentflow.workflow.projector;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -22,6 +23,7 @@ import com.agentflow.workflow.gate.GateTaskMapper;
 import com.agentflow.workflow.notification.NotificationMapper;
 import java.util.List;
 import java.util.Map;
+import org.apache.ibatis.annotations.Update;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -38,6 +40,32 @@ class ProjectorWriterTest {
     private final ProjectorWriter writer = new ProjectorWriter(executions, nodes, cursors, budgets,
             gateTasks, notifications, approvers, 10_000, 50_000L);
 
+    @Test
+    void markTerminalSqlGuardsAgainstOverwritingTerminalRows() throws Exception {
+        // AF-2：终态不可逆必须落在 SQL 层（mock 测不出 WHERE），直接校验注解文本。
+        var method = WorkflowExecutionMapper.class.getMethod("markTerminal", String.class,
+                String.class, int.class, int.class, String.class);
+        Update update = method.getAnnotation(Update.class);
+        String sql = String.join(" ", update.value());
+        assertTrue(sql.contains("status IN ('PENDING','RUNNING','SUSPENDED')"),
+                "markTerminal 必须带前置状态条件，否则乱序事件可把终态改回去");
+    }
+
+    @Test
+    void budgetAccrualPeriodComesFromJavaNotSqlNow() throws Exception {
+        // AF-5：账期必须由 Java 统一计算传入，SQL 不得再用 NOW(3)（跨月分裂账本）。
+        for (var method : BudgetLedgerMapper.class.getDeclaredMethods()) {
+            if (!method.getName().equals("accrue") && !method.getName().equals("accrueByTenant")) {
+                continue;
+            }
+            Update update = method.getAnnotation(Update.class);
+            String sql = String.join(" ", update.value());
+            assertTrue(sql.contains("#{period}"), method.getName() + " 必须用参数化 period");
+            assertTrue(!sql.contains("NOW("), method.getName() + " 不得用 NOW() 算账期");
+        }
+        assertTrue(BudgetLedgerMapper.currentPeriod().matches("\\d{4}-\\d{2}"));
+    }
+
     private static EngineEvent event(long seq, String type, Map<String, Object> payload) {
         return new EngineEvent(seq, "exec-1", type, "draft", payload, (int) seq, "now");
     }
@@ -53,7 +81,7 @@ class ProjectorWriterTest {
         writer.writeBatch(List.of(event(1, "NodeCompleted",
                 Map.of("tokenUsed", 120, "outputDigest", "abc", "attempt", 1))));
 
-        verify(budgets).accrue("exec-1", 120, 10_000, 50_000L);
+        verify(budgets).accrue(eq("exec-1"), anyString(), eq(120), eq(10_000), eq(50_000L));
     }
 
     @Test
@@ -64,7 +92,7 @@ class ProjectorWriterTest {
                 event(1, "NodeStarted", Map.of("attempt", 1)),
                 event(2, "CommandCompleted", Map.of("callId", "c"))));
 
-        verify(budgets, never()).accrue(anyString(), anyInt(), anyInt(), anyLong());
+        verify(budgets, never()).accrue(anyString(), anyString(), anyInt(), anyInt(), anyLong());
     }
 
     @Test
@@ -75,9 +103,9 @@ class ProjectorWriterTest {
                 event(1, "NodeCompleted", Map.of("tokenUsed", 10)),
                 event(2, "NodeCompleted", Map.of("tokenUsed", 20))));
 
-        verify(budgets).accrue("exec-1", 10, 10_000, 50_000L);
-        verify(budgets).accrue("exec-1", 20, 10_000, 50_000L);
-        verify(budgets, times(2)).accrue(anyString(), anyInt(), anyInt(), anyLong());
+        verify(budgets).accrue(eq("exec-1"), anyString(), eq(10), eq(10_000), eq(50_000L));
+        verify(budgets).accrue(eq("exec-1"), anyString(), eq(20), eq(10_000), eq(50_000L));
+        verify(budgets, times(2)).accrue(anyString(), anyString(), anyInt(), anyInt(), anyLong());
     }
 
     @Test

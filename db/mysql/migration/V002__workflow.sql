@@ -20,7 +20,7 @@ CREATE TABLE workflow_definition (
   UNIQUE KEY uq_wf_tenant_name (tenant_id, uq_name),
   KEY idx_wf_tenant_status (tenant_id, status),
   KEY idx_wf_current_version (current_version_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE workflow_version (
   id            CHAR(36)    NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE workflow_version (
   KEY idx_wv_def (definition_id),
   KEY idx_wv_checksum (dsl_checksum),
   CONSTRAINT fk_wv_def FOREIGN KEY (definition_id) REFERENCES workflow_definition(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DELIMITER $$
 CREATE TRIGGER trg_wv_no_update BEFORE UPDATE ON workflow_version FOR EACH ROW

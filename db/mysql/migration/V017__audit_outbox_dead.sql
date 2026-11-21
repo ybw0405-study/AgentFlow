@@ -7,8 +7,41 @@
 --
 -- 引入 DEAD：不再无限自动重投，但绝不删除——原始 message_json 原样保留，管理端
 -- 可列出、可重放。语义上仍不是「放弃投递」，只是把「自动重试」换成「人工介入」。
+--
+-- AF-10：MODIFY 本身幂等（重复执行是同定义重写）；两列一索引各自加守卫，
+-- 已迁移库重放不报 Duplicate column / Duplicate key name。
 ALTER TABLE audit_outbox
-  MODIFY status ENUM('PENDING','SENT','DEAD') NOT NULL DEFAULT 'PENDING',
-  ADD COLUMN dead_at      DATETIME(3)   NULL,
-  ADD COLUMN dead_reason  VARCHAR(500)  NULL,
-  ADD KEY idx_ao_dead (status, dead_at);
+  MODIFY status ENUM('PENDING','SENT','DEAD') NOT NULL DEFAULT 'PENDING';
+
+SET @af_ddl = (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_outbox'
+             AND COLUMN_NAME = 'dead_at'),
+    'DO 0',
+    'ALTER TABLE audit_outbox ADD COLUMN dead_at DATETIME(3) NULL'));
+PREPARE af_stmt FROM @af_ddl;
+EXECUTE af_stmt;
+DEALLOCATE PREPARE af_stmt;
+
+SET @af_ddl = (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_outbox'
+             AND COLUMN_NAME = 'dead_reason'),
+    'DO 0',
+    'ALTER TABLE audit_outbox ADD COLUMN dead_reason VARCHAR(500) NULL'));
+PREPARE af_stmt FROM @af_ddl;
+EXECUTE af_stmt;
+DEALLOCATE PREPARE af_stmt;
+
+SET @af_ddl = (
+  SELECT IF(
+    EXISTS(SELECT 1 FROM information_schema.STATISTICS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_outbox'
+             AND INDEX_NAME = 'idx_ao_dead'),
+    'DO 0',
+    'ALTER TABLE audit_outbox ADD KEY idx_ao_dead (status, dead_at)'));
+PREPARE af_stmt FROM @af_ddl;
+EXECUTE af_stmt;
+DEALLOCATE PREPARE af_stmt;

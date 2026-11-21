@@ -29,6 +29,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
@@ -76,6 +77,9 @@ public class TriggerService {
     private final StringRedisTemplate redis;
     private final ObjectMapper json = new ObjectMapper();
     private final SecureRandom random = new SecureRandom();
+    /** 触发器默认时区（ARCH-6）：生产由配置注入，单测 new 时保持历史默认值兼容。 */
+    @Value("${agentflow.trigger.default-timezone:Asia/Shanghai}")
+    private String defaultTimezone = "Asia/Shanghai";
 
     public TriggerService(WorkflowTriggerMapper triggers, WorkflowDefinitionMapper definitions,
                           ExecutionService executions, AuditPublisher audit,
@@ -98,7 +102,12 @@ public class TriggerService {
      * <p>{@code lastOutcome} 回答「上一次扫描到底跑了没有」：{@code SKIP} 时
      * {@code lastFiredAt} 保持不变（跳过不是触发），只有 {@code lastSlotAt} 前进。
      */
-    public record TriggerView(String id, String type, String token, String secret, String cron,
+    /**
+     * 触发器视图。{@code secret} 仅在 create/rotate 的一次性响应里回明文，其余端点为 null；
+     * {@code hasSecret} 告诉前端「密钥已设置，需轮换才能再次查看」（SEC-3）。
+     */
+    public record TriggerView(String id, String type, String token, String secret,
+                              boolean hasSecret, String cron,
                               String timezone, boolean enabled, String misfirePolicy,
                               Map<String, Object> variables, String versionId,
                               String lastFiredAt, String lastSlotAt, String lastOutcome,
@@ -130,7 +139,7 @@ public class TriggerService {
     public List<TriggerView> list(TenantInfo tenant, String definitionId) {
         requireDefinition(tenant, definitionId);
         return triggers.listByDefinition(definitionId, tenant.tenantId()).stream()
-                .map(this::toView)
+                .map(row -> toView(row, false))
                 .toList();
     }
 
@@ -150,7 +159,7 @@ public class TriggerService {
                 : MisfirePolicy.DEFAULT.name();
         String id = java.util.UUID.randomUUID().toString();
         var row = new WorkflowTriggerMapper.Row(id, definitionId, tenant.tenantId(), kind,
-                newToken(), newSecret(), normalized, "Asia/Shanghai",
+                newToken(), newSecret(), normalized, defaultTimezone,
                 writeJson(variables), null, true, policy, null, null, null, tenant.userId(),
                 null, null);
         triggers.insert(row);
@@ -158,7 +167,7 @@ public class TriggerService {
                 "TRIGGER_CREATED", Map.of("definitionId", definitionId, "triggerId", id,
                         "type", kind, "cron", normalized == null ? "" : normalized,
                         "misfirePolicy", policy)));
-        return toView(triggers.findByIdAndTenant(id, tenant.tenantId()));
+        return toView(triggers.findByIdAndTenant(id, tenant.tenantId()), true);
     }
 
     public TriggerView patch(TenantInfo tenant, String triggerId, Boolean enabled, String cron,
@@ -178,7 +187,7 @@ public class TriggerService {
         audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
                 "TRIGGER_UPDATED", Map.of("triggerId", triggerId, "enabled", nextEnabled,
                         "misfirePolicy", nextPolicy)));
-        return toView(triggers.findByIdAndTenant(triggerId, tenant.tenantId()));
+        return toView(triggers.findByIdAndTenant(triggerId, tenant.tenantId()), false);
     }
 
     /** 轮换令牌：旧 URL 立即失效，签名密钥同步更换。 */
@@ -190,7 +199,7 @@ public class TriggerService {
         triggers.rotate(triggerId, tenant.tenantId(), newToken(), newSecret());
         audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
                 "TRIGGER_ROTATED", Map.of("triggerId", triggerId)));
-        return toView(triggers.findByIdAndTenant(triggerId, tenant.tenantId()));
+        return toView(triggers.findByIdAndTenant(triggerId, tenant.tenantId()), true);
     }
 
     public void delete(TenantInfo tenant, String triggerId) {
@@ -502,7 +511,7 @@ public class TriggerService {
                                    String timezone, Integer count) {
         requireDefinition(tenant, definitionId);
         String normalized = requireCron(cron);
-        String zone = timezone == null || timezone.isBlank() ? "Asia/Shanghai" : timezone;
+        String zone = timezone == null || timezone.isBlank() ? defaultTimezone : timezone;
         try {
             ZoneId.of(zone);
         } catch (java.time.DateTimeException e) {
@@ -540,21 +549,24 @@ public class TriggerService {
         if (signature == null || signature.isBlank()) {
             return;
         }
-        if (timestampHeader != null && !timestampHeader.isBlank()) {
-            try {
-                long ts = Long.parseLong(timestampHeader.trim());
-                if (Math.abs(Instant.now().getEpochSecond() - ts) > SIGNATURE_SKEW_SECONDS) {
-                    throw new BusinessException(ErrorCode.WF_FORBIDDEN_001,
-                            "signature timestamp expired");
-                }
-            } catch (NumberFormatException e) {
-                throw new BusinessException(ErrorCode.WF_FORBIDDEN_001,
-                        "invalid X-AF-Timestamp");
-            }
+        // 带签名必须带时间戳，且时间戳参与 HMAC：否则抓包后去掉 X-AF-Timestamp
+        // 即可绕过 300s 防重放窗口，同一签名永久有效（P1-8）。
+        if (timestampHeader == null || timestampHeader.isBlank()) {
+            throw new BusinessException(ErrorCode.WF_FORBIDDEN_001,
+                    "X-AF-Timestamp is required when a signature is provided");
+        }
+        long ts;
+        try {
+            ts = Long.parseLong(timestampHeader.trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "invalid X-AF-Timestamp");
+        }
+        if (Math.abs(Instant.now().getEpochSecond() - ts) > SIGNATURE_SKEW_SECONDS) {
+            throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "signature timestamp expired");
         }
         String provided = signature.startsWith("sha256=")
                 ? signature.substring("sha256=".length()) : signature;
-        String expected = hmac(row.secret(), body);
+        String expected = hmac(row.secret(), timestampHeader.trim() + "." + body);
         if (!MessageDigest.isEqual(provided.toLowerCase().getBytes(StandardCharsets.UTF_8),
                 expected.getBytes(StandardCharsets.UTF_8))) {
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001, "signature mismatch");
@@ -635,11 +647,13 @@ public class TriggerService {
         return HexFormat.of().formatHex(bytes);
     }
 
-    private TriggerView toView(WorkflowTriggerMapper.Row row) {
+    private TriggerView toView(WorkflowTriggerMapper.Row row, boolean includeSecret) {
         boolean scheduled = "SCHEDULE".equals(row.triggerType());
         List<String> next = scheduled
                 ? nextSlots(row.cronExpr(), row.timezone(), Instant.now(), 3) : List.of();
-        return new TriggerView(row.id(), row.triggerType(), row.token(), row.secret(),
+        boolean present = row.secret() != null && !row.secret().isBlank();
+        return new TriggerView(row.id(), row.triggerType(), row.token(),
+                includeSecret && present ? row.secret() : null, present,
                 row.cronExpr(), row.timezone(), row.enabled(),
                 MisfirePolicy.parseOrDefault(row.misfirePolicy()).name(),
                 readJsonObject(row.variablesJson()),

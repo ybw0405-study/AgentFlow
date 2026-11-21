@@ -5,6 +5,7 @@ import com.agentflow.common.security.AuthenticatedUser;
 import com.agentflow.common.security.JwtService;
 import com.agentflow.common.web.FilterExceptionWriter;
 import com.agentflow.common.web.PublicPaths;
+import com.agentflow.gateway.proxy.EnginePathPolicy;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -49,8 +50,14 @@ public class GatewayAuthFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         String path = request.getRequestURI();
 
-        // 内部引擎路由：仅接受服务间令牌；否则 404（不暴露路由存在性）
+        // 内部引擎路由：先按控制面真实用到的「方法 + 路径」白名单收敛可达面（AF-3），
+        // 再校验服务间令牌；两者任一不满足都回 404（不暴露路由存在性）。
         if (path.startsWith("/engine/")) {
+            if (!EnginePathPolicy.isAllowed(request.getMethod(), path)) {
+                FilterExceptionWriter.write(response, ErrorCode.WF_NOT_FOUND_001,
+                        "resource not found");
+                return;
+            }
             String token = request.getHeader("X-Internal-Token");
             if (token == null || !java.security.MessageDigest.isEqual(
                     token.getBytes(java.nio.charset.StandardCharsets.UTF_8),

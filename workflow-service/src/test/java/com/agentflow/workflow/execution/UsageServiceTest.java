@@ -153,7 +153,8 @@ class UsageServiceTest {
                 "d1", "draft", "user-1", "SUCCEEDED", "deepseek-chat", 3, 120, 900));
 
         verify(previews).insert(any(PreviewUsageMapper.PreviewUsageRow.class));
-        verify(budgets).accrueByTenant("space-1", 3, 120, 100, 1_000);
+        verify(budgets).accrueByTenant(eq("space-1"), anyString(), eq(3), eq(120),
+                eq(100), eq(1_000L));
     }
 
     @Test

@@ -1,5 +1,13 @@
 import type { NodeType } from './types'
 import { displayModelName, isLegacyOfflineModel } from './model-presets'
+import {
+  PARALLEL_JOIN_POLICIES,
+  SUBWORKFLOW_VERSION_POLICIES,
+} from './contract-enums'
+
+/** CT-1：取值统一来自 contract-enums.ts；这里保留再导出兼容既有 import 路径，
+ *  contract-enums.spec.ts 会拿 models.py 做快照比对，防止枚举漂移。 */
+export { PARALLEL_JOIN_POLICIES, SUBWORKFLOW_VERSION_POLICIES } from './contract-enums'
 
 /** 节点卡片的呈现规则集中在这里：编排画布与执行态画布共用同一套口径。
  *  颜色一律返回设计令牌，不出现原始色值（design-redlines 守卫）。 */
@@ -123,7 +131,7 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
           label: '版本策略',
           value: text(config.versionPolicy),
           kind: 'select',
-          options: ['LATEST_PUBLISHED', 'PINNED'],
+          options: SUBWORKFLOW_VERSION_POLICIES,
         },
       ]
     case 'loop':
@@ -133,7 +141,7 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
       ]
     case 'parallel':
       return [
-        { key: 'join', label: '汇聚', value: text(config.join), kind: 'select', options: ['all', 'any', 'n_of_m'] },
+        { key: 'join', label: '汇聚', value: text(config.join), kind: 'select', options: PARALLEL_JOIN_POLICIES },
         { key: 'maxConcurrency', label: '并发上限', value: text(config.maxConcurrency), kind: 'number' },
       ]
     case 'end':
@@ -172,9 +180,12 @@ export function nodeSummary(type: string, config: Record<string, unknown>): stri
     }
     case 'human_gate': {
       const approvers = config.approvers as Record<string, unknown> | undefined
+      const users = Array.isArray(approvers?.userIds)
+        ? (approvers?.userIds as string[]).join(', ')
+        : undefined
       const rule = approvers?.type === 'EXPRESSION'
         ? `表达式 ${text(approvers.expression)}`
-        : `${text(approvers?.type)} ${text(approvers?.role ?? approvers?.users)}`
+        : `${text(approvers?.type)} ${text(approvers?.role ?? users)}`
       return `审批人 ${rule.trim()}`
     }
     case 'start':

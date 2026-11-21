@@ -265,11 +265,6 @@ public class ConnectorService {
         return invoker.probeModels(row, PROBE_TIMEOUT_MS);
     }
 
-    /** 内部：invoke 前的归属校验。 */
-    public boolean canInvoke(String spaceId, ConnectorRow row) {
-        return chainOf(spaceId).contains(row.tenantId());
-    }
-
     public List<String> chainOf(String spaceId) {
         return resolver.chainOf(spaceId).stream().map(n -> n.id()).toList();
     }

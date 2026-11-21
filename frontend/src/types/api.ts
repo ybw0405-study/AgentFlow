@@ -389,7 +389,10 @@ export interface TriggerDto {
   id: string
   type: TriggerType
   token: string
-  secret: string
+  /** 仅 create/rotate 的一次性响应回明文；list/patch 为 null（后端 SEC-3）。 */
+  secret: string | null
+  /** 密钥是否已设置；为 false 表示从未生成，需先创建密钥。 */
+  hasSecret: boolean
   cron: string | null
   timezone: string
   enabled: boolean

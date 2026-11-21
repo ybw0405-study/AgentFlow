@@ -68,8 +68,15 @@ class LlmExecutor:
         # （例如只跑离线单测），此时引用模型的节点会给出明确错误而不是静默回落。
         self._connector_llms = connector_llms
 
-    def _provider_for(self, cfg: Any) -> LLMProvider:
+    def _provider_for(self, cfg: Any, authorized: frozenset[str]) -> LLMProvider:
         if cfg.connection_id:
+            # 与 tool 节点同口径（SEC-4）：connectionId 必须在本执行授权集合内，
+            # 否则跨空间引用连接器完全依赖 connector-service 内部校验，双路径强度不一致。
+            if cfg.connection_id not in authorized:
+                raise PermanentNodeError(
+                    "CONN-FORBIDDEN-001",
+                    f"connector '{cfg.connection_id}' is not authorized for this execution",
+                )
             if self._connector_llms is None:
                 raise PermanentNodeError(
                     "LLM-CONNECTION-001", "connector-backed models are not enabled"
@@ -111,7 +118,7 @@ class LlmExecutor:
         if contains_pii(prompt) or (system is not None and contains_pii(system)):
             raise PiiBlockedError()
 
-        provider = self._provider_for(cfg)
+        provider = self._provider_for(cfg, ctx.authorized_connector_ids)
 
         # 推理型模型的思维链与正文共用 max_tokens：DSL 默认的 1024 常被思考吃光，
         # 上游回一个空 content，节点以 LLM-RESPONSE-001 失败。下发前抬到下限，

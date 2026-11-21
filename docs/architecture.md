@@ -424,6 +424,13 @@ CREATE TABLE notification (
 );
 ```
 
+> 上面的 `trg_wv_no_update` 是 **V002 的初始定义**。`V019__immutable_version_columns.sql`
+> 会把不可变保护扩展到 `published_at` / `published_by` / `immutable` 本身；AF-10 后该迁移
+> 改为「先建后删」：先 `CREATE TRIGGER IF NOT EXISTS trg_wv_no_update_af10`（新定义），
+> 再 `DROP TRIGGER trg_wv_no_update`（V002 旧定义），避免 DDL 隐式提交造成保护空窗。
+> 因此**升级后库里的 BEFORE UPDATE 触发器名是 `trg_wv_no_update_af10`**，
+> `trg_wv_no_delete` 不变。回滚脚本见 `scripts/rollback/`，顺序见 `scripts/ROLLBACK.md`。
+
 ### 3.2 PostgreSQL（库 `agentflow_events`，独立迁移，Python 独占写入）
 
 ```sql
@@ -980,7 +987,7 @@ stateDiagram-v2
 ## 9. 可观测性
 
 - **trace**：W3C `traceparent` 前端 → gateway → workflow-service → engine → Provider；所有日志行含 `traceId`、`executionId`、`tenantId`（MDC / structlog contextvars）。
-- **指标**（Prometheus）：`af_execution_total{status}`、`af_execution_duration_seconds`（直方图）、`af_node_failed_total{nodeType,errorCode}`、`af_event_append_latency_ms`、`af_replay_total`、`af_token_used_total{tenantId}`、`af_lease_contention_total`、`af_budget_stop_total`。
+- **指标**（Prometheus）：`af_execution_total{status}`、`af_execution_duration_seconds`（直方图）、`af_node_failed_total{nodeType,errorCode}`、`af_replay_total`、`af_lease_contention_total`、`af_budget_stop_total`。
 - **日志红线**：禁止出现原始 PII、提示词全文、用户问题原文、连接器密钥、DSN（CI grep + Code Review 双保险）。PII 日志只记类别与数量。
 
 ---
@@ -1059,7 +1066,7 @@ AgentFlow/
 │       ├── main.py, config.py, errors.py
 │       ├── api/            # internal.py, problems.py
 │       ├── dsl/            # models.py, validate.py, compile.py
-│       ├── engine/         # scheduler.py, executor.py, statemachine.py, state.py,
+│       ├── engine/         # scheduler.py, executor.py, state.py,
 │       │                   # dispatcher.py, replay.py, requests.py, lease.py
 │       ├── nodes/          # registry.py, base.py, subgraph.py, subworkflow_resolver.py
 │       │                   # start/end/llm/tool/condition/loop/parallel/transform/

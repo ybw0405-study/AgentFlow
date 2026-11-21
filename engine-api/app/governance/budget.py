@@ -84,6 +84,10 @@ class BudgetLedger:
                     pipe.multi()
                     if refund > 0:
                         pipe.decrby(key, refund)
+                    elif refund < 0:
+                        # 上游实际用量超过预占时追扣：静默放过会让键系统性低估，
+                        # 后续节点继续按虚高余额预占，tokenUsed <= tokenBudget 失守（CON-1）。
+                        pipe.incrby(key, -refund)
                     if pending > 0:
                         pipe.decr(inflight)
                     await pipe.execute()

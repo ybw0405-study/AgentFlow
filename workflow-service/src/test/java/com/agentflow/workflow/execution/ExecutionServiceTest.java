@@ -46,7 +46,8 @@ class ExecutionServiceTest {
         CanaryService canary = Mockito.mock(CanaryService.class);  // route() 默认 null → 走 current
         usage = Mockito.mock(UsageService.class);
         service = new ExecutionService(executions, definitions, versions, engine, audit, canary,
-                usage, 50_000, 50, 120_000, "mock.search,mock.echo,mock.flaky");
+                usage, Mockito.mock(BudgetLedgerMapper.class), 50_000, 50, 120_000,
+                "mock.search,mock.echo,mock.flaky");
     }
 
     private void givenDefinitionAndVersion() {
@@ -145,6 +146,27 @@ class ExecutionServiceTest {
         assertEquals(ErrorCode.AGT_UPSTREAM_001, ex.errorCode());
         verify(executions).markFailedDispatch(anyString(), eq("FAILED"),
                 eq("AGT-UPSTREAM-001"));
+    }
+
+    @Test
+    void engineAcceptsButDoesNotDispatchIsNotRecordedAsTriggered() {
+        givenDefinitionAndVersion();
+        // 租约被占：引擎返回 200/202 带 note，但根本没建任务、没落事件（AF-1）
+        when(engine.submitExecution(any())).thenReturn(Map.of(
+                "status", "RUNNING", "note", "lease held by another worker"));
+
+        var ex = assertThrows(BusinessException.class, () -> service.trigger(
+                editor, "d1", null, "idem-12345678", Map.of(), null, "trace-1"));
+
+        assertEquals(ErrorCode.AGT_UPSTREAM_001, ex.errorCode());
+        verify(executions).markFailedDispatch(anyString(), eq("FAILED"),
+                eq("AGT-UPSTREAM-001"));
+        var captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(audit, Mockito.atLeastOnce()).publish(captor.capture());
+        assertTrue(captor.getAllValues().stream()
+                .noneMatch(m -> "EXECUTION_TRIGGERED".equals(m.eventType())));
+        assertTrue(captor.getAllValues().stream()
+                .anyMatch(m -> "DISPATCH_REJECTED".equals(m.eventType())));
     }
 
     @Test

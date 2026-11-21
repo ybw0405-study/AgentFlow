@@ -24,6 +24,8 @@ const sweepReport = ref<AdminSweepReport | null>(null)
 const sweeping = ref(false)
 const error = ref<DescribedError | null>(null)
 const loading = ref(false)
+/** 审计「加载更多」防重入：同 cursor 并发会把同一页追加两次。 */
+const auditLoading = ref(false)
 
 const tenantRows = computed<AdminTenantUsage[]>(() => usage.value?.tenants ?? [])
 const modelRows = computed<AdminModelUsage[]>(() => usage.value?.byModel ?? [])
@@ -52,6 +54,8 @@ async function loadUsage(): Promise<void> {
 }
 
 async function loadAudit(reset = true): Promise<void> {
+  if (auditLoading.value) return
+  auditLoading.value = true
   try {
     const page = (await adminApi.audit({
       cursor: reset ? undefined : (auditCursor.value ?? undefined),
@@ -60,6 +64,8 @@ async function loadAudit(reset = true): Promise<void> {
     auditCursor.value = page.nextCursor
   } catch (e) {
     error.value = describeError(e)
+  } finally {
+    auditLoading.value = false
   }
 }
 

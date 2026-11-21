@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import Field
 
 from ..config import Settings
 from ..dsl.models import CamelModel
 from ..dsl.validate import ValidationResult, validate_dsl
-from ..engine.replay import rebuild_state
+from ..engine.replay import rebuild_state_hydrated
 from ..engine.requests import ExecuteRequest, PolicyIn
 from ..errors import EngineError
 from ..events.store import EventStore
@@ -95,7 +96,14 @@ async def llm_models(request: Request) -> LlmModelsResponse:
 
 @router.post("/executions", status_code=202)
 async def execute(body: ExecuteRequest, request: Request) -> dict[str, Any]:
-    return await request.app.state.dispatcher.submit(body)
+    result = await request.app.state.dispatcher.submit(body)
+    # AF-1：带 note 的结果表示「引擎接受但没派发」（租约被占 / 关停中）。
+    # 回 202 会让控制面插入 PENDING 并记 EXECUTION_TRIGGERED，而引擎侧根本
+    # 没有这条执行 —— 必须给明确错误码，让调用方把假 PENDING 收口。
+    note = result.get("note")
+    if isinstance(note, str) and note:
+        raise EngineError("EXEC-DISPATCH_REJECTED-001", f"engine did not dispatch: {note}")
+    return result
 
 
 class NodePreviewRequest(CamelModel):
@@ -138,80 +146,90 @@ async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, 
 
     execution_id = uuid.uuid4()
     dispatcher = request.app.state.dispatcher
-    await dispatcher.submit(
-        ExecuteRequest(
-            execution_id=execution_id,
-            definition_id=f"preview:{body.node_key}",
-            version_id="preview",
-            tenant_id=body.tenant_id,
-            space_id=body.space_id,
-            triggered_by=body.requested_by,
-            idempotency_key=f"preview-{execution_id}",
-            version_snapshot=plan.dsl,
-            authorized_connector_ids=body.authorized_connector_ids,
-            initial_variables=body.variables,
-            policy=PolicyIn(
-                token_budget=body.token_budget,
-                max_steps=60,
-                deadline_ms=body.timeout_ms,
-            ),
-            trace_id=f"preview-{execution_id.hex[:12]}",
+    # AF-6：试跑无论正常结束、超时还是抛异常，都必须强制落终态并清掉 spec。
+    # 否则 execution_tracker 会留一条 OPEN，恢复扫描（启动扫描 + 周期 sweep）
+    # 会在引擎重启后把它当「崩溃的业务执行」续跑，重复调用模型并重复计费。
+    try:
+        submitted = await dispatcher.submit(
+            ExecuteRequest(
+                execution_id=execution_id,
+                definition_id=f"preview:{body.node_key}",
+                version_id="preview",
+                tenant_id=body.tenant_id,
+                space_id=body.space_id,
+                triggered_by=body.requested_by,
+                idempotency_key=f"preview-{execution_id}",
+                version_snapshot=plan.dsl,
+                authorized_connector_ids=body.authorized_connector_ids,
+                initial_variables=body.variables,
+                policy=PolicyIn(
+                    token_budget=body.token_budget,
+                    max_steps=60,
+                    deadline_ms=body.timeout_ms,
+                ),
+                trace_id=f"preview-{execution_id.hex[:12]}",
+                preview=True,
+            )
         )
-    )
-    finished = await dispatcher.wait(execution_id, body.timeout_ms / 1000)
+        note = submitted.get("note")
+        if isinstance(note, str) and note:
+            raise EngineError("EXEC-DISPATCH_REJECTED-001", f"preview was not dispatched: {note}")
+        finished = await dispatcher.wait(execution_id, body.timeout_ms / 1000)
 
-    store = _store(request)
-    events = await store.read_all(execution_id)
-    state = rebuild_state(execution_id, events)
+        store = _store(request)
+        events = await store.read_all(execution_id)
+        state = await rebuild_state_hydrated(execution_id, events, store)
 
-    target = state.nodes.get(body.node_key)
-    completed = _last_event(events, body.node_key, EventType.NODE_COMPLETED)
-    failed = _last_event(events, body.node_key, EventType.NODE_FAILED)
-    io = await store.get_node_io(execution_id, body.node_key)
+        target = state.nodes.get(body.node_key)
+        completed = _last_event(events, body.node_key, EventType.NODE_COMPLETED)
+        failed = _last_event(events, body.node_key, EventType.NODE_FAILED)
+        io = await store.get_node_io(execution_id, body.node_key)
 
-    trace = []
-    for key in (*plan.upstream, plan.target):
-        runtime = state.nodes.get(key)
-        node_completed = _last_event(events, key, EventType.NODE_COMPLETED)
-        node_failed = _last_event(events, key, EventType.NODE_FAILED)
-        trace.append(
-            {
-                "key": key,
-                "status": runtime.status if runtime else "PENDING",
-                "tokenUsed": runtime.token_used if runtime else 0,
-                "latencyMs": (node_completed or node_failed or {}).get("latencyMs"),
-                "errorCode": (runtime.error_code if runtime else None)
-                or (node_failed or {}).get("errorCode"),
-            }
-        )
+        trace = []
+        for key in (*plan.upstream, plan.target):
+            runtime = state.nodes.get(key)
+            node_completed = _last_event(events, key, EventType.NODE_COMPLETED)
+            node_failed = _last_event(events, key, EventType.NODE_FAILED)
+            trace.append(
+                {
+                    "key": key,
+                    "status": runtime.status if runtime else "PENDING",
+                    "tokenUsed": runtime.token_used if runtime else 0,
+                    "latencyMs": (node_completed or node_failed or {}).get("latencyMs"),
+                    "errorCode": (runtime.error_code if runtime else None)
+                    or (node_failed or {}).get("errorCode"),
+                }
+            )
 
-    output = target.output if target and target.output else None
-    error_code = (failed or {}).get("errorCode") or (target.error_code if target else None)
-    error_message = (failed or {}).get("message")
-    status = state.status
-    if not finished and status not in ("SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"):
-        status = "TIMED_OUT"
-        error_code = error_code or "PREVIEW-TIMEOUT-001"
-        error_message = error_message or f"试跑在 {body.timeout_ms}ms 内没有结束，已请求取消"
-    if finished and target is not None and target.status == "SKIPPED":
-        error_code = error_code or "PREVIEW-SKIPPED-001"
-        error_message = error_message or "上游条件分支没有命中这个节点，本次试跑未执行它"
+        output = target.output if target and target.output else None
+        error_code = (failed or {}).get("errorCode") or (target.error_code if target else None)
+        error_message = (failed or {}).get("message")
+        status = state.status
+        if not finished and status not in ("SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"):
+            status = "TIMED_OUT"
+            error_code = error_code or "PREVIEW-TIMEOUT-001"
+            error_message = error_message or f"试跑在 {body.timeout_ms}ms 内没有结束，已请求取消"
+        if finished and target is not None and target.status == "SKIPPED":
+            error_code = error_code or "PREVIEW-SKIPPED-001"
+            error_message = error_message or "上游条件分支没有命中这个节点，本次试跑未执行它"
 
-    return {
-        "executionId": str(execution_id),
-        "nodeKey": body.node_key,
-        "status": status,
-        "nodeStatus": target.status if target else "PENDING",
-        "output": output,
-        "input": (io.get("in") or {}).get("payload"),
-        "errorCode": error_code,
-        "errorMessage": error_message,
-        "tokenUsed": target.token_used if target else 0,
-        "latencyMs": (completed or failed or {}).get("latencyMs"),
-        "totalTokens": state.token_used,
-        "result": state.result,
-        "trace": trace,
-    }
+        return {
+            "executionId": str(execution_id),
+            "nodeKey": body.node_key,
+            "status": status,
+            "nodeStatus": target.status if target else "PENDING",
+            "output": output,
+            "input": (io.get("in") or {}).get("payload"),
+            "errorCode": error_code,
+            "errorMessage": error_message,
+            "tokenUsed": target.token_used if target else 0,
+            "latencyMs": (completed or failed or {}).get("latencyMs"),
+            "totalTokens": state.token_used,
+            "result": state.result,
+            "trace": trace,
+        }
+    finally:
+        await dispatcher.finalize_preview(execution_id)
 
 
 @router.post("/executions/{execution_id}/gates/{node_key}/resolve")
@@ -273,10 +291,15 @@ async def tail_events(
     after_seq: int = Query(0, ge=0),
     after_seq_camel: int | None = Query(None, alias="afterSeq", ge=0),
     limit: int = Query(500, ge=1),
+    space_id: str | None = Query(None, alias="spaceId"),
 ) -> dict[str, Any]:
+    """事件尾读。AF-3：调用方带 spaceId 时，过滤条件下推到引擎 SQL 层，
+    不再无条件返回全租户事件。空/空白视为未指定（系统级投影器走全局路径）。
+    """
     limit = min(limit, _settings(request).event_tail_max_limit)
     after = after_seq_camel if after_seq_camel is not None else after_seq
-    events = await _store(request).tail(after, limit)
+    scope = space_id.strip() if space_id and space_id.strip() else None
+    events = await _store(request).tail(after, limit, space_id=scope)
     return {
         "events": [e.to_dict() for e in events],
         "lastSeq": events[-1].seq if events else after,
@@ -296,7 +319,7 @@ async def execution_state(execution_id: uuid.UUID, request: Request) -> dict[str
     events = await _store(request).read_all(execution_id)
     if not events:
         raise EngineError("WF-NOT_FOUND-001", "execution not found")
-    state = rebuild_state(execution_id, events)
+    state = await rebuild_state_hydrated(execution_id, events, _store(request))
     return {
         "executionId": str(execution_id),
         "status": state.status,
@@ -318,7 +341,44 @@ async def execution_state(execution_id: uuid.UUID, request: Request) -> dict[str
 
 @router.get("/health")
 async def health() -> dict[str, str]:
+    """兼容别名（liveness）：进程存活即 200，README/既有探针口径不变。
+
+    readiness 请用 /health/ready —— 它会真探 PG + Redis，依赖 down 返回 503。
+    """
     return {"status": "ok"}
+
+
+@router.get("/health/live")
+async def health_live() -> dict[str, str]:
+    """liveness（AF-8）：恒活，绝不因依赖抖动让编排器把存活实例摘除。"""
+    return {"status": "ok"}
+
+
+@router.get("/health/ready")
+async def health_ready(request: Request) -> Response:
+    """readiness（AF-8）：短超时 SELECT 1 探 PG + Redis PING，任一 down 返回 503。
+
+    与 Java 侧 HealthController 的 UP/DEGRADED 口径对齐；每个依赖独立探测，
+    单次超时由 settings.health_probe_timeout_s 约束，不会拖住探针调用方。
+    """
+    timeout = _settings(request).health_probe_timeout_s
+    checks: dict[str, str] = {}
+
+    async def probe(name: str, coro: Any) -> None:
+        try:
+            await asyncio.wait_for(coro, timeout=timeout)
+            checks[name] = "UP"
+        except Exception:
+            checks[name] = "DOWN"
+
+    await probe("postgres", _store(request).ping())
+    await probe("redis", request.app.state.redis.ping())
+
+    ok = all(v == "UP" for v in checks.values())
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "UP" if ok else "DEGRADED", "checks": checks},
+    )
 
 
 @router.get("/metrics")

@@ -10,6 +10,7 @@ import com.agentflow.common.trace.TraceIdContext;
 import com.agentflow.workflow.sse.SseHub;
 import org.springframework.beans.factory.annotation.Qualifier;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.HashMap;
@@ -48,14 +49,21 @@ public class ExecutionController {
         this.sseTaskExecutor = sseTaskExecutor;
     }
 
-    public record TriggerRequest(String versionId,
-                                 @NotBlank @Size(min = 8, max = 128) String idempotencyKey,
-                                 Map<String, Object> variables,
-                                 ExecutionService.PolicyRequest policy) {
+    /** CT-2：@Schema 让 springdoc 的运行时 spec 带出 required，前端生成类型才有约束力。 */
+    public record TriggerRequest(
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String versionId,
+            @NotBlank @Size(min = 8, max = 128)
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String idempotencyKey,
+            Map<String, Object> variables,
+            ExecutionService.PolicyRequest policy) {
     }
 
-    public record TriggerData(String executionId, String status, boolean idempotentReplay,
-                              String eventsUrl, String streamUrl) {
+    public record TriggerData(
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String executionId,
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String status,
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) boolean idempotentReplay,
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String eventsUrl,
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String streamUrl) {
     }
 
     @PostMapping("/api/v1/workflows/{id}/executions")
