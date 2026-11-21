@@ -54,6 +54,18 @@ async def test_server_error_is_transient():
     assert result.transient
 
 
+async def test_200_with_invalid_json_is_transient_bad_json():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json")
+
+    result = await _connector(handler).invoke(
+        call_id="e/n/bad-json", operation="run", params={}, timeout_ms=1000, trace_id="t"
+    )
+    assert not result.ok
+    assert result.error_code == "CONN-BAD-JSON"
+    assert result.transient
+
+
 async def test_not_found_is_permanent():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={})

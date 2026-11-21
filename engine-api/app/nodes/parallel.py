@@ -35,17 +35,9 @@ class ParallelExecutor:
                     return name, {}, exc
 
         tasks = [asyncio.create_task(one(name)) for name in cfg.branches]
-        results = await asyncio.gather(*tasks)
-
         if cfg.join == "first_success":
-            for name, out, err in results:
-                if err is None:
-                    return NodeResult(
-                        output={"branch": name, "result": out, "merged": {name: out}},
-                        input_snapshot={"join": "first_success", "branch": name},
-                    )
-            failed = "; ".join(f"{n}: {e}" for n, _, e in results if e is not None)
-            raise PermanentNodeError("PARALLEL-ALL-FAILED", f"all branches failed: {failed[:300]}")
+            return await _first_success(tasks)
+        results = await asyncio.gather(*tasks)
 
         errors = [(n, e) for n, _, e in results if e is not None]
         if errors:
@@ -58,3 +50,33 @@ class ParallelExecutor:
             output={"merged": merged, "result": merged},
             input_snapshot={"join": "all", "branches": list(cfg.branches)},
         )
+
+
+async def _first_success(tasks: list[asyncio.Task]) -> NodeResult:
+    """按完成顺序取首个成功分支，其余 cancel；全部失败才报错。
+
+    与 join=all 不同：这里用 asyncio.wait(FIRST_COMPLETED) 逐轮收割，而不是
+    gather 等全部分支跑完再按定义顺序取结果。首个成功即返回并取消仍在跑的分支，
+    避免白付 LLM 计费；失败分支只记一笔诊断，继续等下一个成功。已发出的
+    Command 不回滚，按 docstring 语义由 execution deadline 收尾。
+    """
+    pending: set[asyncio.Task] = set(tasks)
+    failures: list[tuple[str, Exception]] = []
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                name, out, err = task.result()
+                if err is None:
+                    return NodeResult(
+                        output={"branch": name, "result": out, "merged": {name: out}},
+                        input_snapshot={"join": "first_success", "branch": name},
+                    )
+                failures.append((name, err))
+    finally:
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+    failed = "; ".join(f"{n}: {e}" for n, e in failures)
+    raise PermanentNodeError("PARALLEL-ALL-FAILED", f"all branches failed: {failed[:300]}")

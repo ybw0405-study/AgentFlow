@@ -27,7 +27,7 @@ from ..nodes.base import Policy
 from ..nodes.registry import NodeExecutor
 from ..observability.metrics import EXECUTION_TOTAL, LEASE_CONTENTION_TOTAL, REPLAY_TOTAL
 from .lease import Lease
-from .replay import rebuild_state
+from .replay import rebuild_state_hydrated
 from .requests import ExecuteRequest
 from .scheduler import Scheduler
 from .state import ExecutionState
@@ -100,7 +100,7 @@ class Dispatcher:
 
         dsl = WorkflowDsl.model_validate(req.version_snapshot)
         if events:
-            state = rebuild_state(req.execution_id, events)
+            state = await rebuild_state_hydrated(req.execution_id, events, self._store)
             REPLAY_TOTAL.inc()
             resumed = True
             # 预算对账：旧执行器已不在，未完成节点重放时会重新 reserve，因此
@@ -195,7 +195,14 @@ class Dispatcher:
                 break
             except TimeoutError:
                 pass
-            if not await lease.renew():
+            try:
+                renewed = await lease.renew()
+            except Exception as exc:
+                # Redis 抖动：把连接异常按「租约疑似丢失」处理，避免续约协程崩溃后
+                # 主执行继续写事件、租约 TTL 过期被另一 worker 接管（双执行）。
+                logger.error("lease %s renew failed; treating as lease lost: %s", lease.key, exc)
+                renewed = False
+            if not renewed:
                 logger.error("lease %s lost; executor stops writing events", lease.key)
                 state.lease_lost = True  # 调度器在节点边界检查（§8.5）
                 # 租约与预算共用 Redis：租约续不上通常意味着账本也一起丢了。
@@ -210,7 +217,15 @@ class Dispatcher:
                 return
 
     async def cancel(self, execution_id: uuid.UUID) -> dict[str, Any]:
-        await self._redis.set(f"af:cancel:{execution_id}", "1", ex=3600)
+        try:
+            await self._redis.set(f"af:cancel:{execution_id}", "1", ex=3600)
+        except Exception as exc:
+            logger.error("cancel flag write failed for %s: %s", execution_id, exc)
+            return {
+                "ok": False,
+                "status": "DEPENDENCY_UNAVAILABLE",
+                "errorCode": "EXEC-DEPENDENCY-001",
+            }
         task = self._tasks.get(execution_id)
         if task is not None and not task.done():
             return {"ok": True, "status": "CANCELLING"}  # 执行器在节点边界收口
@@ -225,7 +240,7 @@ class Dispatcher:
         )
         if await lease.acquire():
             try:
-                state = rebuild_state(execution_id, events)
+                state = await rebuild_state_hydrated(execution_id, events, self._store)
                 await self._event_log.append(
                     execution_id,
                     EventType.EXECUTION_CANCELLED,
@@ -285,7 +300,7 @@ class Dispatcher:
         events = await self._store.read_all(execution_id)
         if not events:
             return {"ok": False, "status": "NOT_FOUND"}
-        state = rebuild_state(execution_id, events)
+        state = await rebuild_state_hydrated(execution_id, events, self._store)
         if state.status in ("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"):
             return {"ok": True, "status": "ALREADY_TERMINAL", "executionStatus": state.status}
         gate = _gate_for(events, node_key)
@@ -309,7 +324,7 @@ class Dispatcher:
         try:
             # 租约到手后重新折叠：可能与上面读到的事件不同（并发裁决 / 超时扫描）
             events = await self._store.read_all(execution_id)
-            state = rebuild_state(execution_id, events)
+            state = await rebuild_state_hydrated(execution_id, events, self._store)
             gate = _gate_for(events, node_key)
             if gate is None:
                 return {"ok": False, "status": "NOT_SUSPENDED"}
@@ -435,6 +450,20 @@ class Dispatcher:
                     logger.debug("recovery sweep failed", exc_info=True)
 
         self._sweep_task = asyncio.create_task(loop())
+
+    async def shutdown(self) -> None:
+        """关停后台扫描任务：cancel 后 await 收尾，避免关停窗口内撞已关闭的连接池。
+
+        main 的 lifespan 在关闭 store/redis 之前调用它（ARCH-3）；以前直接 cancel
+        私有任务且不 await，sweep loop 可能在连接池关闭后仍访问 Redis/PG。
+        """
+        tasks = [t for t in (self._sweep_task, self._gate_task) if t is not None]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._sweep_task = None
+        self._gate_task = None
 
 
 def _gate_for(events: list[Any], node_key: str) -> dict[str, Any] | None:

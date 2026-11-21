@@ -13,7 +13,7 @@ from pydantic import Field
 from ..config import Settings
 from ..dsl.models import CamelModel
 from ..dsl.validate import ValidationResult, validate_dsl
-from ..engine.replay import rebuild_state
+from ..engine.replay import rebuild_state_hydrated
 from ..engine.requests import ExecuteRequest, PolicyIn
 from ..errors import EngineError
 from ..events.store import EventStore
@@ -162,7 +162,7 @@ async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, 
 
     store = _store(request)
     events = await store.read_all(execution_id)
-    state = rebuild_state(execution_id, events)
+    state = await rebuild_state_hydrated(execution_id, events, store)
 
     target = state.nodes.get(body.node_key)
     completed = _last_event(events, body.node_key, EventType.NODE_COMPLETED)
@@ -296,7 +296,7 @@ async def execution_state(execution_id: uuid.UUID, request: Request) -> dict[str
     events = await _store(request).read_all(execution_id)
     if not events:
         raise EngineError("WF-NOT_FOUND-001", "execution not found")
-    state = rebuild_state(execution_id, events)
+    state = await rebuild_state_hydrated(execution_id, events, _store(request))
     return {
         "executionId": str(execution_id),
         "status": state.status,

@@ -91,7 +91,16 @@ class HttpToolConnector:
                 transient=transient,
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError:
+            # 200 但响应体不是合法 JSON：上游协议异常，按瞬时处理允许重试（C-10）
+            return CommandResult(
+                ok=False,
+                error_code="CONN-BAD-JSON",
+                transient=True,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
         return CommandResult(
             ok=bool(payload.get("ok")),
             data=payload.get("data"),

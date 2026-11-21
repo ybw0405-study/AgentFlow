@@ -6,13 +6,19 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.commands.base import CommandResult
+from app.dsl.models import WorkflowDsl
 from app.engine.requests import ExecuteRequest
+from app.engine.scheduler import LeaseLostError
+from app.engine.state import ExecutionState
 from app.errors import EventConcurrencyError, TransientNodeError
-from app.events.types import EventType
+from app.events.types import TERMINAL_EVENTS, EventType
+from app.nodes.base import Policy
 from tests.unit.conftest import InMemoryEventStore, make_execute_request, make_stack
 
 
@@ -383,3 +389,99 @@ async def test_execution_deadline_times_out(settings, fake_redis, mem_store):
     events = await mem_store.read_all(req.execution_id)
     assert events[-1].event_type == EventType.EXECUTION_TIMED_OUT, _types(events)
     assert all(e.node_key != "end" for e in events)
+
+
+# ---- Redis 故障路径（P1-6 / P1-7 / C-9 / ARCH-3）----
+
+
+class _ExplodingLease:
+    """renew / held_by_me 抛 Redis 连接异常，模拟 Redis 抖动。"""
+
+    key = "af:lease:exploding"
+
+    async def renew(self) -> bool:
+        raise RedisConnectionError("redis down")
+
+    async def held_by_me(self) -> bool:
+        raise RedisConnectionError("redis down")
+
+    async def release(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_renew_loop_connection_error_marks_lease_lost(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    settings.lease_renew_ms = 1
+    state = ExecutionState(execution_id=uuid.uuid4(), seed="s")
+    await dispatcher._renew_loop(_ExplodingLease(), asyncio.Event(), state)
+    assert state.lease_lost is True
+
+
+@pytest.mark.asyncio
+async def test_stop_conditions_redis_error_is_lease_lost(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    state = ExecutionState(execution_id=uuid.uuid4(), seed="s")
+    with pytest.raises(LeaseLostError):
+        await dispatcher._scheduler._check_stop_conditions(
+            state.execution_id, state, None, _ExplodingLease()
+        )
+    assert state.lease_lost is True
+
+
+@pytest.mark.asyncio
+async def test_redis_unavailable_run_stops_silently(settings, fake_redis, mem_store):
+    """Redis 不可达时按 LeaseLost 静默停止，绝不落 ExecutionFailed 终态（P1-7）。"""
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    dsl = _dsl(
+        [
+            {
+                "key": "tag",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.ok", "template": "1"}]},
+            },
+            {"key": "end", "type": "end", "config": {"resultMapping": {"status": "done"}}},
+        ],
+        [{"from": "tag", "to": "end"}],
+        variables={"ok": {"type": "string", "required": False}},
+    )
+    eid = uuid.uuid4()
+    state = ExecutionState(execution_id=eid, seed="s")
+    status = await dispatcher._scheduler.run(
+        execution_id=eid,
+        dsl=WorkflowDsl.model_validate(dsl),
+        state=state,
+        trace_id="trace",
+        policy=Policy(),
+        authorized_connector_ids=frozenset(),
+        lease=_ExplodingLease(),
+    )
+    assert status == "LEASE_LOST"
+    events = await mem_store.read_all(eid)
+    assert not any(e.event_type in TERMINAL_EVENTS for e in events)
+
+
+class _SetFailsRedis:
+    async def set(self, *args, **kwargs):
+        raise RedisConnectionError("redis down")
+
+
+@pytest.mark.asyncio
+async def test_cancel_redis_failure_returns_dependency_error(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    dispatcher._redis = _SetFailsRedis()
+    result = await dispatcher.cancel(uuid.uuid4())
+    assert result["ok"] is False
+    assert result["status"] == "DEPENDENCY_UNAVAILABLE"
+    assert result["errorCode"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_awaits_sweepers(settings, fake_redis, mem_store):
+    dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
+    dispatcher.start_sweep(interval_s=60)
+    dispatcher.start_gate_sweeper(interval_s=60)
+    sweep, gate = dispatcher._sweep_task, dispatcher._gate_task
+    await dispatcher.shutdown()
+    assert sweep.done() and gate.done()
+    assert dispatcher._sweep_task is None and dispatcher._gate_task is None

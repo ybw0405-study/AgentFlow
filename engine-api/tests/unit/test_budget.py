@@ -122,6 +122,15 @@ async def test_settle_never_drives_inflight_negative(fake_redis):
     assert await ledger.reconcile(eid, used=0) == 0  # 新预占仍在途
 
 
+async def test_settle_charges_overspend_instead_of_silently_forgetting(fake_redis):
+    """实际用量超过预占必须追扣，否则预算键被系统性低估（CON-1）。"""
+    ledger = BudgetLedger(fake_redis)
+    eid = uuid.uuid4()
+    grant = await ledger.reserve(eid, budget=100, requested=40)
+    await ledger.settle(eid, grant, actual=75)
+    assert await ledger.used(eid) == 75
+
+
 async def test_exists_tracks_ledger_key(fake_redis):
     ledger = BudgetLedger(fake_redis)
     eid = uuid.uuid4()

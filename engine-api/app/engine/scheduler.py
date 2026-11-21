@@ -117,10 +117,32 @@ class Scheduler:
         deadline_at: float | None,
         lease: Lease,
     ) -> None:
-        if state.lease_lost or not await lease.held_by_me():
+        if state.lease_lost:
+            raise LeaseLostError(str(execution_id))
+        # Redis 故障与查询结果必须分开处理：查询拿到明确结果（租约不在我手上 /
+        # 有取消标记）才走对应语义；连接不可达时无法确认租约，按「租约疑似丢失」
+        # 静默停止让恢复扫描接管（与续约循环的 P1-6 语义一致），绝不传播成普通
+        # 异常把活执行落成 ExecutionFailed 终态（P1-7）。
+        try:
+            held = await lease.held_by_me()
+        except Exception as exc:
+            logger.warning(
+                "lease check unavailable for %s; stopping as lease lost: %s", execution_id, exc
+            )
+            state.lease_lost = True
+            raise LeaseLostError(str(execution_id)) from exc
+        if not held:
             state.lease_lost = True
             raise LeaseLostError(str(execution_id))
-        if await self._redis.get(f"af:cancel:{execution_id}"):
+        try:
+            cancelled = await self._redis.get(f"af:cancel:{execution_id}")
+        except Exception as exc:
+            logger.warning(
+                "cancel flag unavailable for %s; stopping as lease lost: %s", execution_id, exc
+            )
+            state.lease_lost = True
+            raise LeaseLostError(str(execution_id)) from exc
+        if cancelled:
             raise ExecutionCancelledError()
         if deadline_at is not None and time.monotonic() > deadline_at:
             raise DeadlineExceededError()
@@ -246,9 +268,13 @@ class Scheduler:
                     ],
                     return_exceptions=True,
                 )
-                fatal = next((r for r in results if isinstance(r, BaseException)), None)
-                if fatal is not None:
-                    raise fatal
+                failures = [r for r in results if isinstance(r, BaseException)]
+                if failures:
+                    # gather(return_exceptions=True) 只抛第一个会丢掉其它分支的诊断，
+                    # 先把全部异常记进日志再抛首个（C-8）。
+                    for exc in failures:
+                        logger.error("parallel branch failed execution=%s: %r", execution_id, exc)
+                    raise failures[0]
 
             # 收口只认真正跑成功的 end：分支工作流里 end 可以有多个，
             # 取「定义里的第一个」会把结果永远钉在被 SKIPPED 的那个上（返回空对象）。

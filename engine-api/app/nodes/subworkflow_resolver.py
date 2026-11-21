@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from ..errors import PermanentNodeError
+from ..errors import PermanentNodeError, TransientNodeError
 
 
 class SubworkflowResolver(Protocol):
@@ -37,7 +37,9 @@ class GatewaySubworkflowResolver:
                 headers=self._headers,
             )
         except httpx.HTTPError as exc:
-            raise PermanentNodeError(
+            # 网络瞬时故障（连接被拒/超时）应进入重试，而非判为永久失败（C-11）。
+            # 控制面返回 404/非 200 属确定性结果，仍保持 Permanent 不变。
+            raise TransientNodeError(
                 "SUBWF-UNAVAILABLE-001", f"control plane unreachable: {exc}"
             ) from exc
         if resp.status_code == 404:

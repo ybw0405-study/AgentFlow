@@ -112,10 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if gate_consumer is not None:
                 # stop() 会 join 拉取线程，放线程里做，避免阻塞事件循环的收尾
                 await asyncio.to_thread(gate_consumer.stop)
-            if dispatcher._sweep_task is not None:
-                dispatcher._sweep_task.cancel()
-            if dispatcher._gate_task is not None:
-                dispatcher._gate_task.cancel()
+            await dispatcher.shutdown()
             await subworkflow_resolver.aclose()
             # 释放 tool 节点持有的 httpx.AsyncClient（否则每次执行泄漏连接句柄）
             for executor in executors.values():
