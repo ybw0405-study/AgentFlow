@@ -48,7 +48,7 @@ COPY --from=java-build --chown=10001:10001 ${JAR_PATH} /app/app.jar
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
 # ---------- 4. Python 引擎（G15 锁文件 + --require-hashes） ----------
-FROM python:3.13-slim AS python-base
+FROM python:3.15-slim AS python-base
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \
