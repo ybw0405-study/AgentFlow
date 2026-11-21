@@ -195,9 +195,15 @@ class LlmExecutor:
             )
         except TransientNodeError as exc:
             await self._command_failed(ctx, call_id, exc.code)
+            # provider 抛异常时未走到成功/失败结果分支，已 reserve 的 grant 必须在这里
+            # 回冲，否则 pending 永远 > 0，reconcile 跳过，同执行后续节点预算被虚减。
+            if grant is not None and ctx.budget is not None:
+                await ctx.budget.settle(ctx.execution_id, grant, 0)
             raise
         except Exception as exc:  # provider 未分类异常按瞬时处理（网络/5xx 类）
             await self._command_failed(ctx, call_id, "LLM-UPSTREAM-001")
+            if grant is not None and ctx.budget is not None:
+                await ctx.budget.settle(ctx.execution_id, grant, 0)
             raise TransientNodeError("LLM-UPSTREAM-001", str(exc)) from exc
 
         if not result.ok:

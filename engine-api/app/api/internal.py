@@ -149,6 +149,7 @@ async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, 
     # AF-6：试跑无论正常结束、超时还是抛异常，都必须强制落终态并清掉 spec。
     # 否则 execution_tracker 会留一条 OPEN，恢复扫描（启动扫描 + 周期 sweep）
     # 会在引擎重启后把它当「崩溃的业务执行」续跑，重复调用模型并重复计费。
+    dispatched = False
     try:
         submitted = await dispatcher.submit(
             ExecuteRequest(
@@ -174,6 +175,10 @@ async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, 
         note = submitted.get("note")
         if isinstance(note, str) and note:
             raise EngineError("EXEC-DISPATCH_REJECTED-001", f"preview was not dispatched: {note}")
+        # 只有真正落库并进入调度才算 dispatched；被拒收的执行没有任何
+        # spec/事件，finalize_preview 会凭空造出一条 CANCELLED + TERMINAL tracker，
+        # 属孤儿数据。未 dispatched 时跳过 finalize。
+        dispatched = True
         finished = await dispatcher.wait(execution_id, body.timeout_ms / 1000)
 
         store = _store(request)
@@ -229,7 +234,8 @@ async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, 
             "trace": trace,
         }
     finally:
-        await dispatcher.finalize_preview(execution_id)
+        if dispatched:
+            await dispatcher.finalize_preview(execution_id)
 
 
 @router.post("/executions/{execution_id}/gates/{node_key}/resolve")

@@ -21,6 +21,7 @@ public class AuditServiceApplication {
                     System.getenv("AF_AUDIT_MYSQL_USER"),
                     env.getProperty("spring.datasource.username"));
             ProductionGuard.requireEnvTrue("AF_MYSQL_USE_TLS");
+            ProductionGuard.requireEnvFalse("AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL");
         });
         app.run(args);
     }

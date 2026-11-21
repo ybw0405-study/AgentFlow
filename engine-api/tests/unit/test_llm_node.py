@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from app import errors as app_errors
 from app.commands.base import CommandResult
 from app.commands.providers.model_capabilities import REASONING_MIN_OUTPUT_TOKENS
 from app.dsl.models import LlmConfig, LlmNode
@@ -53,13 +54,14 @@ class _CapturingProvider(_FixedProvider):
 class _RecordingBudget:
     def __init__(self) -> None:
         self.requested: int | None = None
+        self.settled: list[tuple[int, int]] = []
 
     async def reserve(self, _execution_id: Any, _budget: int, requested: int) -> int:
         self.requested = requested
         return requested
 
-    async def settle(self, _execution_id: Any, _grant: int, _actual: int) -> None:
-        return None
+    async def settle(self, _execution_id: Any, grant: int, actual: int) -> None:
+        self.settled.append((grant, actual))
 
 
 def _node(model: str) -> LlmNode:
@@ -206,3 +208,41 @@ async def test_reasoning_raise_is_included_in_budget_reservation() -> None:
     assert budget.requested is not None
     assert budget.requested >= REASONING_MIN_OUTPUT_TOKENS
     assert provider.max_tokens == REASONING_MIN_OUTPUT_TOKENS
+
+
+class _RaisingProvider:
+    """complete() 抛异常，覆盖 provider 未返回 CommandResult 的失败路径。"""
+
+    name = "openai-compatible"
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    async def complete(self, **_: Any) -> CommandResult:
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_prefix"),
+    [
+        (app_errors.TransientNodeError("LLM-UPSTREAM-001", "boom"), "LLM-UPSTREAM-001"),
+        (RuntimeError("socket reset"), "LLM-UPSTREAM-001"),
+    ],
+)
+async def test_settles_grant_when_provider_raises(
+    error: BaseException, expected_prefix: str
+) -> None:
+    """provider 抛异常时也必须回冲 grant，否则 pending>0 让 reconcile 永久跳过。"""
+    budget = _RecordingBudget()
+    ctx = _ctx([])
+    ctx.policy = Policy(token_budget=10_000)
+    ctx.budget = budget  # type: ignore[assignment]
+    executor = LlmExecutor({"openai-compatible": _RaisingProvider(error)})
+
+    with pytest.raises((app_errors.TransientNodeError, RuntimeError)) as exc:
+        await executor.execute(_node("deepseek-chat"), ctx)
+
+    assert expected_prefix in str(exc.value)
+    assert budget.requested is not None
+    # 关键断言：异常路径用 0 结算，且只结算一次
+    assert budget.settled == [(budget.requested, 0)]

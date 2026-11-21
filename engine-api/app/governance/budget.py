@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 INFLIGHT_TTL_SECONDS = 7 * 24 * 3600
 """在途计数的兜底过期时间：正常由 settle 递减，异常残留时不要让 key 永久驻留。"""
 
+BUDGET_KEY_TTL_SECONDS = 7 * 24 * 3600
+"""预算主键的兜底过期时间：执行终态后该键已无消费者，避免每个执行留下永久键。
+
+与 INFLIGHT_TTL 同为 7 天：远大于任何执行的合法窗口，正常执行不会活到 TTL 到期；
+只在「执行永远没走到终态」的异常残留下才由它兜底回收。每次 reserve/settle 都会
+刷新，等价于滑动过期——长执行只要还在推进就不会因 TTL 到期而丢预算。
+"""
+
 
 class BudgetLedger:
     def __init__(self, redis: aioredis.Redis, prefix: str = "af:budget") -> None:
@@ -59,6 +67,7 @@ class BudgetLedger:
                     grant = min(requested, remaining)
                     pipe.multi()
                     pipe.set(key, used + grant)
+                    pipe.expire(key, BUDGET_KEY_TTL_SECONDS)
                     pipe.incr(inflight)
                     pipe.expire(inflight, INFLIGHT_TTL_SECONDS)
                     await pipe.execute()
@@ -131,6 +140,7 @@ class BudgetLedger:
                         if used > 0:
                             pipe.multi()
                             pipe.set(key, used)
+                            pipe.expire(key, BUDGET_KEY_TTL_SECONDS)
                             await pipe.execute()
                         else:
                             await pipe.unwatch()
@@ -141,6 +151,7 @@ class BudgetLedger:
                         return 0
                     pipe.multi()
                     pipe.set(key, used)
+                    pipe.expire(key, BUDGET_KEY_TTL_SECONDS)
                     await pipe.execute()
                     return reserved - used
                 except WatchError:

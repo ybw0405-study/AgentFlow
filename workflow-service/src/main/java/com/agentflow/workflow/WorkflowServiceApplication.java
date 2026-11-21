@@ -27,6 +27,7 @@ public class WorkflowServiceApplication {
             ProductionGuard.requireTrue("agentflow.jwt.cookie-secure",
                     Boolean.parseBoolean(env.getProperty("agentflow.jwt.cookie-secure", "false")));
             ProductionGuard.requireEnvTrue("AF_MYSQL_USE_TLS");
+            ProductionGuard.requireEnvFalse("AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL");
         });
         app.run(args);
     }

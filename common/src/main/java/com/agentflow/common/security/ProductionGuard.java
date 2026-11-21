@@ -104,6 +104,18 @@ public final class ProductionGuard {
     }
 
     /**
+     * 生产环境要求指定环境变量明确为 false（如 MySQL 的 allowPublicKeyRetrieval）。
+     * 未设置视为 false（安全默认）；仅当显式设为 true 时拒绝启动。
+     */
+    public static void requireEnvFalse(String name) {
+        String value = System.getenv(name);
+        if (productionEnabled() && Boolean.parseBoolean(value)) {
+            throw new IllegalStateException(
+                    "FAIL-FAST: " + name + " must be false/absent in production");
+        }
+    }
+
+    /**
      * AF-3：网关→引擎凭据必须与控制面凭据分离。只做「注入」而不强制分离的话，
      * 拿到控制面共享令牌的人依然可以绕开网关直连引擎 /internal/**。
      */

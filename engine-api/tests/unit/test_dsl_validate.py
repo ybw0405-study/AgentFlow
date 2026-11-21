@@ -171,6 +171,34 @@ def test_loop_body_can_reference_iteration_variable(settings):
     assert result.ok, [e.model_dump() for e in result.errors]
 
 
+def test_cycle_inside_loop_body_rejected_at_validation(settings):
+    """子图内的环必须在发布期以 DSL-CYCLE-001 拦下，而不是运行期 NODE-INTERNAL。"""
+    dsl = _loop_dsl(
+        body_nodes=[
+            {
+                "key": "body_prep",
+                "type": "transform",
+                "config": {"mappings": [{"target": "vars.pair", "template": "{{ vars.item }}"}]},
+            },
+            {
+                "key": "body_end",
+                "type": "end",
+                "config": {"resultMapping": {"pair": "{{ vars.pair }}"}},
+            },
+        ],
+        # body_end → body_prep 形成环（body_prep → body_end 由默认边隐含）
+        body_edges=[
+            {"from": "body_prep", "to": "body_end"},
+            {"from": "body_end", "to": "body_prep"},
+        ],
+    )
+    result = validate_dsl(dsl, settings)
+    assert not result.ok
+    cycle_errors = [e for e in result.errors if e.code == DSL_CYCLE]
+    assert cycle_errors, [e.model_dump() for e in result.errors]
+    assert any("cycle in subgraph" in e.message for e in cycle_errors)
+
+
 def test_loop_body_unknown_variable_still_rejected(settings):
     dsl = _loop_dsl(
         body_nodes=[
