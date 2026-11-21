@@ -34,9 +34,13 @@ public interface WorkflowVersionMapper {
             + " WHERE definition_id = #{definitionId}")
     int maxVersionNo(@Param("definitionId") String definitionId);
 
-    /** 仅允许更新发布元数据；dsl/checksum 由触发器与不可变约定双重保护（US-01）。 */
-    @Update("UPDATE workflow_version SET published_at = NOW(3), published_by = #{publishedBy}"
-            + " WHERE id = #{id}")
+    /**
+     * 仅更新发布元数据，且只写一次：dsl/checksum 与 immutable 由触发器与不可变约定双重保护
+     * （US-01）。COALESCE 保证重复发布同一版本不会重写 published_at/published_by，
+     * 既保留首次发布历史，也不会撞 V019 的不可变触发器。
+     */
+    @Update("UPDATE workflow_version SET published_at = COALESCE(published_at, NOW(3)),"
+            + " published_by = COALESCE(published_by, #{publishedBy}) WHERE id = #{id}")
     int markPublished(@Param("id") String id, @Param("publishedBy") String publishedBy);
 
     record VersionRow(String id, String definitionId, int versionNo, String dslJson,

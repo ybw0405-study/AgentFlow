@@ -25,10 +25,16 @@ public interface AuditOutboxMapper {
     int enqueue(@Param("id") String id, @Param("tenantId") String tenantId,
                 @Param("eventType") String eventType, @Param("messageJson") String messageJson);
 
+    /**
+     * 多副本捞同一批会重复投递（消费端幂等兜底，但白费一次出网）。
+     * {@code FOR UPDATE SKIP LOCKED} 让拿到锁的副本锁住本批、其它副本跳过已锁行去捞下一批；
+     * 它必须处在事务里才有效（由 {@link AuditOutboxRelay#relay()} 的 {@code @Transactional}
+     * 提供），否则 autocommit 下锁在 SELECT 结束即释放，等于没加。
+     */
     @Select("SELECT id, tenant_id AS tenantId, event_type AS eventType,"
             + " message_json AS messageJson, attempts, next_attempt_at AS nextAttemptAt"
             + " FROM audit_outbox WHERE status = 'PENDING' AND next_attempt_at <= NOW(3)"
-            + " ORDER BY seq LIMIT #{limit}")
+            + " ORDER BY seq LIMIT #{limit} FOR UPDATE SKIP LOCKED")
     List<OutboxRow> due(@Param("limit") int limit);
 
     @Update("UPDATE audit_outbox SET status = 'SENT', attempts = attempts + 1,"

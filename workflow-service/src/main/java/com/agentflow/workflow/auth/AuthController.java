@@ -52,7 +52,7 @@ public class AuthController {
                           @org.springframework.beans.factory.annotation.Value(
                                   "${agentflow.jwt.refresh-ttl-days:14}") long refreshTtlDays,
                           @org.springframework.beans.factory.annotation.Value(
-                                  "${agentflow.demo.enabled:true}") boolean demoEnabled) {
+                                  "${agentflow.demo.enabled:false}") boolean demoEnabled) {
         this.authService = authService;
         this.refreshTokenService = refreshTokenService;
         this.userMapper = userMapper;

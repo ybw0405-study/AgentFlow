@@ -8,7 +8,6 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,12 +34,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final String LOGIN_PATH = "/api/v1/auth/login";
 
-    /** 固定窗口宽度，与 {@code Retry-After} 保持一致。 */
-    private static final long WINDOW_SECONDS = 60;
-
-    /** key 多留一个窗口，避免跨窗口边界时旧计数被立即回收。 */
-    private static final Duration KEY_TTL = Duration.ofSeconds(WINDOW_SECONDS * 2);
-
     /**
      * 计数与过期必须原子完成：分两次调用时若 increment 成功而 expire 失败，
      * key 会永久驻留，逐窗口累积成内存泄漏。
@@ -54,6 +47,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final StringRedisTemplate redis;
     private final int triggerMax;
     private final int loginMax;
+    /** 固定窗口宽度（C-16）：生产由配置注入，与 {@code Retry-After} 保持一致；单测默认 60。 */
+    @Value("${agentflow.rate-limit.trigger-window-seconds:60}")
+    private long triggerWindowSeconds = 60;
+    @Value("${agentflow.rate-limit.login-window-seconds:60}")
+    private long loginWindowSeconds = 60;
 
     public RateLimitFilter(
             StringRedisTemplate redis,
@@ -62,8 +60,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.redis = redis;
         this.triggerMax = triggerMax;
         this.loginMax = loginMax;
-        log.info("rate limit: trigger={}/{}s per user, login={}/{}s per ip",
-                triggerMax, WINDOW_SECONDS, loginMax, WINDOW_SECONDS);
+        log.info("rate limit: trigger={} per user, login={} per ip (window from config)",
+                triggerMax, loginMax);
     }
 
     @Override
@@ -84,13 +82,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 ? "ip:" + request.getRemoteAddr()
                 : "user:" + userKey(request);
         int max = isLogin ? loginMax : triggerMax;
-        long window = System.currentTimeMillis() / 1000 / WINDOW_SECONDS;
+        long windowSeconds = isLogin ? loginWindowSeconds : triggerWindowSeconds;
+        long window = System.currentTimeMillis() / 1000 / windowSeconds;
         String key = "af:rate:" + bucket + ":" + window + ":" + subject;
+        // key 多留一个窗口，避免跨窗口边界时旧计数被立即回收
+        long keyTtlSeconds = windowSeconds * 2;
 
         long count;
         try {
-            Long c = redis.execute(INCREMENT_SCRIPT, List.of(key),
-                    String.valueOf(KEY_TTL.toSeconds()));
+            Long c = redis.execute(INCREMENT_SCRIPT, List.of(key), String.valueOf(keyTtlSeconds));
             count = c == null ? 0L : c;
         } catch (RuntimeException e) {
             // 限流依赖 Redis：故障时放行优先于误伤正常请求，但必须留痕，
@@ -107,11 +107,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             if (count == max + 1L) {
                 log.warn("rate limit exceeded: bucket={} subject={} max={} window={}s"
                                 + " further rejections in this window are not logged",
-                        bucket, subject, max, WINDOW_SECONDS);
+                        bucket, subject, max, windowSeconds);
             }
-            response.setHeader("Retry-After", String.valueOf(WINDOW_SECONDS));
+            response.setHeader("Retry-After", String.valueOf(windowSeconds));
             FilterExceptionWriter.write(response, ErrorCode.AGT_RATE_LIMIT_001,
-                    "rate limit exceeded: " + max + " requests per " + WINDOW_SECONDS + "s");
+                    "rate limit exceeded: " + max + " requests per " + windowSeconds + "s");
             return;
         }
         chain.doFilter(request, response);

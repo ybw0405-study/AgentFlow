@@ -169,7 +169,14 @@ public class WorkflowService {
                 UUID.randomUUID().toString(), id, versionNo,
                 writeJson(result.normalizedDsl()), result.checksum(),
                 null, null, tenant.userId(), null);
-        versions.insert(row);
+        try {
+            versions.insert(row);
+        } catch (DuplicateKeyException e) {
+            // 两个请求同时算到同一个 maxVersionNo+1：uq_wv_def_ver 撞唯一键。
+            // 与 create() 一致，转成明确的 409 而不是漏到外层变成 500。
+            throw new BusinessException(ErrorCode.COM_CONFLICT_001,
+                    "concurrent freeze detected, please retry");
+        }
         audit.publish(AuditMessage.of(tenant.tenantId(), null, tenant.userId(),
                 "WORKFLOW_VERSION_FROZEN",
                 Map.of("definitionId", id, "versionNo", versionNo)));

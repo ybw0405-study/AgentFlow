@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -19,6 +21,7 @@ public class ConnectorRepository {
 
     private static final RowMapper<ConnectorRow> CONNECTOR = ConnectorRepository::mapConnector;
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Logger log = LoggerFactory.getLogger(ConnectorRepository.class);
 
     private final JdbcTemplate jdbc;
 
@@ -42,6 +45,12 @@ public class ConnectorRepository {
             String raw = rs.getString("config_json");
             config = raw == null ? MAPPER.createObjectNode() : MAPPER.readTree(raw);
         } catch (Exception e) {
+            // 脏 config_json 静默变空配置会把排查方向引向"没配"，至少留一条告警（C-13）。
+            // 仍返回空对象以免一条脏数据让整个列表接口 500。
+            String raw = rs.getString("config_json");
+            log.warn("invalid config_json for connector {}; treating as empty: {}",
+                    rs.getString("id"),
+                    raw == null ? "<null>" : raw.substring(0, Math.min(200, raw.length())));
             config = MAPPER.createObjectNode();
         }
         return new ConnectorRow(rs.getString("id"), rs.getString("tenant_id"),
@@ -93,19 +102,16 @@ public class ConnectorRepository {
     public void upsertCredential(String id, String connectorId, String tenantId, byte[] secret,
                                  byte[] oauthToken, String keyId, Timestamp expiresAt,
                                  String scope) {
-        List<String> existing = jdbc.queryForList(
-                "SELECT id FROM tool_credential WHERE connector_id = ?", String.class, connectorId);
-        if (existing.isEmpty()) {
-            jdbc.update("INSERT INTO tool_credential (id, connector_id, tenant_id,"
-                            + " encrypted_secret, oauth_token_enc, key_id, expires_at, scope)"
-                            + " VALUES (?,?,?,?,?,?,?,?)",
-                    id, connectorId, tenantId, secret, oauthToken, keyId, expiresAt, scope);
-        } else {
-            jdbc.update("UPDATE tool_credential SET encrypted_secret = ?, oauth_token_enc = ?,"
-                            + " key_id = ?, expires_at = ?, scope = ?, updated_at = NOW(3)"
-                            + " WHERE connector_id = ?",
-                    secret, oauthToken, keyId, expiresAt, scope, connectorId);
-        }
+        // 单条 UPSERT 替代 SELECT-then-INSERT：并发 authorize + OAuth callback 不再
+        // 双双通过存在性检查后撞唯一键 uq_tcr_conn(connector_id) 抛 500（C-14）。
+        jdbc.update("INSERT INTO tool_credential (id, connector_id, tenant_id,"
+                        + " encrypted_secret, oauth_token_enc, key_id, expires_at, scope)"
+                        + " VALUES (?,?,?,?,?,?,?,?)"
+                        + " ON DUPLICATE KEY UPDATE encrypted_secret = VALUES(encrypted_secret),"
+                        + " oauth_token_enc = VALUES(oauth_token_enc), key_id = VALUES(key_id),"
+                        + " expires_at = VALUES(expires_at), scope = VALUES(scope),"
+                        + " updated_at = NOW(3)",
+                id, connectorId, tenantId, secret, oauthToken, keyId, expiresAt, scope);
     }
 
     public Optional<CredentialRow> findCredential(String connectorId) {

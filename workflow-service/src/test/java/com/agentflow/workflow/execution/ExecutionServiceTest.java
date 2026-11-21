@@ -46,7 +46,8 @@ class ExecutionServiceTest {
         CanaryService canary = Mockito.mock(CanaryService.class);  // route() 默认 null → 走 current
         usage = Mockito.mock(UsageService.class);
         service = new ExecutionService(executions, definitions, versions, engine, audit, canary,
-                usage, 50_000, 50, 120_000, "mock.search,mock.echo,mock.flaky");
+                usage, Mockito.mock(BudgetLedgerMapper.class), 50_000, 50, 120_000,
+                "mock.search,mock.echo,mock.flaky");
     }
 
     private void givenDefinitionAndVersion() {

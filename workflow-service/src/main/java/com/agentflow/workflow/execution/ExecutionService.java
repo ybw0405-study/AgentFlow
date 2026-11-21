@@ -36,6 +36,7 @@ public class ExecutionService {
     private final AuditPublisher audit;
     private final CanaryService canary;
     private final UsageService usage;
+    private final BudgetLedgerMapper budgets;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final int defaultTokenBudget;
     private final int defaultMaxSteps;
@@ -47,7 +48,7 @@ public class ExecutionService {
     public ExecutionService(
             WorkflowExecutionMapper executions, WorkflowDefinitionMapper definitions,
             WorkflowVersionMapper versions, EngineGatewayClient engine, AuditPublisher audit,
-            CanaryService canary, UsageService usage,
+            CanaryService canary, UsageService usage, BudgetLedgerMapper budgets,
             @Value("${agentflow.tenant.default-token-budget}") int defaultTokenBudget,
             @Value("${agentflow.tenant.default-max-steps}") int defaultMaxSteps,
             @Value("${agentflow.tenant.default-deadline-ms}") int defaultDeadlineMs,
@@ -59,6 +60,7 @@ public class ExecutionService {
         this.audit = audit;
         this.canary = canary;
         this.usage = usage;
+        this.budgets = budgets;
         this.defaultTokenBudget = defaultTokenBudget;
         this.defaultMaxSteps = defaultMaxSteps;
         this.defaultDeadlineMs = defaultDeadlineMs;
@@ -129,6 +131,19 @@ public class ExecutionService {
                             "maxConcurrent", def.maxConcurrent())));
             throw new BusinessException(ErrorCode.WF_CONCURRENCY_001,
                     "workflow already has " + def.maxConcurrent() + " running executions");
+        }
+        // 月度额度硬约束（P1-9）：budget_ledger 不再只是展示用的记账本。
+        // 账期口径与 UsageService / 投影器一致：Asia/Shanghai 的 yyyy-MM。
+        String period = java.time.YearMonth.now(java.time.ZoneId.of("Asia/Shanghai")).toString();
+        var ledger = budgets.find(tenantId, period).orElse(null);
+        if (ledger != null
+                && ((ledger.limitCalls() > 0 && ledger.callsUsed() >= ledger.limitCalls())
+                || (ledger.limitTokens() > 0 && ledger.tokensUsed() >= ledger.limitTokens()))) {
+            audit.publish(AuditMessage.of(tenantId, null, userId, "EXECUTION_REJECTED",
+                    Map.of("definitionId", definitionId, "reason", "BUDGET_EXCEEDED",
+                            "period", period, "callsUsed", ledger.callsUsed(),
+                            "limitCalls", ledger.limitCalls())));
+            throw new BusinessException(ErrorCode.WF_BUDGET_001, "monthly budget exhausted");
         }
         // 灰度分流（P1）：未显式指定版本时，按 canary 配置路由到新旧版本；审计留痕。
         String effectiveVersionId = versionId;

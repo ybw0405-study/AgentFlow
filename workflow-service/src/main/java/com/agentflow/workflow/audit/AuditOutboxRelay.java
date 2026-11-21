@@ -33,6 +33,9 @@ public class AuditOutboxRelay {
     private final int degradeAfter;
     private final int deadAfter;
     private final ObjectMapper json = new ObjectMapper();
+    /** 已送达 outbox 的保留天数（CON-4）：由配置注入，不再写死 7；单测默认 7。 */
+    @Value("${agentflow.audit.purge-days:7}")
+    private int purgeDays = 7;
 
     public AuditOutboxRelay(AuditOutboxMapper outbox, AuditDelivery delivery,
                             @Value("${agentflow.audit.degrade-after-attempts:3}")
@@ -146,7 +149,7 @@ public class AuditOutboxRelay {
     /** 已投递行定期清理：outbox 只是投递队列，审计本体在 audit_event。DEAD 行不清理。 */
     @Scheduled(cron = "${agentflow.audit.purge-cron:0 30 4 * * *}")
     public void purge() {
-        int days = 7;
+        int days = Math.max(1, purgeDays);
         int total = 0;
         while (true) {
             int removed = outbox.purgeSent(days, 5_000);
