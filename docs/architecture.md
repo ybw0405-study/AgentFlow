@@ -980,7 +980,7 @@ stateDiagram-v2
 ## 9. 可观测性
 
 - **trace**：W3C `traceparent` 前端 → gateway → workflow-service → engine → Provider；所有日志行含 `traceId`、`executionId`、`tenantId`（MDC / structlog contextvars）。
-- **指标**（Prometheus）：`af_execution_total{status}`、`af_execution_duration_seconds`（直方图）、`af_node_failed_total{nodeType,errorCode}`、`af_event_append_latency_ms`、`af_replay_total`、`af_token_used_total{tenantId}`、`af_lease_contention_total`、`af_budget_stop_total`。
+- **指标**（Prometheus）：`af_execution_total{status}`、`af_execution_duration_seconds`（直方图）、`af_node_failed_total{nodeType,errorCode}`、`af_replay_total`、`af_lease_contention_total`、`af_budget_stop_total`。
 - **日志红线**：禁止出现原始 PII、提示词全文、用户问题原文、连接器密钥、DSN（CI grep + Code Review 双保险）。PII 日志只记类别与数量。
 
 ---
@@ -1059,7 +1059,7 @@ AgentFlow/
 │       ├── main.py, config.py, errors.py
 │       ├── api/            # internal.py, problems.py
 │       ├── dsl/            # models.py, validate.py, compile.py
-│       ├── engine/         # scheduler.py, executor.py, statemachine.py, state.py,
+│       ├── engine/         # scheduler.py, executor.py, state.py,
 │       │                   # dispatcher.py, replay.py, requests.py, lease.py
 │       ├── nodes/          # registry.py, base.py, subgraph.py, subworkflow_resolver.py
 │       │                   # start/end/llm/tool/condition/loop/parallel/transform/

@@ -12,6 +12,19 @@ cd frontend; npm install; cd ..
 日常开发用 `./scripts/start-dev.ps1`（WSL2 用 `bash scripts/start-dev.sh`）拉起基础设施与全部服务，
 `./scripts/stop-dev.ps1` 停止。脚本只处理本仓库的进程，不会动同机其他项目。
 
+## 分支与评审（强制）
+
+仓库早期历史是集中式导入（108 个提交全部直推 `main`、无 PR、无 review），这段历史不可追溯，
+**也不代表推荐流程**。自此之后所有变更必须走可评审单元：
+
+- 从 `main` 切短生命周期分支（`fix/<scope>-<简述>` / `feat/<scope>-<简述>`），一个 PR 只表达一个意图；
+  格式化、依赖升级与业务改动分开提交，便于二分定位。
+- `main` 启用分支保护：required status checks 指向 `java-ci` / `python-ci` / `frontend-ci` / `contract-drift`，
+  禁 force push、要求线性历史；涉及契约或全栈行为时手动跑 `e2e` 并把结果贴进 PR。
+- 涉及数据库迁移、鉴权、跨语言契约、审计表结构的 PR 需第二人复核；单人维护也必须在 PR 描述里写清
+  「验证方式 + 回滚方式」，并附门禁输出与 `git diff --check` 结果。
+- 新增迁移时同步 `db/mysql/grants/least-privilege.sql`，CI 的授权表集合守卫会拦截漏授权。
+
 ## 提交前必须跑门禁
 
 ```powershell

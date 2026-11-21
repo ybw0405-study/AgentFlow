@@ -42,3 +42,16 @@ jobs:
           python-version: '3.13'
       - name: 静态比对 Controller 路由与入库基线
         run: python scripts/check-java-routes.py
+
+  # 迁移新增表若忘记补最小授权，生产首次部署即 permission denied，审计还会静默丢失。
+  # 零依赖静态对账 CREATE TABLE 集合与 GRANT 集合，并校验权限语义（audit_event 只追加）。
+  grant-guard:
+    name: 最小授权脚本与迁移表集合对账
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: 迁移表集合 == grants 表集合（含权限语义）
+        run: python scripts/check-grants.py

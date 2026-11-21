@@ -8,7 +8,7 @@
 [![release](https://img.shields.io/github/v/release/ybw0405-study/AgentFlow)](https://github.com/ybw0405-study/AgentFlow/releases)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-企业级可视化 Agent 工作流编排：画布拖拽编排 DAG（LLM / 工具 / 检索 / 条件 / 循环 / 人工审批），事件溯源执行引擎（崩溃可恢复、副作用恰好一次），全链路治理（租户隔离、预算硬停止、PII 双层脱敏、审计只追加）。
+企业级可视化 Agent 工作流编排：画布拖拽编排 DAG（LLM / 工具 / 检索 / 条件 / 循环 / 人工审批），事件溯源执行引擎（崩溃可恢复、按 callId 幂等去重的 at-least-once 副作用），全链路治理（租户隔离、预算硬停止、PII 双层脱敏、审计只追加）。
 
 ## 架构
 
@@ -33,12 +33,14 @@ flowchart LR
 ```
 
 - **事件即唯一真相**：MySQL 的 execution/node_execution 只是 PG 事件流的查询投影（Projector 轮询 + 游标）。
-- **恰好一次**：Command 与结果成对落事件；`callId = executionId/nodeKey/attempt` 确定性幂等；`aggregate_version` 乐观并发兜底；Redis 租约做冲突降级。
-- **预算硬停止**：发出 Command 前 Redis 预占并把 maxTokens 钳到剩余额度，`tokenUsed ≤ tokenBudget` 恒成立。
+- **幂等与恢复**：Command 与结果成对落事件；`callId = executionId/nodeKey/attempt` 确定性幂等，provider 按 callId 做短期结果缓存、连接器路径由服务端按 callId 去重；`aggregate_version` 乐观并发兜底；Redis 租约做冲突降级。外部副作用整体语义仍是 at-least-once（见「已知限制」）。
+- **预算硬停止**：发出 Command 前 Redis 预占并把 maxTokens 钳到剩余额度；结算时**超支追扣**、中文提示词按字符加权估算，避免账本被静默低估。并发分支与上游 usage 延迟下属于尽力钳制，不承诺数学意义上的恒定上界。
 
 ## 功能矩阵
 
-| 能力 | 状态 |
+> 第二列混用了规划期优先级（P0/P1/P2/P3）与验收状态「已实现」，为避免误读特此说明：**本表所有条目当前均已落地**，P0~P3 是当初的排期优先级、不是完成度。其中「灰度发布、故障注入测试套件」有 `e2e/test_canary_release.py` 用例，但尚未做生产灰度演练。
+
+| 能力 | 优先级 / 状态 |
 |---|---|
 | 工作流 CRUD / 草稿 / 版本冻结（不可变+checksum）/ 发布 / 回滚 | P0 |
 | 画布编辑器（Vue Flow，9 类节点、分支连线、DSL 双向、自动保存、校验内联） | P0 |
@@ -197,7 +199,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板与新建节点默认用非推理的 `deepseek-chat`。
 - 模型输入框下面会带能力标签（推理型 / 长上下文 / 支持 JSON / 图像输入）与上游给的上下文长度、输出上限。标签优先取上游 `/models` 的字段；上游只回 id 时按模型名推断并标「推断」，不硬编码某家某代的能力。选到推理型而 `maxTokens` 偏小时，界面给一个「设为 4096」的一键建议。
 - 走模型连接时，探测结果里的 `context_window` / `max_output_tokens` / `input_modalities` / `supported_parameters` / `effort.supported_levels` 会随模型清单一并写进连接配置（只搬这些白名单字段），画布据此标注能力、不必每次重新出网。连接建得早、库里还没有这份缓存时，界面退回按模型名推断——点一次「拉取模型」即可补齐。
-- 真实模型是**外部非确定性副作用**，崩溃恢复重放可能重复计费（at-least-once）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
+- 真实模型是**外部非确定性副作用**：callId 短期缓存与服务端去重可以挡住绝大多数重放，但缓存过期、跨进程崩溃或下游自身不幂等时仍可能重复计费（**整体语义是 at-least-once，不是恰好一次**）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
 - `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
 
 ## 文档检索（知识库）
@@ -239,20 +241,22 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 画布工具条「触发」进入该工作流的触发页（`/workflows/:id/triggers`）。触发跑的是**已发布版本**，与画布草稿无关；没发布就先「冻结并发布」，否则触发会以 409 结束。
 
 ```bash
-# Webhook：令牌即凭据，签名可选但建议带
+# Webhook：令牌即凭据；带签名时时间戳必填且参与 HMAC
+TS=$(date +%s)
+BODY='{"question":"退款怎么申请"}'
 curl -X POST 'http://127.0.0.1:8080/api/v1/hooks/<token>' \
   -H 'Content-Type: application/json' \
-  -H "X-AF-Signature: sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | cut -d' ' -f2)" \
-  -H "X-AF-Timestamp: $(date +%s)" \
+  -H "X-AF-Signature: sha256=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | cut -d' ' -f2)" \
+  -H "X-AF-Timestamp: $TS" \
   -H 'X-AF-Idempotency-Key: order-2024-0001' \
-  -d '{"question":"退款怎么申请"}'
+  -d "$BODY"
 ```
 
 | 项 | 语义 |
 |---|---|
 | `token` | 24 字节 Base64URL，写在路径里；轮换后旧链接立即失效 |
-| `X-AF-Signature` | `sha256=HMAC_SHA256(secret, 原始请求体)`；带上才校验，比较用常量时间 |
-| `X-AF-Timestamp` | 秒级时间戳，与服务器偏差超过 300 秒直接拒（防重放） |
+| `X-AF-Signature` | `sha256=HMAC_SHA256(secret, timestamp + "." + 原始请求体)`；带上才校验，比较用常量时间 |
+| `X-AF-Timestamp` | 秒级时间戳；**带签名时必填**，偏差超过 300 秒直接拒，且参与 HMAC——剥离时间戳必然验签失败（防重放） |
 | `X-AF-Idempotency-Key` | 同一 key 重复投递只执行一次，第二次回 `idempotentReplay: true` |
 | 限流 | 每个触发入口 60 次/分钟（Redis 固定窗口），超限 `AGT-RATE_LIMIT-001` |
 | 停用 | 触发页关掉「启用」后入口返回 409，不再执行 |
@@ -414,7 +418,7 @@ git add docs/openapi/java-*.json
 |---|---|---|
 | `AF_JWT_SECRET` | dev-only-… | JWT HS256 密钥（≥32 字节），三端共享 |
 | `AF_INTERNAL_TOKEN` | dev-internal-token | 服务间内部令牌（/engine/** 与引擎入站） |
-| `AF_MYSQL_HOST/PORT/USER/PASSWORD` | 127.0.0.1:3306 root/root | 业务库 |
+| `AF_MYSQL_HOST/PORT/USER/PASSWORD` | 127.0.0.1:**3307** root/root | 业务库（三个服务 `application.yml` 默认 `${AF_MYSQL_PORT:3307}`，不要按 3306 配置） |
 | `AF_AUDIT_MYSQL_USER` | af_audit | 审计写入账号（仅 SELECT/INSERT audit_event） |
 | `AF_AUDIT_SINK` | auto | 审计出口：`auto`（`AF_MQ_ENABLED=true` 走 MQ，否则直写）/ `mq` / `direct` |
 | `AF_AUDIT_RELAY_INTERVAL_MS` / `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS` | 2000 / 3 | outbox 重投扫描间隔、连续失败多少次后降级直写（两者都不可达才记 `audit LOST`） |
@@ -430,9 +434,9 @@ git add docs/openapi/java-*.json
 | `AF_CRED_MASTER_KEY_PREVIOUS` | 空 | 轮换窗口内的旧主密钥（base64，逗号分隔），用于解密历史密文；全量重加密后清空 |
 | `AF_PRODUCTION` | false | 生产守护开关。满足任一条件即进入守护：`AF_PRODUCTION=true`、`-Dagentflow.production=true`、`AF_ENV=production/staging`、`SPRING_PROFILES_ACTIVE` 含 `prod`。守护期内若仍用 dev 默认密钥/弱口令、未开 DB TLS 或未设 Cookie Secure，启动即 fail-fast；`AF_ENV=dev` 可显式退出守护 |
 | `AF_MYSQL_USE_TLS` / `AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL` | false / true | 数据库 TLS；生产守护要求前者为 true，并应显式关闭后者 |
-| `AF_SANDBOX_ALLOW_HTTP` / `AF_SANDBOX_ALLOW_LOOPBACK` | false / false | 沙箱是否允许明文 http / 环回地址（仅本地调试开启） |
+| `AF_SANDBOX_ALLOW_HTTP` / `AF_SANDBOX_ALLOW_LOOPBACK` | false / false | 沙箱是否允许明文 http / 环回地址（仅本地调试开启）。注意开启后实现仍只放行 **loopback 字面量**的 http 目标，非本机域名/IP 依旧拒绝（`SandboxPolicy`） |
 | `AF_MONTHLY_CALL_LIMIT` / `AF_MONTHLY_TOKEN_LIMIT` | 10000 / 50000 | 成本中心月度初始限额（子租户沿祖先链取最小） |
-| `AF_DEMO_ACCOUNTS` | true | 登录页是否下发演示账号提示；生产守护开启时恒不下发 |
+| `AF_DEMO_ACCOUNTS` | **false** | 登录页是否下发演示账号提示；默认关闭，本地演示需显式设 true；生产守护开启时恒不下发 |
 | `AF_CHECKPOINT_INTERVAL` | 10 | 每 N 事件一次 CheckpointCreated |
 | `AF_GATE_SWEEP_INTERVAL_S` | 15 | human_gate 超时裁决扫描间隔 |
 | `AF_LLM_BASE_URL` | 空 | 真实模型端点（OpenAI 兼容，如 `https://api.deepseek.com/v1`）；空则节点报 `LLM-NOT_CONFIGURED-001` |
