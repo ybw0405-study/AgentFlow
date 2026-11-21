@@ -1627,6 +1627,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "hasSecret": {
+            "type": "boolean"
+          },
           "id": {
             "type": "string"
           },
