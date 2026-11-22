@@ -23,8 +23,8 @@
   * 本文件为新增脚手架；**不碰 AgentFlow 任何业务文件**，不改现有源码/脚本/配置。
 
 运行：
-  python batch4_e2e_crossprocess.py                        # dry-run（默认，安全）
-  python batch4_e2e_crossprocess.py --execute \
+  python drill_e2e_crossprocess.py                        # dry-run（默认，安全）
+  python drill_e2e_crossprocess.py --execute \
       --gateway-url http://127.0.0.1:8080 --engine-url http://127.0.0.1:8000 \
       --internal-token <token> --tenant <uuid> --report out.json
 """
@@ -79,7 +79,7 @@ class Result:
     def dump(self, path: str | None) -> dict:
         passed = sum(1 for c in self.checks if c["ok"])
         report = {
-            "kind": "batch4-crossprocess-e2e",
+            "kind": "drill-crossprocess-e2e",
             "project": "AgentFlow",
             "executed": self.execute,
             "note": "骨架自检；本机未接真实服务，未产生真实 e2e 记录" if not self.execute

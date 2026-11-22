@@ -16,9 +16,9 @@
 #   * **不碰 AgentFlow 任何业务文件**；本文件为新增脚手架，不改现有脚本/配置。
 #
 # 运行（Windows Git Bash）：
-#   bash batch4_fault_injection.sh redis-halfopen                    # dry-run
-#   bash batch4_fault_injection.sh mq-backlog --apply --target agentflow-rmq-broker
-#   bash batch4_fault_injection.sh rolling-restart --apply --target agentflow-engine
+#   bash drill_fault_injection.sh redis-halfopen                    # dry-run
+#   bash drill_fault_injection.sh mq-backlog --apply --target agentflow-rmq-broker
+#   bash drill_fault_injection.sh rolling-restart --apply --target agentflow-engine
 # =============================================================================
 set -euo pipefail
 
@@ -69,7 +69,7 @@ case "$case_name" in
     say "  - /internal/health readiness 是否探 Redis 并返回 503（AF-8，LB 摘除）"
     say "  - 不出现误导性 'worker crashed' 刷屏"
     say "恢复：DEBUG SLEEP 到期 / network connect / 删除 iptables 规则"
-    say "判据：接管时延 < SLO（见 batch4_slo_alerts.yaml）；无永久僵死执行；恢复后 PING 通。"
+    say "判据：接管时延 < SLO（见 drill_slo_alerts.yaml）；无永久僵死执行；恢复后 PING 通。"
     ;;
 
   mq-backlog)
@@ -105,7 +105,7 @@ case "$case_name" in
     ;;
 
   *)
-    say "用法: bash batch4_fault_injection.sh {redis-halfopen|mq-backlog|rolling-restart} [--apply] [--target NAME] [--duration N]"
+    say "用法: bash drill_fault_injection.sh {redis-halfopen|mq-backlog|rolling-restart} [--apply] [--target NAME] [--duration N]"
     exit 2
     ;;
 esac
