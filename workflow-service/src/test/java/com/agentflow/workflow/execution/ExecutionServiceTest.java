@@ -31,6 +31,7 @@ class ExecutionServiceTest {
     private EngineGatewayClient engine;
     private AuditPublisher audit;
     private UsageService usage;
+    private ExecutionSlotClaimer slotClaimer;
     private ExecutionService service;
 
     private final TenantInfo editor = new TenantInfo("space-1", "user-1", "EDITOR");
@@ -45,8 +46,11 @@ class ExecutionServiceTest {
         audit = Mockito.mock(AuditPublisher.class);
         CanaryService canary = Mockito.mock(CanaryService.class);  // route() 默认 null → 走 current
         usage = Mockito.mock(UsageService.class);
+        // 用真实的 claimer 接同一组 mock mapper：既保留 insert/countActive 的断言，
+        // 又实际覆盖短事务领取逻辑（lock → 重查幂等 → count → insert）。
+        slotClaimer = new ExecutionSlotClaimer(definitions, executions);
         service = new ExecutionService(executions, definitions, versions, engine, audit, canary,
-                usage, Mockito.mock(BudgetLedgerMapper.class), 50_000, 50, 120_000,
+                usage, Mockito.mock(BudgetLedgerMapper.class), slotClaimer, 50_000, 50, 120_000,
                 "mock.search,mock.echo,mock.flaky");
     }
 
@@ -199,6 +203,52 @@ class ExecutionServiceTest {
         verify(audit).publish(captor.capture());
         assertEquals("EXECUTION_REJECTED", captor.getValue().eventType());
         assertEquals("CONCURRENCY_LIMIT", captor.getValue().payloadRedacted().get("reason"));
+    }
+
+    @Test
+    void concurrencyRaceClosedWhenSlotTakenBetweenDoorCheckAndClaim() {
+        // 竞态重现：门口 countActive 看到 0（放行），等锁期间别的派发占满，
+        // claimer 锁内重数变成 2（=max）。必须在 insert 前以 WF_CONCURRENCY_001 收口。
+        when(definitions.findByIdAndTenant("d1", "space-1"))
+                .thenReturn(new WorkflowDefinitionMapper.DefinitionRow(
+                        1L, "d1", "space-1", "wf", null, "PUBLISHED", "v1", 2, "{}", null,
+                        "user-1", null, null));
+        when(versions.findById("v1")).thenReturn(new WorkflowVersionMapper.VersionRow(
+                "v1", "d1", 1, "{\"dslVersion\":\"1.0\"}", "c", null, null, "user-1", null));
+        when(executions.countActive("d1")).thenReturn(0, 2);
+
+        var ex = assertThrows(BusinessException.class, () -> service.trigger(
+                editor, "d1", null, "idem-12345678", Map.of(), null, "trace-1"));
+
+        assertEquals(ErrorCode.WF_CONCURRENCY_001, ex.errorCode());
+        // 串行化点必须被走到：同一 definition 的派发在定义行锁上排队。
+        verify(definitions).lockForUpdate("d1");
+        verify(executions, never()).insert(any());
+        verify(engine, never()).submitExecution(any());
+        var captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(audit).publish(captor.capture());
+        assertEquals("CONCURRENCY_LIMIT", captor.getValue().payloadRedacted().get("reason"));
+    }
+
+    @Test
+    void claimerReplaysSameKeyInsertedWhileWaitingForLock() {
+        // 等锁期间同幂等键已被插入：claimer 锁内重查幂等命中，不得重复 insert/派发。
+        givenDefinitionAndVersion();  // maxConcurrent=0
+        var existing = new WorkflowExecutionMapper.ExecutionRow(
+                7L, "exec-other", "d1", "v1", "space-1", "user-1", "PENDING",
+                "idem-12345678", "t", 8000, 30, null, 0, 0, null, null, null, null);
+        // 门口那次为 null（放行），claimer 锁内重查命中已存在的行。
+        when(executions.findByIdempotency("space-1", "idem-12345678"))
+                .thenReturn(null, existing);
+
+        var result = service.trigger(editor, "d1", null, "idem-12345678",
+                Map.of(), null, "trace-1");
+
+        assertTrue(result.idempotentReplay());
+        assertEquals("exec-other", result.executionId());
+        verify(definitions).lockForUpdate("d1");
+        verify(executions, never()).insert(any());
+        verify(engine, never()).submitExecution(any());
     }
 
     @Test

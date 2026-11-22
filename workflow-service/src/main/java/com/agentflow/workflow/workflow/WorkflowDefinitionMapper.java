@@ -27,6 +27,15 @@ public interface WorkflowDefinitionMapper {
             + " WHERE id = #{id} AND tenant_id = #{tenantId} AND deleted_at IS NULL")
     DefinitionRow findByIdAndTenant(@Param("id") String id, @Param("tenantId") String tenantId);
 
+    /**
+     * 并发派发的串行化点：锁住定义行，使同一工作流的并发派发排队。
+     *
+     * <p>必须在事务内调用（由 {@code ExecutionSlotClaimer} 的 {@code @Transactional} 保证），
+     * 后到者在行锁上等待，拿到锁时前一事务已提交，随后的 count + insert 才是原子的。
+     */
+    @Select("SELECT id FROM workflow_definition WHERE id = #{id} FOR UPDATE")
+    String lockForUpdate(@Param("id") String id);
+
     @Select("<script>"
             + "SELECT seq, id, tenant_id AS tenantId, name, description, status,"
             + " current_version_id AS currentVersionId, max_concurrent AS maxConcurrent,"

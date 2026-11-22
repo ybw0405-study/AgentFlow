@@ -12,6 +12,7 @@ import com.agentflow.connector.crypto.CredentialCipher;
 import com.agentflow.connector.domain.ConnectorRepository;
 import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.domain.ConnectorRepository.CredentialRow;
+import com.agentflow.connector.tenant.SelfTenantTreePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -100,7 +101,7 @@ class ConnectorLlmTest {
         doAnswer(i -> null).when(ops).set(anyString(), anyString(), any(Duration.class));
 
         invoker = new ConnectorInvoker(repo, new CredentialCipher(KEY), redis,
-                new SandboxPolicy(true, true));
+                new SandboxPolicy(true, true), new SelfTenantTreePort());
     }
 
     @AfterEach

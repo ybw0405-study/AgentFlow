@@ -87,6 +87,26 @@ jobs:
               if re.search(r'\|\|\s*true', text):
                   errors.append(f'{path}: 存在恒真兜底（禁止绕过门禁）')
 
+          # AF-P2-9：Dockerfile 的基础镜像必须全部按 digest 固定（含构建期 ARG 注入的 python）。
+          dockerfile = Path('Dockerfile').read_text(encoding='utf-8')
+          if 'ARG PYTHON_BASE_DIGEST' not in dockerfile:
+              errors.append('Dockerfile: 缺少 PYTHON_BASE_DIGEST 构建参数声明')
+          for line in dockerfile.splitlines():
+              stripped = line.strip()
+              if not stripped.startswith('FROM '):
+                  continue
+              ref = stripped.split()[1]
+              if ref in ('java-base', 'python-base'):
+                  continue
+              # python 基础镜像走 ARG 注入真实 digest（release.yml 构建期解析），
+              # 常量 digest 与其它镜像走字面 @sha256: 校验。
+              if ref == 'python:3.13-slim@${PYTHON_BASE_DIGEST}':
+                  continue
+              if '@sha256:' not in ref:
+                  errors.append(f'Dockerfile: 基础镜像未按 digest 固定: {ref}')
+          if 'FROM python:3.13-slim@${PYTHON_BASE_DIGEST}' not in dockerfile:
+              errors.append('Dockerfile: python 基础镜像必须写为 python:3.13-slim@${PYTHON_BASE_DIGEST}')
+
           compose = yaml.safe_load(Path('ops/docker-compose.infra.yml').read_text(encoding='utf-8'))
           for name, service in (compose.get('services') or {}).items():
               image = service.get('image', '')

@@ -11,6 +11,7 @@ import com.agentflow.connector.crypto.CredentialCipher;
 import com.agentflow.connector.domain.ConnectorRepository;
 import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.domain.ConnectorRepository.CredentialRow;
+import com.agentflow.connector.tenant.SelfTenantTreePort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -77,7 +78,7 @@ class ConnectorInvokerTest {
         }).when(ops).set(anyString(), anyString(), any(Duration.class));
 
         invoker = new ConnectorInvoker(repo, new CredentialCipher(KEY), redis,
-                new SandboxPolicy(true, true));
+                new SandboxPolicy(true, true), new SelfTenantTreePort());
     }
 
     @AfterEach
@@ -191,6 +192,16 @@ class ConnectorInvokerTest {
         when(repo.findById("missing")).thenReturn(Optional.empty());
         var result = invoker.invoke(new ConnectorInvoker.InvokeCommand("space-a", "missing",
                 "call-7", "run", Map.of(), 5_000, "t"));
+        assertThat(result.errorCode()).isEqualTo("CONN-NOT_FOUND-001");
+    }
+
+    @Test
+    void connectorOutsideCallerTenantChainIsNotFound() throws Exception {
+        // 纵深防御（AF-P2-4）：即使没有 controller 的 visibleEnabled 前置校验，
+        // 直接构造的 InvokeCommand 也不能凭裸 id 调用别的租户的连接器。
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE", "/ok")));
+        var result = invoker.invoke(new ConnectorInvoker.InvokeCommand("space-b", "conn-1",
+                "call-cross", "run", Map.of(), 5_000, "t"));
         assertThat(result.errorCode()).isEqualTo("CONN-NOT_FOUND-001");
     }
 }

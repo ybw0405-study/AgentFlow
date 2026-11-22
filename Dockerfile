@@ -48,7 +48,11 @@ COPY --from=java-build --chown=10001:10001 ${JAR_PATH} /app/app.jar
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
 # ---------- 4. Python 引擎（G15 锁文件 + --require-hashes） ----------
-FROM python:3.13-slim AS python-base
+# AF-P2-9：基础镜像按真实 digest 固定，杜绝 tag 漂移。digest 由 CI/release
+# 在构建时用 `docker buildx imagetools inspect python:3.13-slim` 解析后以
+# --build-arg PYTHON_BASE_DIGEST=sha256:... 注入；本机不缓存镜像时不编造值。
+ARG PYTHON_BASE_DIGEST
+FROM python:3.13-slim@${PYTHON_BASE_DIGEST} AS python-base
 USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \

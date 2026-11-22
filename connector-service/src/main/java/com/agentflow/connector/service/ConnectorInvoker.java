@@ -1,5 +1,7 @@
 package com.agentflow.connector.service;
 
+import com.agentflow.common.tenant.TenantHierarchyResolver;
+import com.agentflow.common.tenant.TenantTreePort;
 import com.agentflow.connector.crypto.CredentialCipher;
 import com.agentflow.connector.domain.ConnectorRepository;
 import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
@@ -61,17 +63,20 @@ public class ConnectorInvoker {
     private final CredentialCipher cipher;
     private final StringRedisTemplate redis;
     private final SandboxPolicy sandbox;
+    private final TenantHierarchyResolver resolver;
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(CONNECT_TIMEOUT)
             .followRedirects(HttpClient.Redirect.NEVER)   // 重定向可绕过白名单，一律不跟
             .build();
 
     public ConnectorInvoker(ConnectorRepository repo, CredentialCipher cipher,
-                            StringRedisTemplate redis, SandboxPolicy sandbox) {
+                            StringRedisTemplate redis, SandboxPolicy sandbox,
+                            TenantTreePort treePort) {
         this.repo = repo;
         this.cipher = cipher;
         this.redis = redis;
         this.sandbox = sandbox;
+        this.resolver = new TenantHierarchyResolver(treePort);
     }
 
     public record InvokeCommand(String tenantId, String connectorId, String callId,
@@ -327,6 +332,13 @@ public class ConnectorInvoker {
             return InvokeResult.failure("CONN-NOT_FOUND-001", false, elapsed(started));
         }
         ConnectorRow connector = found.get();
+        // 纵深防御（AF-P2-4）：即便调用方绕过 controller 直接构造 InvokeCommand，
+        // 也不能凭裸 id 调用不属于自己可见租户链的连接器。沿用与 visibleEnabled
+        // 相同的 chainOf（含祖先共享），因此子租户调用祖先连接器仍合法。
+        if (!resolver.chainOf(cmd.tenantId()).stream()
+                .anyMatch(n -> n.id().equals(connector.tenantId()))) {
+            return InvokeResult.failure("CONN-NOT_FOUND-001", false, elapsed(started));
+        }
         if (!connector.enabled()) {
             return InvokeResult.failure("CONN-DISABLED-001", false, elapsed(started));
         }
