@@ -1,6 +1,6 @@
 name: Release
 
-# G14：tag 驱动的发布，刻意与 CI 分离（CI 的 push 只看 main，推 tag 不会重跑门禁）。
+# tag 驱动的发布，刻意与 CI 分离（CI 的 push 只看 main，推 tag 不会重跑门禁）。
 # 校验与 DocQA release.yml 对齐：tag 严格 vX.Y.Z 格式、真实存在、--verify-tag、
 # tag 指向的 commit 必须是 origin/main 的祖先（git merge-base --is-ancestor）、
 # CHANGELOG 必须有对应版本段；workflow_dispatch 的手工 tag 输入走同一套校验。
@@ -149,7 +149,7 @@ jobs:
           REPO_LOWER="$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           BASE="${REGISTRY}/${REPO_LOWER}"
           : > digests.txt
-          # AF-P2-9：构建期解析 python 基础镜像的真实 digest，绝不写入编造值。
+          # 构建期解析 python 基础镜像的真实 digest，绝不写入编造值。
           PYTHON_BASE_DIGEST="$(docker buildx imagetools inspect python:3.13-slim \
             | awk '/^Digest:[[:space:]]/{print $2; exit}')"
           case "$PYTHON_BASE_DIGEST" in

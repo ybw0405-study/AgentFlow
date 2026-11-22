@@ -25,10 +25,10 @@ jobs:
         with:
           python-version-file: .python-version  # G12
           cache: pip
-          cache-dependency-path: engine-api/requirements.lock.txt  # G20：真实锁文件
+          cache-dependency-path: engine-api/requirements.lock.txt  # 真实锁文件
       - name: install engine (locked + verified hashes)
         working-directory: engine-api
-        # G15：与 python-ci 同一套 --require-hashes 安装口径
+        # 与 python-ci 同一套 --require-hashes 安装口径
         run: |
           pip install --require-hashes -r requirements.lock.txt
           pip install --no-deps -e .
