@@ -117,6 +117,9 @@ class GateDecisionConsumer:
     # ---------- 拉取线程 ----------
 
     def _run(self) -> None:
+        # 路由缺失可能持续很久（首条消息发出前 topic 不存在）：固定间隔重试会刷屏，
+        # 指数退避到 30s 封顶；一旦 poll 成功立即复位，路由恢复后马上回到快节奏。
+        route_delay = self.reconnect_delay_s
         while not self._stop.is_set():
             try:
                 if not self._connected:
@@ -124,16 +127,21 @@ class GateDecisionConsumer:
                     self._connected = True
                     log.info("gate mq consumer connected offsets=%s", self._consumer.offsets())
                 messages = self._consumer.poll()
+                route_delay = self.reconnect_delay_s
             except (RemotingError, OSError, ValueError) as exc:
                 self._connected = False
                 self._stats["lastError"] = str(exc)
                 if _is_route_missing(exc):
-                    # topic 要等第一条消息发出才会被自动创建：这是启动早期的正常状态
-                    log.info("gate mq topic %s not routed yet, retrying", self.topic)
+                    delay = route_delay
+                    route_delay = min(route_delay * 2, 30.0)
+                    log.info(
+                        "gate mq topic %s not routed yet, retrying in %.0fs", self.topic, delay
+                    )
                 else:
+                    delay = self.reconnect_delay_s
                     log.warning("gate mq poll failed, will reconnect: %s", exc)
                 self._consumer.close()
-                self._stop.wait(self.reconnect_delay_s)
+                self._stop.wait(delay)
                 continue
             for message in messages:
                 self._dispatch(message)
