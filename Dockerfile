@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1
+# AF-P2-9：python 基础镜像的 digest 由构建期注入（CI 在 release.yml 里用
+# imagetools inspect 解析真实值）。全局 ARG 必须声明在第一个 FROM 之前，
+# 否则 FROM 行读不到它（stage 内的 ARG 作用域不覆盖 FROM 指令）。
+ARG PYTHON_BASE_DIGEST
 # AgentFlow 多阶段制品（G17）。构建 context = 仓库根目录，.dockerignore 已排除
 # .venv / node_modules / target / .git 等。用法示例：
 #   docker build --target java-service --build-arg JAR_PATH=/out/workflow-service.jar -t af-workflow .
@@ -50,8 +54,8 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 # ---------- 4. Python 引擎（G15 锁文件 + --require-hashes） ----------
 # AF-P2-9：基础镜像按真实 digest 固定，杜绝 tag 漂移。digest 由 CI/release
 # 在构建时用 `docker buildx imagetools inspect python:3.13-slim` 解析后以
-# --build-arg PYTHON_BASE_DIGEST=sha256:... 注入；本机不缓存镜像时不编造值。
-ARG PYTHON_BASE_DIGEST
+# --build-arg PYTHON_BASE_DIGEST=sha256:... 注入。ARG 已在文件顶部全局声明，
+# 此处直接用它拼 FROM；不要在这里重复声明（stage 内 ARG 不作用于 FROM）。
 FROM python:3.13-slim@${PYTHON_BASE_DIGEST} AS python-base
 USER root
 RUN apt-get update \
