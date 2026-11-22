@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
-# AF-P2-9：python 基础镜像的 digest 由构建期注入（CI 在 release.yml 里用
-# imagetools inspect 解析真实值）。全局 ARG 必须声明在第一个 FROM 之前，
-# 否则 FROM 行读不到它（stage 内的 ARG 作用域不覆盖 FROM 指令）。
-ARG PYTHON_BASE_DIGEST
-# AgentFlow 多阶段制品（G17）。构建 context = 仓库根目录，.dockerignore 已排除
+# python 基础镜像按 digest 固定。默认值是 python:3.13-slim 的真实 RepoDigest
+# （本机 docker image inspect 解析），本地构建开箱即用；CI/release 仍会在构建期
+# 用 imagetools inspect 解析最新真实值并经 --build-arg 覆盖。全局 ARG 必须声明在
+# 第一个 FROM 之前，否则 FROM 行读不到它（stage 内的 ARG 作用域不覆盖 FROM 指令）。
+ARG PYTHON_BASE_DIGEST=sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
+# AgentFlow 多阶段制品。构建 context = 仓库根目录，.dockerignore 已排除
 # .venv / node_modules / target / .git 等。用法示例：
 #   docker build --target java-service --build-arg JAR_PATH=/out/workflow-service.jar -t af-workflow .
 #   docker build --target engine-api -t af-engine .
@@ -26,7 +27,7 @@ RUN mkdir -p /out \
     done
 
 # ---------- 2. 前端构建 ----------
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend-build
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS frontend-build
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -51,11 +52,11 @@ ARG JAR_PATH=/out/workflow-service.jar
 COPY --from=java-build --chown=10001:10001 ${JAR_PATH} /app/app.jar
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
-# ---------- 4. Python 引擎（G15 锁文件 + --require-hashes） ----------
-# AF-P2-9：基础镜像按真实 digest 固定，杜绝 tag 漂移。digest 由 CI/release
-# 在构建时用 `docker buildx imagetools inspect python:3.13-slim` 解析后以
-# --build-arg PYTHON_BASE_DIGEST=sha256:... 注入。ARG 已在文件顶部全局声明，
-# 此处直接用它拼 FROM；不要在这里重复声明（stage 内 ARG 不作用于 FROM）。
+# ---------- 4. Python 引擎（锁文件 + --require-hashes） ----------
+# 基础镜像按真实 digest 固定，杜绝 tag 漂移。默认 digest 见文件顶部全局 ARG；
+# CI/release 构建时用 `docker buildx imagetools inspect python:3.13-slim` 解析
+# 最新真实值并以 --build-arg PYTHON_BASE_DIGEST=sha256:... 覆盖。不要在这里重复
+# 声明 ARG（stage 内 ARG 不作用于 FROM）。
 FROM python:3.13-slim@${PYTHON_BASE_DIGEST} AS python-base
 USER root
 RUN apt-get update \
