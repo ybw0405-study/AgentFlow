@@ -17,7 +17,7 @@ ARG PYTHON_BASE_DIGEST=sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf10
 # 基础镜像带 digest 的取值来自本机 docker image inspect 的真实 RepoDigests。
 
 # ---------- 1. Java 构建 ----------
-FROM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS java-build
+FROM maven:3.9-eclipse-temurin-26@sha256:b2c1ad85954592f9928e84327c65201f308ad9b5d8ed7d5b823717c97bf23fbb AS java-build
 WORKDIR /src
 COPY . .
 RUN mkdir -p /out \
@@ -75,7 +75,7 @@ USER 10001:10001
 ENTRYPOINT ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # ---------- 5. 前端静态站 ----------
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS frontend
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS frontend
 COPY --from=frontend-build /src/frontend/dist /usr/share/nginx/html
 USER root
 RUN chown -R 10001:10001 /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run /tmp \
