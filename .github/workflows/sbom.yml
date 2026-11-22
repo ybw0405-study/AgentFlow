@@ -1,6 +1,6 @@
 name: sbom
 
-# G10：SBOM 产物门禁。每次 push main / PR / 手工触发都产出可下载的
+# SBOM 产物门禁。每次 push main / PR / 手工触发都产出可下载的
 # CycloneDX JSON + SPDX JSON，作为 artifact 归档，供发布与回滚追溯。
 # syft 由 anchore/sbom-action 安装（v0.24.3 附注 tag 解引用后的 commit，
 # 已用 git ls-remote 核实 40 位 SHA），不使用浮动 @vN。
