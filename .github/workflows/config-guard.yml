@@ -89,9 +89,17 @@ jobs:
 
           # AF-P2-9：Dockerfile 的基础镜像必须全部按 digest 固定（含构建期 ARG 注入的 python）。
           dockerfile = Path('Dockerfile').read_text(encoding='utf-8')
+          df_lines = dockerfile.splitlines()
+          first_from = next((i for i, l in enumerate(df_lines)
+                             if l.strip().startswith('FROM ')), len(df_lines))
+          # 全局 ARG 必须在第一个 FROM 之前声明；放在 stage 内时 FROM 行读到空值，构建失败。
+          arg_global = any(i < first_from and l.strip() == 'ARG PYTHON_BASE_DIGEST'
+                           for i, l in enumerate(df_lines))
           if 'ARG PYTHON_BASE_DIGEST' not in dockerfile:
               errors.append('Dockerfile: 缺少 PYTHON_BASE_DIGEST 构建参数声明')
-          for line in dockerfile.splitlines():
+          elif not arg_global:
+              errors.append('Dockerfile: ARG PYTHON_BASE_DIGEST 必须声明在第一个 FROM 之前（全局作用域），否则 FROM 行无法解析 digest')
+          for line in df_lines:
               stripped = line.strip()
               if not stripped.startswith('FROM '):
                   continue
