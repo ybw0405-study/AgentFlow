@@ -70,7 +70,7 @@ if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-t
 if ($null -eq $env:AF_JWT_SECRET) { $env:AF_JWT_SECRET = 'dev-only-secret-key-0123456789abcdef' }
 # 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
 if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
-# 本地开发才下发演示账号方便登录页一键填充；生产默认 false（SEC-1/GIT-4）
+# 本地开发才下发演示账号方便登录页一键填充；生产默认 false
 if ($null -eq $env:AF_DEMO_ACCOUNTS) { $env:AF_DEMO_ACCOUNTS = 'true' }
 # 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 if ($null -eq $env:AF_RATE_LIMIT_TRIGGER_MAX) { $env:AF_RATE_LIMIT_TRIGGER_MAX = '300' }
@@ -95,17 +95,24 @@ if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
 Write-Host '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'
 # autoCreateTopicEnable 只在「第一次发送」时建 topic；消费端在消息到来前查路由会拿到 17。
 # 运维上本来就该预建 topic，这里幂等执行（重复创建只报 already exists，无副作用）。
+# 两个坑：
+#  1) namesrv 是独立容器，broker 容器内的 127.0.0.1:9876 够不到它，必须走 docker 网络主机名；
+#  2) mqadmin 命令失败时退出码仍是 0，不能信退出码——用 topicRoute 输出里有无 brokerDatas 判定。
+# HOME=/tmp：命名卷属主问题让 rocketmq 用户建不了 ~/logs/rocketmqlogs，工具日志改写到 /tmp。
 foreach ($t in @('af-audit-event', 'af-gate-decision')) {
-  docker exec agentflow-rmq-broker sh -c "sh mqadmin updateTopic -n 127.0.0.1:9876 -c DefaultCluster -t $t" *> $null
+  docker exec -e HOME=/tmp agentflow-rmq-broker sh -c "sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t $t" *> $null
+  $route = docker exec -e HOME=/tmp agentflow-rmq-broker sh -c "sh mqadmin topicRoute -t $t -n rocketmq-namesrv:9876" 2>$null
+  if (-not ($route -match 'brokerDatas')) { throw "预建 topic $t 失败：namesrv 中查不到路由（broker 是否已注册？docker logs agentflow-rmq-broker）" }
 }
 
 Write-Host '==> [4/5] 启动 engine-api :8000'
 $engineDir = Join-Path $root 'engine-api'
 $enginePy = Join-Path $engineDir '.venv/Scripts/python.exe'
-Start-Process -FilePath $enginePy -WorkingDirectory $engineDir `
+$engineProc = Start-Process -FilePath $enginePy -WorkingDirectory $engineDir `
   -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000' `
   -RedirectStandardOutput (Join-Path $logs 'engine.out.log') `
-  -RedirectStandardError (Join-Path $logs 'engine.err.log') -WindowStyle Hidden
+  -RedirectStandardError (Join-Path $logs 'engine.err.log') -WindowStyle Hidden -PassThru
+$engineProc.Id | Out-File -FilePath (Join-Path $logs 'engine.pid') -Encoding ascii
 
 # jar 名带版本号（spring-boot repackage 产出 <name>-<version>.jar），这里按目录解析，
 # 免得每次升版本都要回来改脚本。
@@ -128,36 +135,56 @@ $javaServices = @(
 foreach ($svc in $javaServices) {
   $jar = Resolve-ServiceJar $svc.Name
   Write-Host ("==> [4/5] 启动 {0} :{1}" -f $svc.Name, $svc.Port)
-  Start-Process -FilePath 'java' -WorkingDirectory $root `
+  $proc = Start-Process -FilePath 'java' -WorkingDirectory $root `
     -ArgumentList '-jar', $jar `
     -RedirectStandardOutput (Join-Path $logs ($svc.Name + '.out.log')) `
-    -RedirectStandardError (Join-Path $logs ($svc.Name + '.err.log')) -WindowStyle Hidden
+    -RedirectStandardError (Join-Path $logs ($svc.Name + '.err.log')) -WindowStyle Hidden -PassThru
+  $proc.Id | Out-File -FilePath (Join-Path $logs ($svc.Name + '.pid')) -Encoding ascii
 }
 
 Write-Host '==> [5/5] 前端 :5174'
-Start-Process -FilePath 'cmd.exe' -WorkingDirectory (Join-Path $root 'frontend') `
+$feProc = Start-Process -FilePath 'cmd.exe' -WorkingDirectory (Join-Path $root 'frontend') `
   -ArgumentList '/c','npm','run','dev' `
   -RedirectStandardOutput (Join-Path $logs 'frontend.out.log') `
-  -RedirectStandardError (Join-Path $logs 'frontend.err.log') -WindowStyle Hidden
+  -RedirectStandardError (Join-Path $logs 'frontend.err.log') -WindowStyle Hidden -PassThru
+$feProc.Id | Out-File -FilePath (Join-Path $logs 'frontend.pid') -Encoding ascii
 
-Write-Host '==> 等待 gateway 就绪'
-# /health 会连带探 Redis：依赖不可用时返回 503，正好当作 readiness 用
-$gwReady = $false
-$gwTimer = [Diagnostics.Stopwatch]::StartNew()
-foreach ($i in 1..60) {
+Write-Host '==> 等待全部服务就绪'
+# 不能只探 gateway：gateway 的 /health 只连带探 Redis，下游 workflow/audit/connector
+# 任意一个启动崩溃时它仍返回 200，旧版脚本会误报「已启动」，登录等接口却 502。
+# 逐个探每个服务自己的 /health（Java 依赖不可用返回 503，engine 有独立 readiness）。
+$healthTargets = @(
+  @{ Name = 'workflow-service';  Url = 'http://127.0.0.1:8084/health' },
+  @{ Name = 'agent-gateway';     Url = 'http://127.0.0.1:8080/health' },
+  @{ Name = 'audit-service';     Url = 'http://127.0.0.1:8086/health' },
+  @{ Name = 'connector-service'; Url = 'http://127.0.0.1:8085/health' },
+  @{ Name = 'engine-api';        Url = 'http://127.0.0.1:8000/internal/health/ready' }
+)
+# 必须带 -UseBasicParsing：Windows PowerShell 5.1 默认走 IE DOM 解析，
+# 非交互模式下一律抛错，探测会永远判不成就绪。
+function Test-Ready([string] $url) {
   try {
-    # 必须带 -UseBasicParsing：Windows PowerShell 5.1 默认走 IE DOM 解析，
-    # 非交互模式下一律抛错，探测会永远判不成就绪。
-    Invoke-WebRequest -Uri 'http://127.0.0.1:8080/health' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop | Out-Null
-    $gwReady = $true; break
+    Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop | Out-Null
+    return $true
   } catch {
+    return $false
   }
-  Start-Sleep -Seconds 2
 }
-if ($gwReady) {
-  Write-Host ("    就绪（{0:N1}s）" -f $gwTimer.Elapsed.TotalSeconds)
+$readyTimer = [Diagnostics.Stopwatch]::StartNew()
+$notReady = @()
+foreach ($t in $healthTargets) {
+  $ok = $false
+  foreach ($i in 1..40) {
+    if (Test-Ready $t.Url) { $ok = $true; break }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $ok) { $notReady += $t.Name }
+}
+if ($notReady.Count -eq 0) {
+  Write-Host ("    全部就绪（{0:N1}s）" -f $readyTimer.Elapsed.TotalSeconds)
 } else {
-  Write-Warning 'gateway 未在 120s 内就绪；查看 logs/*.log'
+  foreach ($n in $notReady) { Write-Warning ("  {0} 未在 80s 内就绪" -f $n) }
+  Write-Warning '部分服务未就绪，登录等功能可能不可用；查看 logs/*.log 中对应服务的启动异常'
 }
 
 Write-Host ''

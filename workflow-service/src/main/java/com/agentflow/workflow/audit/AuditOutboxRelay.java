@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -40,7 +41,9 @@ public class AuditOutboxRelay {
     @Value("${agentflow.audit.purge-days:7}")
     private int purgeDays = 7;
 
-    /** Spring 注入：claimer 是独立 Bean，其 @Transactional 经代理生效。 */
+    /** Spring 注入：claimer 是独立 Bean，其 @Transactional 经代理生效。
+     * 多构造函数时必须显式标注，否则 Spring 退回找无参构造并启动失败。 */
+    @Autowired
     public AuditOutboxRelay(AuditOutboxMapper outbox, OutboxClaimer claimer,
                             AuditDelivery delivery,
                             @Value("${agentflow.audit.degrade-after-attempts:3}")

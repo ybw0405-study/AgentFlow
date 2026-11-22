@@ -26,7 +26,7 @@ export AF_INTERNAL_TOKEN="${AF_INTERNAL_TOKEN:-dev-internal-token}"
 export AF_JWT_SECRET="${AF_JWT_SECRET:-dev-only-secret-key-0123456789abcdef}"
 # 本地走明文 HTTP，refresh Cookie 不能带 Secure，否则浏览器不回传
 export AF_COOKIE_SECURE="${AF_COOKIE_SECURE:-false}"
-# 本地开发才下发演示账号方便登录页一键填充；生产默认 false（SEC-1/GIT-4）
+# 本地开发才下发演示账号方便登录页一键填充；生产默认 false
 export AF_DEMO_ACCOUNTS="${AF_DEMO_ACCOUNTS:-true}"
 # 本地全量 E2E 一轮会触发数十次执行、十几次登录；产品默认仍是 20/10 次每 60s
 export AF_RATE_LIMIT_TRIGGER_MAX="${AF_RATE_LIMIT_TRIGGER_MAX:-300}"
@@ -50,9 +50,18 @@ fi
 
 echo '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'
 # autoCreateTopicEnable 只在「第一次发送」时建 topic；消费端在消息到来前查路由会拿到 17。
+# 两个坑：
+#  1) namesrv 是独立容器，broker 容器内的 127.0.0.1:9876 够不到它，必须走 docker 网络主机名；
+#  2) mqadmin 命令失败时退出码仍是 0，不能信退出码——用 topicRoute 输出里有无 brokerDatas 判定。
+# HOME=/tmp：命名卷属主问题让 rocketmq 用户建不了 ~/logs/rocketmqlogs，工具日志改写到 /tmp。
 for t in af-audit-event af-gate-decision; do
-  docker exec agentflow-rmq-broker sh -c \
-    "sh mqadmin updateTopic -n 127.0.0.1:9876 -c DefaultCluster -t $t" >/dev/null 2>&1 || true
+  docker exec -e HOME=/tmp agentflow-rmq-broker sh -c \
+    "sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t $t" >/dev/null 2>&1
+  if ! docker exec -e HOME=/tmp agentflow-rmq-broker sh -c \
+    "sh mqadmin topicRoute -t $t -n rocketmq-namesrv:9876" 2>/dev/null | grep -q brokerDatas; then
+    echo "预建 topic $t 失败：namesrv 中查不到路由（broker 是否已注册？docker logs agentflow-rmq-broker）" >&2
+    exit 1
+  fi
 done
 
 echo '==> [4/5] engine-api :8000'
