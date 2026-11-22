@@ -32,8 +32,8 @@
     MySQL 客户端，账本查询为 TODO 占位（按 FAIL 计，接线后重跑）。
 
 运行：
-  python batch4_loadtest_monthly_quota.py                         # dry-run（默认）
-  python batch4_loadtest_monthly_quota.py --execute \
+  python drill_loadtest_monthly_quota.py                         # dry-run（默认）
+  python drill_loadtest_monthly_quota.py --execute \
       --base-url http://127.0.0.1:8080 --dsn mysql://... --quota 1000 \
       --concurrency 50 --report out.json
 """
@@ -72,7 +72,7 @@ class LoadResult:
 
     def dump(self, path: str | None) -> dict:
         report = {
-            "kind": "batch4-loadtest-monthly-quota",
+            "kind": "drill-loadtest-monthly-quota",
             "project": "AgentFlow",
             "executed": self.execute,
             "note": "骨架自检；本机未做真实压测，无实测数值" if not self.execute

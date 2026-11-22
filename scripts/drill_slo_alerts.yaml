@@ -7,7 +7,7 @@
 # 本文件为新增脚手架；**不碰 AgentFlow 任何业务文件**，不改现有源码/脚本/配置。
 #
 # 用法（真实环境）：
-#   promtool check rules batch4_slo_alerts.yaml
+#   promtool check rules drill_slo_alerts.yaml
 #   prometheus.rules 段挂 rule_files；slo / error_budget 段供文档与看板消费。
 # =============================================================================
 
@@ -64,7 +64,7 @@ error_budget:
 # ---- Prometheus 记录 + 告警规则（标准结构，可 promtool 校验）----
 prometheus:
   groups:
-    - name: agentflow.batch4.recording
+    - name: agentflow.drill.recording
       interval: 30s
       rules:
         - record: job:agentflow_dispatch_lost_rate:ratio_rate5m
@@ -76,7 +76,7 @@ prometheus:
         - record: job:agentflow_quota_period_pass:ratio_rate5m
           expr: "sum(rate(agentflow_quota_period_checks_total{result='pass'}[5m])) / sum(rate(agentflow_quota_period_checks_total[5m]))"
 
-    - name: agentflow.batch4.alerts
+    - name: agentflow.drill.alerts
       rules:
         - alert: AgentFlowDispatchLost
           expr: "job:agentflow_dispatch_lost_rate:ratio_rate5m > 0.001"
@@ -88,7 +88,7 @@ prometheus:
           annotations:
             summary: "控制面显示已触发但引擎无执行（双写语义裂缝，I2 破线）"
             description: "校验 submitExecution 返回体 status/note；引擎未派发应返回 409/5xx 而非 202。"
-            runbook: "scripts/batch4_canary_rollback_runbook.md 第 4 节"
+            runbook: "scripts/drill_canary_rollback_runbook.md 第 4 节"
 
         - alert: AgentFlowTerminalRewritten
           expr: "job:agentflow_terminal_guard_pass:ratio_rate5m < 1.0 OR increase(agentflow_terminal_rewrite_total[5m]) > 0"
@@ -100,7 +100,7 @@ prometheus:
           annotations:
             summary: "终态被回写（I1 / AF-2 / AF-9 破线）"
             description: "检查 markTerminal WHERE 前置状态、execution_tracker 终态守卫、Reaper 排除已终态行。"
-            runbook: "scripts/batch4_canary_rollback_runbook.md 第 4 / 5 节"
+            runbook: "scripts/drill_canary_rollback_runbook.md 第 4 / 5 节"
 
         - alert: AgentFlowQuotaPeriodSplit
           expr: "job:agentflow_quota_period_pass:ratio_rate5m < 1.0 OR increase(agentflow_quota_period_split_total[5m]) > 0"

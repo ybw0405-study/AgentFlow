@@ -16,7 +16,7 @@
 | P2 | 版本单一来源，`pom.xml` / `package.json` / CHANGELOG / tag 一致 | G12 |
 | P3 | 四个 `*Application` 的 `ProductionGuard` 强制显式 DB 账号、两个内部 token 不同且为强值 | AF-3 / AF-4 |
 | P4 | `execution_outbox` 双写开关可回退（架构 4.1 第 1–3 步每步可独立上线、可回滚） | 方案 4.1 |
-| P5 | SLO 与告警已加载、错误预算基线已取 | 同目录 `batch4_slo_alerts.yaml` |
+| P5 | SLO 与告警已加载、错误预算基线已取 | 同目录 `drill_slo_alerts.yaml` |
 | P6 | 监控：引擎 readiness、租约接管时延、投影延迟、月度账期一致性、MQ 堆积 | — |
 | P7 | 回滚窗口、审批人、旧 digest 已记录 | 第 3 节 |
 
@@ -31,7 +31,7 @@
 ```bash
 CURRENT_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' agentflow-engine:<current-tag>)
 NEW_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' agentflow-engine:<new-tag>)
-echo "$CURRENT_DIGEST" | tee /var/log/agentflow/batch4-canary/digest-before.txt
+echo "$CURRENT_DIGEST" | tee /var/log/agentflow/drill-canary/digest-before.txt
 # 记录：QPS、执行成功率、p99、租约接管时延、投影延迟、账期一致性、MQ 堆积、错误预算余量
 ```
 
@@ -105,9 +105,9 @@ curl -fsS http://127.0.0.1:8000/internal/health
 ## 6. 机检产物（真跑时生成）
 
 - Prometheus 快照（每级起止时间戳）；
-- 跨进程 e2e 输出（`batch4_e2e_crossprocess.py --execute --report ...`）；
-- 月度额度跨月压测报表（`batch4_loadtest_monthly_quota.py --execute --report ...`）；
-- 故障注入观测（`batch4_fault_injection.sh <case> --apply --target ...`）；
+- 跨进程 e2e 输出（`drill_e2e_crossprocess.py --execute --report ...`）；
+- 月度额度跨月压测报表（`drill_loadtest_monthly_quota.py --execute --report ...`）；
+- 故障注入观测（`drill_fault_injection.sh <case> --apply --target ...`）；
 - 本 runbook 第 7 节填写的演练记录。
 
 ---
