@@ -149,6 +149,14 @@ jobs:
           REPO_LOWER="$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           BASE="${REGISTRY}/${REPO_LOWER}"
           : > digests.txt
+          # AF-P2-9：构建期解析 python 基础镜像的真实 digest，绝不写入编造值。
+          PYTHON_BASE_DIGEST="$(docker buildx imagetools inspect python:3.13-slim \
+            | awk '/^Digest:[[:space:]]/{print $2; exit}')"
+          case "$PYTHON_BASE_DIGEST" in
+            sha256:*) echo "python:3.13-slim 固定到 ${PYTHON_BASE_DIGEST}" ;;
+            *) echo "无法解析 python:3.13-slim 的真实 digest，拒绝构建" >&2; exit 1 ;;
+          esac
+          export PYTHON_BASE_DIGEST
           build_one() {
             local target="$1" jar="$2" name="$3"
             local image="${BASE}-${name}:${VERSION}"
@@ -157,6 +165,8 @@ jobs:
             if [ -n "$jar" ]; then
               args=(--build-arg "JAR_PATH=/out/${jar}.jar" "${args[@]}")
             fi
+            # 每个 target 都会经过全局 ARG 声明，传入真实 digest 供 python-base 使用。
+            args=(--build-arg "PYTHON_BASE_DIGEST=${PYTHON_BASE_DIGEST}" "${args[@]}")
             echo "==> building ${image} (target=${target})"
             docker buildx build "${args[@]}"
             local digest

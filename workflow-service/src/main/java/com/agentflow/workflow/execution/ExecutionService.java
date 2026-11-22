@@ -20,7 +20,6 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 /** 执行触发：RBAC + 幂等键 + 政策钳制 + PII 第一层脱敏 + 引擎派发。 */
@@ -37,6 +36,7 @@ public class ExecutionService {
     private final CanaryService canary;
     private final UsageService usage;
     private final BudgetLedgerMapper budgets;
+    private final ExecutionSlotClaimer slotClaimer;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final int defaultTokenBudget;
     private final int defaultMaxSteps;
@@ -49,6 +49,7 @@ public class ExecutionService {
             WorkflowExecutionMapper executions, WorkflowDefinitionMapper definitions,
             WorkflowVersionMapper versions, EngineGatewayClient engine, AuditPublisher audit,
             CanaryService canary, UsageService usage, BudgetLedgerMapper budgets,
+            ExecutionSlotClaimer slotClaimer,
             @Value("${agentflow.tenant.default-token-budget}") int defaultTokenBudget,
             @Value("${agentflow.tenant.default-max-steps}") int defaultMaxSteps,
             @Value("${agentflow.tenant.default-deadline-ms}") int defaultDeadlineMs,
@@ -61,6 +62,7 @@ public class ExecutionService {
         this.canary = canary;
         this.usage = usage;
         this.budgets = budgets;
+        this.slotClaimer = slotClaimer;
         this.defaultTokenBudget = defaultTokenBudget;
         this.defaultMaxSteps = defaultMaxSteps;
         this.defaultDeadlineMs = defaultDeadlineMs;
@@ -122,8 +124,10 @@ public class ExecutionService {
         if (replayed != null) {
             return new TriggerResult(replayed.id(), replayed.status(), true);
         }
-        // 并发上限（0 = 不限）：先挡在门口，不要先插一行再失败——那会留下一条假的 PENDING。
-        // 幂等回放放在前面：已经跑过的执行不算「新占一个坑」，重放必须能拿到原结果。
+        // 并发上限（0 = 不限）的「门口快速失败」：先在锁外挡一道，省掉版本解析/政策钳制
+        // 等无用功，也不要先插一行再失败——那会留下一条假的 PENDING。
+        // 这不是最终的并发安全保证：count 与 insert 之间的窗口由下面 slotClaimer 的
+        // 事务内原子判定关闭（AF-P2-2）。幂等回放放前面：已跑过的执行不算「新占一个坑」。
         if (def.maxConcurrent() > 0 && executions.countActive(def.id()) >= def.maxConcurrent()) {
             audit.publish(AuditMessage.of(tenantId, null, userId,
                     "EXECUTION_REJECTED", Map.of("definitionId", definitionId,
@@ -191,12 +195,21 @@ public class ExecutionService {
                 tokenBudget, maxSteps,
                 new Timestamp(System.currentTimeMillis() + deadlineMs),
                 0, 0, null, null, null, null);
-        try {
-            executions.insert(row);
-        } catch (DuplicateKeyException e) {
-            // 并发同键：唯一约束兜底，返回已存在的执行（US-02 并发触发）
-            var existing = executions.findByIdempotency(tenantId, idempotencyKey);
+        // 并发上限的权威判定 + 落行（AF-P2-2）：短事务内锁定义行 → 重查幂等 →
+        // count → insert 原子完成，关闭上面门口检查与 insert 之间的 check-then-act 窗口。
+        var claim = slotClaimer.claim(row, def.maxConcurrent());
+        if (claim.outcome() == ExecutionSlotClaimer.Outcome.REPLAY) {
+            var existing = claim.row();
             return new TriggerResult(existing.id(), existing.status(), true);
+        }
+        if (claim.outcome() == ExecutionSlotClaimer.Outcome.LIMIT_REACHED) {
+            // 门口检查放行、但等锁期间被别的派发占满：与门口拒绝同口径留痕。
+            audit.publish(AuditMessage.of(tenantId, null, userId,
+                    "EXECUTION_REJECTED", Map.of("definitionId", definitionId,
+                            "reason", "CONCURRENCY_LIMIT",
+                            "maxConcurrent", def.maxConcurrent())));
+            throw new BusinessException(ErrorCode.WF_CONCURRENCY_001,
+                    "workflow already has " + def.maxConcurrent() + " running executions");
         }
 
         Map<String, Object> engineRequest = new LinkedHashMap<>();
