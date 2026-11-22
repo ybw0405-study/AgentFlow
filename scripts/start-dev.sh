@@ -54,12 +54,20 @@ echo '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路�
 #  1) namesrv 是独立容器，broker 容器内的 127.0.0.1:9876 够不到它，必须走 docker 网络主机名；
 #  2) mqadmin 命令失败时退出码仍是 0，不能信退出码——用 topicRoute 输出里有无 brokerDatas 判定。
 # HOME=/tmp：命名卷属主问题让 rocketmq 用户建不了 ~/logs/rocketmqlogs，工具日志改写到 /tmp。
+# broker 的 TCP 健康检查通过 ≠ 已完成首次 namesrv 注册（注册周期 ~30s），预建带重试窗口。
 for t in af-audit-event af-gate-decision; do
-  docker exec -e HOME=/tmp agentflow-rmq-broker sh -c \
-    "sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t $t" >/dev/null 2>&1
-  if ! docker exec -e HOME=/tmp agentflow-rmq-broker sh -c \
-    "sh mqadmin topicRoute -t $t -n rocketmq-namesrv:9876" 2>/dev/null | grep -q brokerDatas; then
-    echo "预建 topic $t 失败：namesrv 中查不到路由（broker 是否已注册？docker logs agentflow-rmq-broker）" >&2
+  ok=false
+  for i in $(seq 1 18); do
+    docker exec -e HOME=/tmp agentflow-rmq-broker sh -c \
+      "sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t $t" >/dev/null 2>&1
+    if docker exec -e HOME=/tmp agentflow-rmq-broker sh -c \
+      "sh mqadmin topicRoute -t $t -n rocketmq-namesrv:9876" 2>/dev/null | grep -q brokerDatas; then
+      ok=true; break
+    fi
+    sleep 5
+  done
+  if [ "$ok" != true ]; then
+    echo "预建 topic $t 失败：90s 内 namesrv 始终查不到路由（docker logs agentflow-rmq-broker）" >&2
     exit 1
   fi
 done
