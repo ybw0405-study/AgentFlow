@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   probeModels: vi.fn(),
   probeMcpTools: vi.fn(),
+  probeMcpResources: vi.fn(),
+  probeMcpPrompts: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -25,6 +27,8 @@ vi.mock('@/api', async (importOriginal) => {
       authorize: mocks.authorize,
       probeModels: mocks.probeModels,
       probeMcpTools: mocks.probeMcpTools,
+      probeMcpResources: mocks.probeMcpResources,
+      probeMcpPrompts: mocks.probeMcpPrompts,
     },
   }
 })
@@ -305,6 +309,16 @@ describe('连接器页面：MCP 工具服务', () => {
       tools: [{ name: 'crm-search', description: '查客户', inputSchema: { type: 'object' } }],
       errorCode: null,
     })
+    mocks.probeMcpResources.mockResolvedValue({
+      ok: true,
+      resources: [{ uri: 'test://doc', name: 'doc', description: '', mimeType: 'text/plain' }],
+      errorCode: null,
+    })
+    mocks.probeMcpPrompts.mockResolvedValue({
+      ok: true,
+      prompts: [{ name: 'greet', description: '', arguments: [] }],
+      errorCode: null,
+    })
   })
 
   it('建 MCP 连接：单端点配置不带 operations，建后自动探测工具', async () => {
@@ -330,7 +344,7 @@ describe('连接器页面：MCP 工具服务', () => {
     expect(wrapper.text()).toContain('暴露 1 个工具')
   })
 
-  it('MCP 行提供拉取工具入口，清单展示工具名', async () => {
+  it('MCP 行提供拉取清单入口，汇总三类能力计数', async () => {
     mocks.list.mockResolvedValue([
       {
         id: 'c1',
@@ -346,12 +360,14 @@ describe('连接器页面：MCP 工具服务', () => {
     ])
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('MCP')
-    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取工具')
+    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取清单')
     await refresh!.trigger('click')
     await flushPromises()
 
     expect(mocks.probeMcpTools).toHaveBeenCalledWith('c1')
-    expect(wrapper.text()).toContain('crm-search')
+    expect(mocks.probeMcpResources).toHaveBeenCalledWith('c1')
+    expect(mocks.probeMcpPrompts).toHaveBeenCalledWith('c1')
+    expect(wrapper.text()).toContain('1 工具 / 1 资源 / 1 提示')
     expect(mocks.update).not.toHaveBeenCalled()
   })
 
@@ -371,7 +387,7 @@ describe('连接器页面：MCP 工具服务', () => {
       },
     ])
     const wrapper = await mountView()
-    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取工具')
+    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取清单')
     await refresh!.trigger('click')
     await flushPromises()
 

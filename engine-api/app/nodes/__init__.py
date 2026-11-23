@@ -14,6 +14,7 @@ from .end import EndExecutor
 from .human_gate import HumanGateExecutor
 from .llm import LlmExecutor, LLMProvider
 from .loop import LoopExecutor
+from .mcp import McpExecutor
 from .parallel import ParallelExecutor
 from .registry import NodeExecutor
 from .retrieval import RetrievalExecutor
@@ -60,6 +61,7 @@ def build_executors(
         "llm": LlmExecutor(llm_providers, connector_llms),
         "retrieval": RetrievalExecutor(knowledge),
         "tool": ToolExecutor(connectors),
+        "mcp": McpExecutor(connectors),
         "condition": ConditionExecutor(),
         "transform": TransformExecutor(),
         "loop": LoopExecutor(),

@@ -138,6 +138,16 @@ function validateGraph(nodes: DslNode[], edges: DslEdge[], scope: GraphScope): V
       if (!cfg.connectorId) at(n.key, 'tool 需要 connectorId', 'connectorId')
       if (!cfg.operation) at(n.key, 'tool 需要 operation', 'operation')
     }
+    if (n.type === 'mcp') {
+      if (!cfg.connectorId) at(n.key, 'mcp 需要 connectorId', 'connectorId')
+      if (cfg.capability === 'resource') {
+        if (!cfg.uri) at(n.key, 'mcp resource 需要 uri', 'uri')
+      } else if (cfg.capability === 'prompt') {
+        if (!cfg.promptName) at(n.key, 'mcp prompt 需要 promptName', 'promptName')
+      } else {
+        at(n.key, 'mcp 需要 capability（resource / prompt）', 'capability')
+      }
+    }
     if (n.type === 'retrieval') {
       const ids = cfg.knowledgeBaseIds
       if (!Array.isArray(ids) || !ids.length) {

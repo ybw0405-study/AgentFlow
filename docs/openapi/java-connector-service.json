@@ -78,6 +78,40 @@
         },
         "type": "object"
       },
+      "ApiResponseMcpPromptsResult": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/McpPromptsResult"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ApiResponseMcpResourcesResult": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/McpResourcesResult"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ApiResponseMcpToolsResult": {
         "properties": {
           "code": {
@@ -240,6 +274,9 @@
           "callId": {
             "type": "string"
           },
+          "mcpMethod": {
+            "type": "string"
+          },
           "operation": {
             "type": "string"
           },
@@ -278,6 +315,40 @@
           },
           "transientError": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "McpPromptsResult": {
+        "properties": {
+          "errorCode": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "prompts": {
+            "items": {
+              "$ref": "#/components/schemas/PromptItem"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "McpResourcesResult": {
+        "properties": {
+          "errorCode": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceItem"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -360,6 +431,54 @@
           },
           "ok": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "PromptArgument": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "PromptItem": {
+        "properties": {
+          "arguments": {
+            "items": {
+              "$ref": "#/components/schemas/PromptArgument"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ResourceItem": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -550,6 +669,66 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "connector-controller"
+        ]
+      }
+    },
+    "/api/v1/connectors/{id}/mcp/prompts": {
+      "post": {
+        "operationId": "probeMcpPrompts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMcpPromptsResult"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "connector-controller"
+        ]
+      }
+    },
+    "/api/v1/connectors/{id}/mcp/resources": {
+      "post": {
+        "operationId": "probeMcpResources",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMcpResourcesResult"
                 }
               }
             },

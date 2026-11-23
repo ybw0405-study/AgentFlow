@@ -58,6 +58,13 @@ class ConnectorMcpTest {
             JsonNode request = JSON.readTree(exchange.getRequestBody());
             String method = request.path("method").asText("");
             int id = request.path("id").asInt(0);
+            // 会话过期模式：带 sess-1 的业务请求一律 404，重建后的 sess-2 放行
+            if ("expired".equals(mode.get()) && "sess-1".equals(seenSession.get())
+                    && (method.equals("tools/call") || method.equals("resources/read")
+                        || method.equals("prompts/get"))) {
+                respond(exchange, 404, "{\"error\":\"session expired\"}");
+                return;
+            }
             switch (method) {
                 case "initialize" -> {
                     initializes.incrementAndGet();
@@ -76,13 +83,21 @@ class ConnectorMcpTest {
                 case "tools/list" -> respond(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
                         + ",\"result\":{\"tools\":[{\"name\":\"crm-search\",\"description\":\"查客户\","
                         + "\"inputSchema\":{\"type\":\"object\"}}]}}");
+                case "resources/list" -> respond(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
+                        + ",\"result\":{\"resources\":[{\"uri\":\"test://doc\",\"name\":\"doc\","
+                        + "\"description\":\"说明\",\"mimeType\":\"text/plain\"}]}}");
+                case "prompts/list" -> respond(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
+                        + ",\"result\":{\"prompts\":[{\"name\":\"greet\",\"description\":\"问候\","
+                        + "\"arguments\":[{\"name\":\"who\",\"description\":\"对象\",\"required\":true}]}]}}");
+                case "resources/read" -> respond(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
+                        + ",\"result\":{\"contents\":[{\"uri\":\"" + request.path("params").path("uri").asText()
+                        + "\",\"type\":\"text\",\"text\":\"hello resource\"}]}}");
+                case "prompts/get" -> respond(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
+                        + ",\"result\":{\"messages\":[{\"role\":\"user\",\"content\":{\"type\":\"text\","
+                        + "\"text\":\"hi " + request.path("params").path("arguments").path("who").asText()
+                        + "\"}}]}}");
                 case "tools/call" -> {
                     calls.incrementAndGet();
-                    // 会话过期模式：第一次调用（sess-1）返回 404，重建后的 sess-2 放行
-                    if ("expired".equals(mode.get()) && "sess-1".equals(seenSession.get())) {
-                        respond(exchange, 404, "{\"error\":\"session expired\"}");
-                        return;
-                    }
                     if ("toolerror".equals(mode.get())) {
                         respond(exchange, 200, "{\"jsonrpc\":\"2.0\",\"id\":" + id
                                 + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"denied\"}],"
@@ -161,6 +176,12 @@ class ConnectorMcpTest {
     private ConnectorInvoker.InvokeCommand command(String callId) {
         return new ConnectorInvoker.InvokeCommand("space-a", "conn-1", callId,
                 "crm-search", Map.of("q", "acme"), 5_000, "trace-1");
+    }
+
+    private ConnectorInvoker.InvokeCommand command(String callId, String method,
+                                                   Map<String, Object> params) {
+        return new ConnectorInvoker.InvokeCommand("space-a", "conn-1", callId,
+                "label", params, 5_000, "trace-1", method);
     }
 
     @Test
@@ -262,5 +283,68 @@ class ConnectorMcpTest {
         assertThat(result.tools()).hasSize(1);
         assertThat(result.tools().get(0).name()).isEqualTo("crm-search");
         assertThat(result.tools().get(0).inputSchema()).containsEntry("type", "object");
+    }
+
+    @Test
+    void resourceReadNormalizesTextAndKeepsContents() throws Exception {
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var result = invoker.invoke(command("call-res", "resources/read",
+                Map.of("uri", "test://doc")));
+        assertThat(result.ok()).isTrue();
+        assertThat(result.data()).containsEntry("text", "hello resource");
+        assertThat(result.data()).containsKey("contents");
+    }
+
+    @Test
+    void promptGetNormalizesTextWithRolePrefix() throws Exception {
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var result = invoker.invoke(command("call-prompt", "prompts/get",
+                Map.of("name", "greet", "arguments", Map.of("who", "acme"))));
+        assertThat(result.ok()).isTrue();
+        assertThat(result.data()).containsEntry("text", "user: hi acme");
+        assertThat(result.data()).containsKey("messages");
+    }
+
+    @Test
+    void missingResourceUriIsPermanentConfigError() throws Exception {
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var result = invoker.invoke(command("call-res-bad", "resources/read", Map.of()));
+        assertThat(result.errorCode()).isEqualTo("CONN-CONFIG-001");
+        assertThat(result.transientError()).isFalse();
+    }
+
+    @Test
+    void unknownMcpMethodIsRejected() throws Exception {
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var result = invoker.invoke(command("call-unknown", "resources/subscribe", Map.of()));
+        assertThat(result.errorCode()).isEqualTo("CONN-CONFIG-001");
+        assertThat(calls.get()).isZero();
+    }
+
+    @Test
+    void expiredSessionRebuildAlsoCoversResourceRead() throws Exception {
+        mode.set("expired");
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var result = invoker.invoke(command("call-res-exp", "resources/read",
+                Map.of("uri", "test://doc")));
+        assertThat(result.ok()).isTrue();
+        assertThat(initializes.get()).isEqualTo(2);
+    }
+
+    @Test
+    void probeListsResourcesAndPrompts() throws Exception {
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var resources = invoker.probeMcpResources(connector("NONE"), 5_000);
+        assertThat(resources.ok()).isTrue();
+        assertThat(resources.resources()).hasSize(1);
+        assertThat(resources.resources().get(0).uri()).isEqualTo("test://doc");
+        assertThat(resources.resources().get(0).mimeType()).isEqualTo("text/plain");
+
+        var prompts = invoker.probeMcpPrompts(connector("NONE"), 5_000);
+        assertThat(prompts.ok()).isTrue();
+        assertThat(prompts.prompts()).hasSize(1);
+        assertThat(prompts.prompts().get(0).name()).isEqualTo("greet");
+        assertThat(prompts.prompts().get(0).arguments()).hasSize(1);
+        assertThat(prompts.prompts().get(0).arguments().get(0).required()).isTrue();
     }
 }

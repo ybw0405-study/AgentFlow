@@ -29,6 +29,8 @@ import java.util.Set;
 import java.util.StringJoiner;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -82,7 +84,13 @@ public class ConnectorInvoker {
 
     public record InvokeCommand(String tenantId, String connectorId, String callId,
                                 String operation, Map<String, Object> params, int timeoutMs,
-                                String traceId) {
+                                String traceId, String mcpMethod) {
+        /** 非 MCP 调用与既有测试沿用 7 参形态；mcpMethod 缺省 null 即 tools/call。 */
+        public InvokeCommand(String tenantId, String connectorId, String callId,
+                             String operation, Map<String, Object> params, int timeoutMs,
+                             String traceId) {
+            this(tenantId, connectorId, callId, operation, params, timeoutMs, traceId, null);
+        }
     }
 
     public record InvokeResult(boolean ok, Map<String, Object> data, String errorCode,
@@ -119,6 +127,22 @@ public class ConnectorInvoker {
     public record McpToolsResult(boolean ok, List<McpProtocol.ToolItem> tools, String errorCode) {
         static McpToolsResult failure(String code) {
             return new McpToolsResult(false, List.of(), code);
+        }
+    }
+
+    /** MCP 资源清单探测结果。只回定位与展示字段，内容本体走 resources/read。 */
+    public record McpResourcesResult(boolean ok, List<McpProtocol.ResourceItem> resources,
+                                     String errorCode) {
+        static McpResourcesResult failure(String code) {
+            return new McpResourcesResult(false, List.of(), code);
+        }
+    }
+
+    /** MCP 提示清单探测结果。只回 name/description/arguments 摘要。 */
+    public record McpPromptsResult(boolean ok, List<McpProtocol.PromptItem> prompts,
+                                   String errorCode) {
+        static McpPromptsResult failure(String code) {
+            return new McpPromptsResult(false, List.of(), code);
         }
     }
 
@@ -199,6 +223,10 @@ public class ConnectorInvoker {
      */
     private InvokeResult mcpInvoke(InvokeCommand cmd, ConnectorRow connector, JsonNode config,
                                    long started, String cacheKey) {
+        String method = cmd.mcpMethod() == null ? "tools/call" : cmd.mcpMethod();
+        if (!MCP_METHODS.contains(method)) {
+            return InvokeResult.failure("CONN-CONFIG-001", false, elapsed(started));
+        }
         long deadline = started + Duration.ofMillis(Math.max(cmd.timeoutMs(), 1_000)).toNanos();
         try {
             SandboxPolicy.ValidatedTarget target = mcpTarget(connector, config);
@@ -207,17 +235,21 @@ public class ConnectorInvoker {
             JsonNode callResult;
             try {
                 callResult = mcpRequest(connector, config, target, session,
-                        McpProtocol.toolsCall(2, cmd.operation(), params), 2, deadline);
+                        mcpFrame(method, 2, cmd.operation(), params), 2, deadline);
             } catch (McpProtocol.McpException e) {
                 if (e.status != 404 || session.sessionId() == null) {
                     throw e;
                 }
                 session = mcpInitialize(connector, config, target, deadline);
                 callResult = mcpRequest(connector, config, target, session,
-                        McpProtocol.toolsCall(3, cmd.operation(), params), 3, deadline);
+                        mcpFrame(method, 3, cmd.operation(), params), 3, deadline);
             }
-            Map<String, Object> data = McpProtocol.callData(callResult);
-            if (callResult.path("isError").asBoolean(false)) {
+            Map<String, Object> data = switch (method) {
+                case "resources/read" -> McpProtocol.readData(callResult);
+                case "prompts/get" -> McpProtocol.promptData(callResult);
+                default -> McpProtocol.callData(callResult);
+            };
+            if ("tools/call".equals(method) && callResult.path("isError").asBoolean(false)) {
                 // 工具级失败是确定性结果：不缓存、不重试，但保留 content 供下游判读
                 return new InvokeResult(false, data, "CONN-TOOL-001", false, elapsed(started), 200);
             }
@@ -246,41 +278,109 @@ public class ConnectorInvoker {
      * 与 {@link #probeModels} 同口径：交互式操作不走 callId 缓存，分页与条数都有上限。
      */
     public McpToolsResult probeMcpTools(ConnectorRow connector, int timeoutMs) {
+        return mcpProbe(connector, timeoutMs, deadline -> {
+            McpSession session = mcpProbeSession(connector, deadline);
+            return new McpToolsResult(true, List.copyOf(mcpList(connector, session, deadline,
+                    McpProtocol::toolsList, McpProtocol::toolItems, "tools")), null);
+        }, McpToolsResult::failure);
+    }
+
+    /** 资源清单探测：与工具清单同口径（分页/条数/截断），只回定位与展示字段。 */
+    public McpResourcesResult probeMcpResources(ConnectorRow connector, int timeoutMs) {
+        return mcpProbe(connector, timeoutMs, deadline -> {
+            McpSession session = mcpProbeSession(connector, deadline);
+            return new McpResourcesResult(true, List.copyOf(mcpList(connector, session, deadline,
+                    McpProtocol::resourcesList, McpProtocol::resourceItems, "resources")), null);
+        }, McpResourcesResult::failure);
+    }
+
+    /** 提示清单探测：arguments 只搬 name/description/required 摘要。 */
+    public McpPromptsResult probeMcpPrompts(ConnectorRow connector, int timeoutMs) {
+        return mcpProbe(connector, timeoutMs, deadline -> {
+            McpSession session = mcpProbeSession(connector, deadline);
+            return new McpPromptsResult(true, List.copyOf(mcpList(connector, session, deadline,
+                    McpProtocol::promptsList, McpProtocol::promptItems, "prompts")), null);
+        }, McpPromptsResult::failure);
+    }
+
+    private McpSession mcpProbeSession(ConnectorRow connector, long deadline)
+            throws IOException, InterruptedException {
+        SandboxPolicy.ValidatedTarget target = mcpTarget(connector, connector.config());
+        return mcpInitialize(connector, connector.config(), target, deadline);
+    }
+
+    /** 三类清单共用的翻页骨架：5 页 / 200 条上限，cursor 空即止。 */
+    private <T> List<T> mcpList(ConnectorRow connector, McpSession session, long deadline,
+                                BiFunction<Integer, String, String> frame,
+                                Function<JsonNode, List<T>> parser, String field)
+            throws IOException, InterruptedException {
+        SandboxPolicy.ValidatedTarget target = mcpTarget(connector, connector.config());
+        List<T> items = new java.util.ArrayList<>();
+        String cursor = null;
+        for (int page = 0; page < McpProtocol.MAX_LIST_PAGES; page++) {
+            JsonNode result = mcpRequest(connector, connector.config(), target, session,
+                    frame.apply(10 + page, cursor), 10 + page, deadline);
+            items.addAll(parser.apply(result.path(field)));
+            cursor = result.path("nextCursor").asText("");
+            if (cursor.isBlank() || items.size() >= McpProtocol.MAX_TOOLS) {
+                break;
+            }
+        }
+        return items.size() > McpProtocol.MAX_TOOLS
+                ? items.subList(0, McpProtocol.MAX_TOOLS) : items;
+    }
+
+    @FunctionalInterface
+    private interface ProbeAction<R> {
+        R run(long deadline) throws Exception;
+    }
+
+    /** 三类探测共用的失败映射：沙箱/凭据/协议/超时/上游，与 invoke 同口径。 */
+    private <R> R mcpProbe(ConnectorRow connector, int timeoutMs, ProbeAction<R> action,
+                           Function<String, R> failure) {
         long deadline = System.nanoTime() + Duration.ofMillis(Math.max(timeoutMs, 1_000)).toNanos();
         try {
-            SandboxPolicy.ValidatedTarget target = mcpTarget(connector, connector.config());
-            McpSession session = mcpInitialize(connector, connector.config(), target, deadline);
-            List<McpProtocol.ToolItem> tools = new java.util.ArrayList<>();
-            String cursor = null;
-            for (int page = 0; page < McpProtocol.MAX_LIST_PAGES; page++) {
-                JsonNode result = mcpRequest(connector, connector.config(), target, session,
-                        McpProtocol.toolsList(10 + page, cursor), 10 + page, deadline);
-                tools.addAll(McpProtocol.toolItems(result.path("tools")));
-                cursor = result.path("nextCursor").asText("");
-                if (cursor.isBlank() || tools.size() >= McpProtocol.MAX_TOOLS) {
-                    break;
-                }
-            }
-            if (tools.size() > McpProtocol.MAX_TOOLS) {
-                tools = tools.subList(0, McpProtocol.MAX_TOOLS);
-            }
-            return new McpToolsResult(true, List.copyOf(tools), null);
+            return action.run(deadline);
         } catch (SandboxPolicy.Violation e) {
             log.warn("sandbox rejected mcp probe for {}: {}", connector.id(), e.getMessage());
-            return McpToolsResult.failure("CONN-SANDBOX-001");
+            return failure.apply("CONN-SANDBOX-001");
         } catch (CredentialException e) {
-            return McpToolsResult.failure(e.code);
+            return failure.apply(e.code);
         } catch (McpProtocol.McpException e) {
-            return McpToolsResult.failure(e.code);
+            return failure.apply(e.code);
         } catch (HttpTimeoutException e) {
-            return McpToolsResult.failure("CONN-TIMEOUT");
+            return failure.apply("CONN-TIMEOUT");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return McpToolsResult.failure("CONN-TIMEOUT");
+            return failure.apply("CONN-TIMEOUT");
         } catch (Exception e) {
             log.warn("mcp probe for {} failed: {}", connector.id(), e.toString());
-            return McpToolsResult.failure("CONN-UPSTREAM-001");
+            return failure.apply("CONN-UPSTREAM-001");
         }
+    }
+
+    private static final Set<String> MCP_METHODS =
+            Set.of("tools/call", "resources/read", "prompts/get");
+
+    /** 按 mcpMethod 选帧；resources/prompts 的定位参数缺失视为配置错误（永久）。 */
+    @SuppressWarnings("unchecked")
+    private static String mcpFrame(String method, int id, String operation,
+                                   Map<String, Object> params) {
+        return switch (method) {
+            case "resources/read" -> McpProtocol.resourcesRead(id, stringParam(params, "uri"));
+            case "prompts/get" -> McpProtocol.promptsGet(id, stringParam(params, "name"),
+                    params.get("arguments") instanceof Map
+                            ? (Map<String, Object>) params.get("arguments") : Map.of());
+            default -> McpProtocol.toolsCall(id, operation, params);
+        };
+    }
+
+    private static String stringParam(Map<String, Object> params, String key) {
+        Object value = params.get(key);
+        if (!(value instanceof String text) || text.isBlank()) {
+            throw new McpProtocol.McpException("CONN-CONFIG-001", false);
+        }
+        return text;
     }
 
     /** MCP 单端点：baseUrl 即 JSON-RPC 端点，不做 operations 路径拼接。 */

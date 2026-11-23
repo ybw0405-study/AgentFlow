@@ -35,6 +35,8 @@ final class McpProtocol {
     static final int MAX_TOOLS = 200;
     static final int MAX_TOOL_NAME_LENGTH = 200;
     static final int MAX_DESCRIPTION_LENGTH = 500;
+    /** 提示参数列表只用于展示与填参提示，截断到前 16 项。 */
+    static final int MAX_FIELD_ENTRIES = 16;
     /** tools/list 分页上限：交互探测不该被上游无限翻页拖住。 */
     static final int MAX_LIST_PAGES = 5;
 
@@ -87,6 +89,33 @@ final class McpProtocol {
         params.put("name", tool);
         params.put("arguments", arguments == null ? Map.of() : arguments);
         return request(id, "tools/call", params);
+    }
+
+    static String resourcesList(int id, String cursor) {
+        return listRequest(id, "resources/list", cursor);
+    }
+
+    static String promptsList(int id, String cursor) {
+        return listRequest(id, "prompts/list", cursor);
+    }
+
+    static String resourcesRead(int id, String uri) {
+        return request(id, "resources/read", Map.of("uri", uri));
+    }
+
+    static String promptsGet(int id, String name, Map<String, Object> arguments) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("name", name);
+        params.put("arguments", arguments == null ? Map.of() : arguments);
+        return request(id, "prompts/get", params);
+    }
+
+    private static String listRequest(int id, String method, String cursor) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        if (cursor != null && !cursor.isBlank()) {
+            params.put("cursor", cursor);
+        }
+        return request(id, method, params);
     }
 
     private static String request(int id, String method, Map<String, Object> params) {
@@ -236,6 +265,117 @@ final class McpProtocol {
     @SuppressWarnings("unchecked")
     static Map<String, Object> callData(JsonNode result) {
         return JSON.convertValue(result, Map.class);
+    }
+
+    /** 资源清单条目：只搬定位与展示字段，内容本体走 resources/read。 */
+    record ResourceItem(String uri, String name, String description, String mimeType) {
+    }
+
+    /** 提示清单条目：arguments 只搬 name/description/required，schema 细节不入库。 */
+    record PromptArgument(String name, String description, boolean required) {
+    }
+
+    record PromptItem(String name, String description, List<PromptArgument> arguments) {
+    }
+
+    static List<ResourceItem> resourceItems(JsonNode resources) {
+        List<ResourceItem> items = new ArrayList<>();
+        if (!resources.isArray()) {
+            return items;
+        }
+        for (JsonNode resource : resources) {
+            String uri = resource.path("uri").asText("");
+            if (uri.isBlank()) {
+                continue;
+            }
+            items.add(new ResourceItem(truncate(uri, MAX_TOOL_NAME_LENGTH),
+                    truncate(resource.path("name").asText(""), MAX_TOOL_NAME_LENGTH),
+                    truncate(resource.path("description").asText(""), MAX_DESCRIPTION_LENGTH),
+                    truncate(resource.path("mimeType").asText(""), MAX_TOOL_NAME_LENGTH)));
+            if (items.size() >= MAX_TOOLS) {
+                break;
+            }
+        }
+        return items;
+    }
+
+    static List<PromptItem> promptItems(JsonNode prompts) {
+        List<PromptItem> items = new ArrayList<>();
+        if (!prompts.isArray()) {
+            return items;
+        }
+        for (JsonNode prompt : prompts) {
+            String name = prompt.path("name").asText("");
+            if (name.isBlank()) {
+                continue;
+            }
+            List<PromptArgument> arguments = new ArrayList<>();
+            for (JsonNode argument : prompt.path("arguments")) {
+                String argName = argument.path("name").asText("");
+                if (argName.isBlank()) {
+                    continue;
+                }
+                arguments.add(new PromptArgument(truncate(argName, MAX_TOOL_NAME_LENGTH),
+                        truncate(argument.path("description").asText(""), MAX_DESCRIPTION_LENGTH),
+                        argument.path("required").asBoolean(false)));
+                if (arguments.size() >= MAX_FIELD_ENTRIES) {
+                    break;
+                }
+            }
+            items.add(new PromptItem(truncate(name, MAX_TOOL_NAME_LENGTH),
+                    truncate(prompt.path("description").asText(""), MAX_DESCRIPTION_LENGTH),
+                    List.copyOf(arguments)));
+            if (items.size() >= MAX_TOOLS) {
+                break;
+            }
+        }
+        return items;
+    }
+
+    /** resources/read 的 result：contents 原样保留，另拼一份纯文本供下游直接引用。 */
+    static Map<String, Object> readData(JsonNode result) {
+        Map<String, Object> data = callData(result);
+        data.put("text", joinText(result.path("contents")));
+        return data;
+    }
+
+    /** prompts/get 的 result：messages 原样保留，另拼一份纯文本（角色前缀便于喂 llm 节点）。 */
+    static Map<String, Object> promptData(JsonNode result) {
+        Map<String, Object> data = callData(result);
+        StringBuilder text = new StringBuilder();
+        for (JsonNode message : result.path("messages")) {
+            String role = message.path("role").asText("");
+            String body = joinText(message.path("content").isArray()
+                    ? message.path("content") : JSON.createArrayNode().add(message.path("content")));
+            if (body.isEmpty()) {
+                continue;
+            }
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append(role).append(": ").append(body);
+        }
+        data.put("text", text.toString());
+        return data;
+    }
+
+    /** 拼接 content/contents 数组里的 text part；blob/image 等非文本 part 不进 text。 */
+    private static String joinText(JsonNode parts) {
+        StringBuilder text = new StringBuilder();
+        for (JsonNode part : parts) {
+            if (!"text".equals(part.path("type").asText())) {
+                continue;
+            }
+            String value = part.path("text").asText("");
+            if (value.isEmpty()) {
+                continue;
+            }
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append(value);
+        }
+        return text.toString();
     }
 
     private static String truncate(String value, int max) {

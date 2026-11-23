@@ -90,6 +90,24 @@ describe('节点配置抽屉', () => {
     expect(wrapper.text()).toContain('未配置 AF_LLM_*')
   })
 
+  it('mcp 节点按 capability 渲染 uri / promptName 表单', () => {
+    const resource = mountDrawer({
+      key: 'mcp_1',
+      type: 'mcp',
+      config: { connectorId: 'c1', capability: 'resource', uri: 'test://doc' },
+    })
+    expect(resource.text()).toContain('资源读取')
+    expect(resource.find('input[placeholder="test://doc 或 {{ vars.doc }}"]').exists()).toBe(true)
+
+    const prompt = mountDrawer({
+      key: 'mcp_1',
+      type: 'mcp',
+      config: { connectorId: 'c1', capability: 'prompt', promptName: 'greet' },
+    })
+    expect(prompt.text()).toContain('promptName')
+    expect(prompt.text()).toContain('argumentsMapping')
+  })
+
   it('start 节点同样可以删除（清理多余起点）', () => {
     const wrapper = mountDrawer({ key: 'start_1', type: 'start', config: {} })
     const btn = wrapper.findAll('button').find((b) => b.text().includes('删除节点'))

@@ -289,11 +289,74 @@ def _checkpoint_resume_dsl() -> dict[str, Any]:
     }
 
 
+def _mcp_resource_dsl() -> dict[str, Any]:
+    return {
+        "dslVersion": "1.0",
+        "variables": {},
+        "defaults": _RETRY_DEFAULTS,
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "fetch",
+                "type": "mcp",
+                "config": {
+                    "connectorId": "test.mcp",
+                    "capability": "resource",
+                    "uri": "{{ vars.doc }}",
+                },
+            },
+            {
+                "key": "end",
+                "type": "end",
+                "config": {"resultMapping": {"text": "{{ nodes.fetch.output.result.text }}"}},
+            },
+        ],
+        "edges": [{"from": "start", "to": "fetch"}, {"from": "fetch", "to": "end"}],
+    }
+
+
+def _mcp_prompt_dsl() -> dict[str, Any]:
+    return {
+        "dslVersion": "1.0",
+        "variables": {},
+        "defaults": _RETRY_DEFAULTS,
+        "nodes": [
+            {"key": "start", "type": "start", "config": {}},
+            {
+                "key": "fetch",
+                "type": "mcp",
+                "config": {
+                    "connectorId": "test.mcp",
+                    "capability": "prompt",
+                    "promptName": "greet",
+                    "argumentsMapping": {"who": "{{ vars.who }}"},
+                },
+            },
+            {
+                "key": "end",
+                "type": "end",
+                "config": {"resultMapping": {"text": "{{ nodes.fetch.output.result.text }}"}},
+            },
+        ],
+        "edges": [{"from": "start", "to": "fetch"}, {"from": "fetch", "to": "end"}],
+    }
+
+
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         name="linear-order",
         dsl=_linear_order_dsl(),
         initial_variables={"question": "AgentFlow 如何保证恰好一次？"},
+    ),
+    Scenario(
+        name="mcp-resource-read",
+        dsl=_mcp_resource_dsl(),
+        initial_variables={"doc": "test://doc"},
+    ),
+    Scenario(
+        name="mcp-prompt-get",
+        dsl=_mcp_prompt_dsl(),
+        initial_variables={"who": "acme"},
     ),
     Scenario(name="retry-backoff", dsl=_llm_retry_dsl(3), fail_times=2),
     Scenario(name="retry-exhausted", dsl=_llm_retry_dsl(2), fail_times=99),

@@ -29,6 +29,7 @@ class ToolConnector(Protocol):
         timeout_ms: int,
         trace_id: str,
         space_id: str = "",
+        mcp_method: str | None = None,
     ) -> CommandResult: ...
 
 

@@ -316,6 +316,39 @@ export interface McpToolsDto {
   errorCode: string | null
 }
 
+/** MCP 资源清单条目：uri 即 mcp 节点 capability=resource 的定位参数。 */
+export interface McpResourceItem {
+  uri: string
+  name: string
+  description: string
+  mimeType: string
+}
+
+export interface McpResourcesDto {
+  ok: boolean
+  resources: McpResourceItem[]
+  errorCode: string | null
+}
+
+/** MCP 提示清单条目：name 即 mcp 节点 capability=prompt 的 promptName。 */
+export interface McpPromptArgument {
+  name: string
+  description: string
+  required: boolean
+}
+
+export interface McpPromptItem {
+  name: string
+  description: string
+  arguments: McpPromptArgument[]
+}
+
+export interface McpPromptsDto {
+  ok: boolean
+  prompts: McpPromptItem[]
+  errorCode: string | null
+}
+
 /** 模型连接里 config 的已知字段，仅在读取时用来收窄类型。 */
 export interface LlmConnectionConfig {
   baseUrl?: string

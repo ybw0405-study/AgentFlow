@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### 新增：MCP resources / prompts 能力
+
+- 新增 DSL 节点 `mcp`（`capability=resource|prompt`）：读 MCP 服务端资源、取提示模板；
+  tools 调用仍走 tool 节点。内部 invoke 契约加可选 `mcpMethod`，结果归一化出 `text` 供下游引用。
+- 新增 `POST /api/v1/connectors/{id}/mcp/resources`、`/mcp/prompts` 清单探测；
+  连接器页 MCP 行「拉取清单」一次汇总工具/资源/提示三类能力。
+- 治理与 tools 同链路：授权、callId 幂等、沙箱、凭据加密、256KB 裁剪、瞬时/永久分类。
+
 ### 新增：MCP 工具来源
 
 - 连接器新增 `MCP` 类型（Streamable HTTP 单端点 JSON-RPC）：tool 节点的 `operation` 填 MCP 工具名即可

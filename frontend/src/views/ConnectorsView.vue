@@ -203,18 +203,33 @@ async function refreshModels(row: ConnectorDto): Promise<void> {
   }
 }
 
-/** 重新拉一次 MCP 工具清单：服务端新增工具后，不必删掉连接重建。 */
-async function refreshTools(row: ConnectorDto): Promise<void> {
+/** 重新拉一次 MCP 三类清单（工具/资源/提示）：服务端新增能力后不必删连接重建。 */
+async function refreshManifest(row: ConnectorDto): Promise<void> {
   try {
-    const probe = await connectorApi.probeMcpTools(row.id)
-    if (!probe.ok) {
-      error.value = probeErrorMessage(probe.errorCode)
-      return
+    const [tools, resources, prompts] = await Promise.all([
+      connectorApi.probeMcpTools(row.id),
+      connectorApi.probeMcpResources(row.id),
+      connectorApi.probeMcpPrompts(row.id),
+    ])
+    const parts: string[] = []
+    const failures: string[] = []
+    if (tools.ok) {
+      parts.push(`${tools.tools.length} 工具`)
+    } else {
+      failures.push(`工具：${probeErrorMessage(tools.errorCode)}`)
     }
-    const names = probe.tools.map((t) => t.name)
-    notice.value = names.length
-      ? `${row.name}：${names.length} 个工具（${names.slice(0, 5).join('、')}${names.length > 5 ? '…' : ''}）`
-      : `${row.name}：服务端没有暴露工具`
+    if (resources.ok) {
+      parts.push(`${resources.resources.length} 资源`)
+    } else {
+      failures.push(`资源：${probeErrorMessage(resources.errorCode)}`)
+    }
+    if (prompts.ok) {
+      parts.push(`${prompts.prompts.length} 提示`)
+    } else {
+      failures.push(`提示：${probeErrorMessage(prompts.errorCode)}`)
+    }
+    notice.value = `${row.name}：${parts.join(' / ') || '无可用能力'}`
+    error.value = failures.length ? failures.join('；') : null
   } catch (e) {
     error.value = describe(e)
   }
@@ -469,9 +484,9 @@ onMounted(load)
                 <button
                   v-if="c.type === 'MCP'"
                   class="af-btn af-btn--sm"
-                  @click="refreshTools(c)"
+                  @click="refreshManifest(c)"
                 >
-                  拉取工具
+                  拉取清单
                 </button>
                 <button
                   class="af-btn af-btn--sm"

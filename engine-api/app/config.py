@@ -47,6 +47,7 @@ class Settings(BaseSettings):
             "parallel",
             "subworkflow",
             "human_gate",
+            "mcp",
         }
     )
 

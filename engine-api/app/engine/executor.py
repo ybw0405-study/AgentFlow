@@ -33,7 +33,9 @@ from .state import ExecutionState
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_NODE_TYPES = frozenset({"llm", "retrieval", "tool", "loop", "parallel", "subworkflow"})
+RETRYABLE_NODE_TYPES = frozenset(
+    {"llm", "retrieval", "tool", "mcp", "loop", "parallel", "subworkflow"}
+)
 
 
 def checkpoint_payload(state: ExecutionState) -> dict[str, Any]:
@@ -87,7 +89,7 @@ class NodeRunner:
         """
         retry = node.retry or dsl.defaults.retry
         retryable = node.type in RETRYABLE_NODE_TYPES
-        if node.type == "tool" and not node.config.idempotent:  # type: ignore[attr-defined]
+        if node.type in ("tool", "mcp") and not node.config.idempotent:  # type: ignore[attr-defined]
             retryable = False
         max_attempts = retry.max_attempts if retryable else 1
         timeout_ms = node.timeout_ms or dsl.defaults.timeout_ms

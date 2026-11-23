@@ -106,7 +106,7 @@ describe('DSL 枚举与引擎模型对齐（CT-1 单一事实源）', () => {
 
   it('节点 type 与引擎判别联合完全一致，且 NODE_TYPE_METAS 全覆盖', () => {
     const fromEngine = engineNodeTypes()
-    expect(fromEngine.length).toBe(11)
+    expect(fromEngine.length).toBe(12)
     expect([...NODE_TYPES]).toEqual(fromEngine)
     expect([...NODE_TYPE_METAS.map((m) => m.type)].sort()).toEqual([...NODE_TYPES].sort())
   })

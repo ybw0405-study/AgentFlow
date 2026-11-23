@@ -18,7 +18,7 @@ export const OUTPUT_MODES = ['text', 'json'] as const
 export const LLM_PROVIDERS = ['openai-compatible'] as const
 export const VARIABLE_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array'] as const
 export const NODE_TYPES = [
-  'start', 'end', 'llm', 'retrieval', 'tool', 'condition', 'loop',
+  'start', 'end', 'llm', 'retrieval', 'tool', 'mcp', 'condition', 'loop',
   'parallel', 'transform', 'subworkflow', 'human_gate',
 ] as const
 export const SUBWORKFLOW_VERSION_POLICIES = ['LATEST_PUBLISHED', 'FIXED'] as const

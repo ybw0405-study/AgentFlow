@@ -120,6 +120,8 @@ export function newNodeConfig(
     case 'tool':
       // 不预填任何 mock 连接器：真实连接由连接器页创建，留空由校验提示补齐。
       return { connectorId: '', operation: '', paramsMapping: {} }
+    case 'mcp':
+      return { connectorId: '', capability: 'resource', uri: '', argumentsMapping: {} }
     case 'condition':
       // when 用字面量 True：空工作流里没有变量可引用，先给一个能发布的起点
       return { cases: [{ name: 'yes', when: 'True' }], elseBranch: 'default' }

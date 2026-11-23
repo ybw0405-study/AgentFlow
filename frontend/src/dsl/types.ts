@@ -52,11 +52,20 @@ export interface ToolConfig {
   idempotent?: boolean
 }
 
+export interface McpConfig {
+  connectorId: string
+  capability: 'resource' | 'prompt'
+  uri?: string
+  promptName?: string
+  argumentsMapping?: Record<string, string>
+  idempotent?: boolean
+}
+
 export interface EndConfig {
   resultMapping: Record<string, string>
 }
 
-export type NodeConfig = LlmConfig | ToolConfig | EndConfig | Record<string, unknown>
+export type NodeConfig = LlmConfig | ToolConfig | McpConfig | EndConfig | Record<string, unknown>
 
 export interface DslNode {
   key: string
@@ -95,6 +104,7 @@ export const NODE_TYPE_METAS: NodeTypeMeta[] = [
   { type: 'start', label: 'Start', description: '入口：校验并合并初始变量' },
   { type: 'llm', label: 'LLM', description: '模型调用（连接器或进程级端点）' },
   { type: 'tool', label: 'Tool', description: '连接器工具调用（经 connector-service 出网）' },
+  { type: 'mcp', label: 'MCP', description: 'MCP 资源读取 / 提示模板（tools 走 Tool 节点）' },
   { type: 'retrieval', label: 'Retrieval', description: '从导入的文档里检索真实片段' },
   {
     type: 'condition',
