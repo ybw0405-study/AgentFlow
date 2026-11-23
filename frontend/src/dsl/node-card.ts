@@ -83,6 +83,22 @@ export function inlineFields(type: string, config: Record<string, unknown>): Inl
         { key: 'connectorId', label: '连接器', value: text(config.connectorId), kind: 'text' },
         { key: 'operation', label: '操作', value: text(config.operation), kind: 'text' },
       ]
+    case 'mcp':
+      return [
+        { key: 'connectorId', label: '连接器', value: text(config.connectorId), kind: 'text' },
+        {
+          key: 'capability',
+          label: '能力',
+          value: config.capability === 'prompt' ? '提示模板' : '资源读取',
+          kind: 'text',
+        },
+        {
+          key: 'locator',
+          label: config.capability === 'prompt' ? '提示名' : 'URI',
+          value: text(config.capability === 'prompt' ? config.promptName : config.uri),
+          kind: 'text',
+        },
+      ]
     case 'retrieval':
       return [
         {
@@ -205,6 +221,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   start: '起点',
   llm: '模型调用',
   tool: '工具调用',
+  mcp: 'MCP 资源/提示',
   condition: '条件分支',
   transform: '变量写回',
   subworkflow: '子流程',

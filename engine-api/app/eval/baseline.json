@@ -192,6 +192,74 @@
       "stepsUsed": 5,
       "tokenUsed": 53
     },
+    "mcp-prompt-get": {
+      "attempts": {
+        "end": 1,
+        "fetch": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "end",
+        "fetch",
+        "start"
+      ],
+      "completedOrder": [
+        "start",
+        "fetch",
+        "end"
+      ],
+      "errorCode": null,
+      "failedCodes": [],
+      "merged": {},
+      "nodeStatuses": {
+        "end": "SUCCEEDED",
+        "fetch": "SUCCEEDED",
+        "start": "SUCCEEDED"
+      },
+      "result": {
+        "text": "user: hello acme"
+      },
+      "retryDelays": [],
+      "skipped": [],
+      "status": "SUCCEEDED",
+      "stepsUsed": 3,
+      "tokenUsed": 0
+    },
+    "mcp-resource-read": {
+      "attempts": {
+        "end": 1,
+        "fetch": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "end",
+        "fetch",
+        "start"
+      ],
+      "completedOrder": [
+        "start",
+        "fetch",
+        "end"
+      ],
+      "errorCode": null,
+      "failedCodes": [],
+      "merged": {},
+      "nodeStatuses": {
+        "end": "SUCCEEDED",
+        "fetch": "SUCCEEDED",
+        "start": "SUCCEEDED"
+      },
+      "result": {
+        "text": "资源正文 test://doc"
+      },
+      "retryDelays": [],
+      "skipped": [],
+      "status": "SUCCEEDED",
+      "stepsUsed": 3,
+      "tokenUsed": 0
+    },
     "parallel-join": {
       "attempts": {
         "end": 1,

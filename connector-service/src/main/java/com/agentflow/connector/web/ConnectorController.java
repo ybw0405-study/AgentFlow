@@ -97,6 +97,20 @@ public class ConnectorController {
         return ApiResponse.ok(connectors.probeMcpTools(TenantContext.require(), id));
     }
 
+    /** 拉取该 MCP 连接暴露的资源清单（uri/name/description/mimeType）。 */
+    @PostMapping("/{id}/mcp/resources")
+    public ApiResponse<com.agentflow.connector.service.ConnectorInvoker.McpResourcesResult> probeMcpResources(
+            @PathVariable String id) {
+        return ApiResponse.ok(connectors.probeMcpResources(TenantContext.require(), id));
+    }
+
+    /** 拉取该 MCP 连接暴露的提示清单（name/description/arguments 摘要）。 */
+    @PostMapping("/{id}/mcp/prompts")
+    public ApiResponse<com.agentflow.connector.service.ConnectorInvoker.McpPromptsResult> probeMcpPrompts(
+            @PathVariable String id) {
+        return ApiResponse.ok(connectors.probeMcpPrompts(TenantContext.require(), id));
+    }
+
     private static String traceId(HttpServletRequest request) {
         return org.slf4j.MDC.get(com.agentflow.common.trace.TraceIdContext.MDC_KEY);
     }

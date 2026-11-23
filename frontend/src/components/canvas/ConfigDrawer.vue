@@ -690,6 +690,82 @@ function editBody(): void {
       </button>
     </template>
 
+    <template v-else-if="node.type === 'mcp'">
+      <label class="af-label">connectorId</label>
+      <input
+        class="af-input mono"
+        :value="cfg('connectorId', '')"
+        @input="setCfg('connectorId', ($event.target as HTMLInputElement).value)"
+      >
+      <label class="af-label">capability</label>
+      <select
+        class="af-select"
+        :value="cfg('capability', 'resource')"
+        @change="setCfg('capability', ($event.target as HTMLSelectElement).value)"
+      >
+        <option value="resource">
+          资源读取（resources/read）
+        </option>
+        <option value="prompt">
+          提示模板（prompts/get）
+        </option>
+      </select>
+      <template v-if="cfg('capability', 'resource') === 'resource'">
+        <label class="af-label">uri</label>
+        <input
+          class="af-input mono"
+          :value="cfg('uri', '')"
+          placeholder="test://doc 或 {{ vars.doc }}"
+          @input="setCfg('uri', ($event.target as HTMLInputElement).value)"
+        >
+      </template>
+      <template v-else>
+        <label class="af-label">promptName</label>
+        <input
+          class="af-input mono"
+          :value="cfg('promptName', '')"
+          @input="setCfg('promptName', ($event.target as HTMLInputElement).value)"
+        >
+        <label class="af-label">argumentsMapping</label>
+        <div
+          v-for="([k, v], i) in mappingEntries('argumentsMapping')"
+          :key="i"
+          style="display: flex; gap: 6px; margin-bottom: 4px"
+        >
+          <input
+            class="af-input mono"
+            :value="k"
+            placeholder="参数名"
+            @input="setMappingEntry('argumentsMapping', i, 'k', ($event.target as HTMLInputElement).value)"
+          >
+          <input
+            class="af-input mono"
+            :value="v"
+            placeholder="{{ vars.x }}"
+            @input="setMappingEntry('argumentsMapping', i, 'v', ($event.target as HTMLInputElement).value)"
+          >
+          <button
+            class="af-btn af-btn--sm"
+            @click="removeMappingEntry('argumentsMapping', i)"
+          >
+            ×
+          </button>
+        </div>
+        <button
+          class="af-btn af-btn--sm"
+          @click="addMappingEntry('argumentsMapping')"
+        >
+          + 参数
+        </button>
+      </template>
+      <div
+        class="af-faint"
+        style="font-size: 11px; margin-bottom: 6px"
+      >
+        uri / 提示名可在连接器页「拉取清单」查看；MCP 工具调用仍用 Tool 节点。
+      </div>
+    </template>
+
     <template v-else-if="node.type === 'end'">
       <label class="af-label">resultMapping</label>
       <div

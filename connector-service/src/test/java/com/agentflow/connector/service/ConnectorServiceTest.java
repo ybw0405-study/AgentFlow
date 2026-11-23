@@ -189,6 +189,19 @@ class ConnectorServiceTest {
     }
 
     @Test
+    void resourceAndPromptProbesGuardType() {
+        when(repo.findById("conn-x")).thenReturn(Optional.of(row("conn-x", "space-a", true)));
+        assertThatThrownBy(() -> service.probeMcpResources(tenant("space-a", "u-admin", "ADMIN"), "conn-x"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("only mcp connectors");
+        assertThatThrownBy(() -> service.probeMcpPrompts(tenant("space-a", "u-admin", "ADMIN"), "conn-x"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("only mcp connectors");
+        verify(invoker, never()).probeMcpResources(any(), anyInt());
+        verify(invoker, never()).probeMcpPrompts(any(), anyInt());
+    }
+
+    @Test
     void mcpProbeDelegatesForMcpConnector() {
         Map<String, Object> config = Map.of("baseUrl", "https://mcp.example.com/mcp",
                 "allowedHosts", List.of("mcp.example.com"));

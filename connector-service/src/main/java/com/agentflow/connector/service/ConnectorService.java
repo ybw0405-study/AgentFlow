@@ -286,6 +286,27 @@ public class ConnectorService {
         return invoker.probeMcpTools(row, PROBE_TIMEOUT_MS);
     }
 
+    /** 探测该 MCP 连接暴露的资源清单（mcp 节点 capability=resource 的 uri 来源）。 */
+    public ConnectorInvoker.McpResourcesResult probeMcpResources(TenantInfo tenant, String id) {
+        ConnectorRow row = requireMcp(tenant, id);
+        return invoker.probeMcpResources(row, PROBE_TIMEOUT_MS);
+    }
+
+    /** 探测该 MCP 连接暴露的提示清单（mcp 节点 capability=prompt 的 promptName 来源）。 */
+    public ConnectorInvoker.McpPromptsResult probeMcpPrompts(TenantInfo tenant, String id) {
+        ConnectorRow row = requireMcp(tenant, id);
+        return invoker.probeMcpPrompts(row, PROBE_TIMEOUT_MS);
+    }
+
+    private ConnectorRow requireMcp(TenantInfo tenant, String id) {
+        ConnectorRow row = requireVisible(tenant, id);
+        if (!"MCP".equals(row.type())) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "only mcp connectors expose a tool list");
+        }
+        return row;
+    }
+
     public List<String> chainOf(String spaceId) {
         return resolver.chainOf(spaceId).stream().map(n -> n.id()).toList();
     }

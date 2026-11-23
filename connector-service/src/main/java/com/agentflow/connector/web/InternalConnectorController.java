@@ -48,7 +48,8 @@ public class InternalConnectorController {
             return new InvokeResponse(false, null, "CONN-NOT_FOUND-001", false, 0);
         }
         InvokeResult result = invoker.invoke(new InvokeCommand(body.tenantId(), id,
-                body.callId(), body.operation(), body.params(), timeoutMs, body.traceId()));
+                body.callId(), body.operation(), body.params(), timeoutMs, body.traceId(),
+                body.mcpMethod()));
         return new InvokeResponse(result.ok(), result.data(), result.errorCode(),
                 result.transientError(), result.latencyMs());
     }

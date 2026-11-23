@@ -71,7 +71,7 @@ flowchart LR
 | condition / loop / parallel / transform / subworkflow 节点（画布表单配置，子图有独立画布） | P1 |
 | 灰度发布、故障注入测试套件 | P1 |
 | 三级租户继承（ORG → TEAM → SPACE，OWNER 降级继承） | P2 |
-| connector-service：CRUD / AES-256-GCM 凭据 / OAuth2 / 出网沙箱 / MCP 工具来源（Streamable HTTP） | P2 |
+| connector-service：CRUD / AES-256-GCM 凭据 / OAuth2 / 出网沙箱 / MCP 工具·资源·提示来源（Streamable HTTP） | P2 |
 | 成本中心：budget_ledger 投影累加、有效限额继承（标出来源）、试跑份额、跨租户按模型、预算对账 | P2 |
 | human_gate 人工审批：挂起/恢复、超时自动裁决、裁决幂等；审批人 ROLE / USERS / EXPRESSION（V006） | P3 |
 | 审批中心：待办收件箱、通过/驳回、审批人通知、outbox 重投；裁决经 HTTP + MQ 双通道送达引擎 | P3 |

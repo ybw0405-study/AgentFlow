@@ -27,7 +27,7 @@ public final class ConnectorDtos {
 
     public record InvokeRequest(String tenantId, String callId, String operation,
                                 java.util.Map<String, Object> params, Integer timeoutMs,
-                                String traceId) {
+                                String traceId, String mcpMethod) {
     }
 
     public record InvokeResponse(boolean ok, java.util.Map<String, Object> data,

@@ -140,4 +140,49 @@ class McpProtocolTest {
         assertThat(data).containsEntry("isError", true);
         assertThat(data).containsKey("content");
     }
+
+    @Test
+    void resourceAndPromptFramesCarryLocatorParams() throws Exception {
+        assertThat(json(McpProtocol.resourcesRead(4, "test://doc")).path("params").path("uri").asText())
+                .isEqualTo("test://doc");
+        JsonNode prompt = json(McpProtocol.promptsGet(5, "greet", Map.of("who", "acme")));
+        assertThat(prompt.path("method").asText()).isEqualTo("prompts/get");
+        assertThat(prompt.path("params").path("arguments").path("who").asText()).isEqualTo("acme");
+        assertThat(json(McpProtocol.resourcesList(6, "c1")).path("params").path("cursor").asText())
+                .isEqualTo("c1");
+        assertThat(json(McpProtocol.promptsList(7, null)).path("params").has("cursor")).isFalse();
+    }
+
+    @Test
+    void readDataJoinsTextPartsAndSkipsBlob() throws Exception {
+        Map<String, Object> data = McpProtocol.readData(json(
+                "{\"contents\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"blob\",\"blob\":\"xx\"},"
+                        + "{\"type\":\"text\",\"text\":\"b\"}]}"));
+        assertThat(data).containsEntry("text", "a\nb");
+        assertThat(data).containsKey("contents");
+    }
+
+    @Test
+    void promptDataJoinsMessagesWithRolePrefix() throws Exception {
+        Map<String, Object> data = McpProtocol.promptData(json(
+                "{\"messages\":[{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":\"q\"}},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a\"}]}]}"));
+        assertThat(data).containsEntry("text", "user: q\nassistant: a");
+        assertThat(data).containsKey("messages");
+    }
+
+    @Test
+    void resourceAndPromptItemsTruncateAndDropNameless() throws Exception {
+        List<McpProtocol.ResourceItem> resources = McpProtocol.resourceItems(json(
+                "[{\"uri\":\"" + "u".repeat(300) + "\"},{\"name\":\"no uri\"}]"));
+        assertThat(resources).hasSize(1);
+        assertThat(resources.get(0).uri()).hasSize(McpProtocol.MAX_TOOL_NAME_LENGTH);
+
+        List<McpProtocol.PromptItem> prompts = McpProtocol.promptItems(json(
+                "[{\"name\":\"p\",\"arguments\":[{\"name\":\"a\",\"required\":true},{\"description\":\"x\"}]},"
+                        + "{\"description\":\"no name\"}]"));
+        assertThat(prompts).hasSize(1);
+        assertThat(prompts.get(0).arguments()).hasSize(1);
+        assertThat(prompts.get(0).arguments().get(0).required()).isTrue();
+    }
 }

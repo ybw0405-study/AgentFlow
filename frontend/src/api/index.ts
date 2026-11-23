@@ -16,6 +16,8 @@ import type {
   LoginData,
   MeData,
   LlmModelsDto,
+  McpPromptsDto,
+  McpResourcesDto,
   McpToolsDto,
   MisfirePolicy,
   ModelProbeDto,
@@ -98,6 +100,10 @@ export const connectorApi = {
   probeModels: (id: string) => post<ModelProbeDto>(`/connectors/${id}/models/probe`, {}),
   /** 拉取 MCP 连接暴露的工具清单（服务端解密凭据后出网，只回 name/description/inputSchema）。 */
   probeMcpTools: (id: string) => post<McpToolsDto>(`/connectors/${id}/mcp/tools`, {}),
+  /** 拉取 MCP 资源清单（uri/name/description/mimeType）。 */
+  probeMcpResources: (id: string) => post<McpResourcesDto>(`/connectors/${id}/mcp/resources`, {}),
+  /** 拉取 MCP 提示清单（name/description/arguments 摘要）。 */
+  probeMcpPrompts: (id: string) => post<McpPromptsDto>(`/connectors/${id}/mcp/prompts`, {}),
 }
 
 export const gateApi = {

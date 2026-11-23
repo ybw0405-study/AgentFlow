@@ -38,6 +38,7 @@ class HttpToolConnector:
         timeout_ms: int,
         trace_id: str,
         space_id: str = "",
+        mcp_method: str | None = None,
     ) -> CommandResult:
         started = time.monotonic()
         body = {
@@ -48,6 +49,8 @@ class HttpToolConnector:
             "timeoutMs": timeout_ms,
             "traceId": trace_id,
         }
+        if mcp_method is not None:
+            body["mcpMethod"] = mcp_method
         try:
             resp = await self._client.post(
                 f"/internal/connectors/{self.connector_id}/invoke",

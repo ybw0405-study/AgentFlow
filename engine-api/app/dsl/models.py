@@ -131,6 +131,26 @@ class ToolConfig(CamelModel):
     idempotent: bool = True  # False 时禁止重试
 
 
+class McpConfig(CamelModel):
+    """MCP 非工具能力：resource 读服务端资源，prompt 取提示模板。tools 仍走 tool 节点。"""
+
+    connector_id: str = Field(min_length=1)
+    capability: Literal["resource", "prompt"]
+    uri: str | None = None
+    prompt_name: str | None = None
+    arguments_mapping: dict[str, str] = Field(default_factory=dict)
+    idempotent: bool = True  # False 时禁止重试
+
+    @model_validator(mode="after")
+    def _locator_matches_capability(self) -> McpConfig:
+        if self.capability == "resource":
+            if not self.uri or self.prompt_name:
+                raise ValueError("resource capability requires uri and forbids promptName")
+        elif not self.prompt_name or self.uri:
+            raise ValueError("prompt capability requires promptName and forbids uri")
+        return self
+
+
 class ConditionCase(CamelModel):
     name: str = Field(min_length=1)
     when: str = Field(min_length=1)
@@ -240,6 +260,11 @@ class ToolNode(NodeBase):
     config: ToolConfig
 
 
+class McpNode(NodeBase):
+    type: Literal["mcp"]
+    config: McpConfig
+
+
 class ConditionNode(NodeBase):
     type: Literal["condition"]
     config: ConditionConfig
@@ -276,6 +301,7 @@ AnyNode = Annotated[
     | LlmNode
     | RetrievalNode
     | ToolNode
+    | McpNode
     | ConditionNode
     | LoopNode
     | ParallelNode

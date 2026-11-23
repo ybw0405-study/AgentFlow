@@ -25,8 +25,9 @@ from app.events.log import EventLog
 from app.events.types import EXECUTION_STATUS_OF_EVENT, TERMINAL_EVENTS, EventType
 from app.governance.budget import BudgetLedger
 from app.nodes import build_executors
+from app.nodes.mcp import McpExecutor
 from app.nodes.tool import ConnectorRegistry, ToolExecutor
-from tests.support.mocks import FakeLLMProvider, FakeToolConnector
+from tests.support.mocks import FakeLLMProvider, FakeMcpConnector, FakeToolConnector
 from tests.unit.conftest import InMemoryEventStore, NullPublisher
 
 from .specs import SCENARIOS, Scenario
@@ -86,6 +87,7 @@ def _stack(settings, redis, store, provider) -> Dispatcher:
     budget = BudgetLedger(redis)
     executors = build_executors(redis, {"openai-compatible": provider})
     executors["tool"] = ToolExecutor(ConnectorRegistry(lambda cid: FakeToolConnector(redis, cid)))
+    executors["mcp"] = McpExecutor(ConnectorRegistry(lambda cid: FakeMcpConnector(redis, cid)))
     return Dispatcher(settings, store, event_log, redis, executors, budget)
 
 
@@ -103,7 +105,7 @@ def _request(scenario: Scenario) -> ExecuteRequest:
             "triggeredBy": "eval-harness",
             "idempotencyKey": eid.hex,
             "versionSnapshot": scenario.dsl,
-            "authorizedConnectorIds": ["test.search", "test.echo", "test.flaky"],
+            "authorizedConnectorIds": ["test.search", "test.echo", "test.flaky", "test.mcp"],
             "initialVariables": scenario.initial_variables,
             "policy": {"tokenBudget": 8000, "maxSteps": 30, "deadlineMs": 60000},
             "traceId": uuid.uuid5(uuid.NAMESPACE_URL, f"agentflow-eval-trace:{scenario.name}").hex,
@@ -247,6 +249,22 @@ def _verify(name: str, report: dict[str, Any]) -> None:
         require(
             report["result"]["query"] == "AgentFlow 如何保证恰好一次？",
             "linear-order: tool 参数映射漂移",
+        )
+    elif name == "mcp-resource-read":
+        require(status == "SUCCEEDED", f"mcp-resource-read: 状态 {status}")
+        require(
+            report["completedOrder"] == ["start", "fetch", "end"],
+            f"mcp-resource-read: 拓扑序被破坏 {report['completedOrder']}",
+        )
+        require(
+            report["result"]["text"] == "资源正文 test://doc",
+            "mcp-resource-read: uri 渲染或文本归一化漂移",
+        )
+    elif name == "mcp-prompt-get":
+        require(status == "SUCCEEDED", f"mcp-prompt-get: 状态 {status}")
+        require(
+            report["result"]["text"] == "user: hello acme",
+            "mcp-prompt-get: arguments 渲染或角色前缀漂移",
         )
     elif name == "retry-backoff":
         require(status == "SUCCEEDED", f"retry-backoff: 状态 {status}")

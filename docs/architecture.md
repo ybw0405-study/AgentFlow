@@ -495,7 +495,7 @@ CREATE TABLE node_io (
 | CRUD | `/connectors` | 连接器增删改查（列表对成员可见，写操作 ADMIN+） | ADMIN+ |
 | PUT | `/connectors/{id}/authorize` | 保存凭据密文（API_KEY/BASIC/OAUTH2 client_secret） | ADMIN+ |
 | POST | `/connectors/{id}/oauth/authorize-url` `/oauth/callback` | OAuth2 授权码流程（state 防伪 10 分钟） | ADMIN+ |
-| POST | `/connectors/{id}/models/probe` `/connectors/{id}/mcp/tools` | 模型清单 / MCP 工具清单探测（服务端解密凭据后出网） | 租户成员 |
+| POST | `/connectors/{id}/models/probe` `/connectors/{id}/mcp/tools` `/mcp/resources` `/mcp/prompts` | 模型清单 / MCP 工具·资源·提示清单探测（服务端解密凭据后出网） | 租户成员 |
 | GET/POST | `/internal/connectors` `/internal/connectors/{id}/invoke` | 引擎侧目录与调用（X-Internal-Token） | 服务间 |
 | GET | `/admin/usage` `/admin/audit` | 复用 DocQA 管理端 | 平台 ADMIN |
 
@@ -686,6 +686,17 @@ stateDiagram-v2
 - 与连接器路径不流式的边界一致：MCP 的 SSE 仅用于**取回单个 JSON-RPC 响应**，不做逐 token 透传；
   节点语义仍是「一次调用、整包结果、可按 callId 重放」。
 
+**MCP 非工具能力（resources / prompts）**：新增 DSL 节点 `mcp`（`capability=resource|prompt`），
+tools 仍走 tool 节点，一个节点类型不承载两种语义。内部 invoke 契约加可选 `mcpMethod`
+（`tools/call|resources/read|prompts/get`，缺省 tools/call），不用 operation 魔法前缀，避免与真实工具名撞车。
+resource 以 `uri` 定位（模板字符串可用），prompt 以 `promptName` + `argumentsMapping` 定位；
+两者互斥由 DSL 校验保证。结果归一化：`contents`/`messages` 原样保留，另拼 `text`
+（prompt 带角色前缀）供下游 llm 节点直接引用；blob/image 等非文本 part 不进 `text`，
+超 256KB 整调用拒绝（`CONN-RESPONSE-TOO_LARGE`），不静默截断。
+清单探测 `POST /connectors/{id}/mcp/resources`、`/mcp/prompts` 与工具清单同口径
+（5 页 / 200 条 / 串截断），连接器页「拉取清单」一次汇总三类能力。
+治理与 tools 完全同链路：授权校验、callId 幂等、沙箱、凭据注入、瞬时/永久分类、可试跑。
+
 ---
 
 ## 6. DSL 规范
@@ -772,7 +783,7 @@ stateDiagram-v2
       "additionalProperties": false,
       "properties": {
         "key": { "$ref": "#/$defs/nodeKey" },
-        "type": { "enum": ["start","end","llm","retrieval","tool","condition",
+        "type": { "enum": ["start","end","llm","retrieval","tool","mcp","condition",
                             "loop","parallel","transform","subworkflow","human_gate"] },
         "name": { "type": "string" },
         "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 600000 },
@@ -825,6 +836,20 @@ stateDiagram-v2
               "connectorId": { "type": "string", "minLength": 1 },
               "operation": { "type": "string", "minLength": 1 },
               "paramsMapping": { "type": "object",
+                "additionalProperties": { "type": "string" } },
+              "idempotent": { "type": "boolean", "default": true,
+                "description": "false 时禁止重试" }
+            } } } } },
+        { "if": { "properties": { "type": { "const": "mcp" } } },
+          "then": { "properties": { "config": {
+            "type": "object", "required": ["connectorId","capability"],
+            "additionalProperties": false,
+            "properties": {
+              "connectorId": { "type": "string", "minLength": 1 },
+              "capability": { "enum": ["resource","prompt"] },
+              "uri": { "type": "string", "description": "capability=resource 必填，模板字符串可用" },
+              "promptName": { "type": "string", "description": "capability=prompt 必填" },
+              "argumentsMapping": { "type": "object",
                 "additionalProperties": { "type": "string" } },
               "idempotent": { "type": "boolean", "default": true,
                 "description": "false 时禁止重试" }

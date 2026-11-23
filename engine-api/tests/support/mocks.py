@@ -131,4 +131,59 @@ class FakeToolConnector:
         raise PermanentNodeError("TOOL-OP-001", f"unknown test operation '{operation}'")
 
 
-__all__ = ["FakeLLMProvider", "FakeToolConnector"]
+class FakeMcpConnector:
+    """mcp 节点评测桩：按 mcp_method 回固定内容，callId 去重骨架与 FakeToolConnector 同。"""
+
+    def __init__(self, redis: aioredis.Redis, connector_id: str) -> None:
+        self._r = redis
+        self.connector_id = connector_id
+
+    async def invoke(
+        self,
+        *,
+        call_id: str,
+        operation: str,
+        params: dict[str, Any],
+        timeout_ms: int,
+        trace_id: str,
+        space_id: str = "",
+        mcp_method: str | None = None,
+    ) -> CommandResult:
+        started = time.monotonic()
+        cache_key = f"af:fakecall:{call_id}"
+        cached = await self._r.get(cache_key)
+        if cached is not None:
+            data = json.loads(cached)
+            data["_replayed"] = True
+            return CommandResult(
+                ok=True, data=data, latency_ms=int((time.monotonic() - started) * 1000)
+            )
+        result = self._execute(mcp_method, params)
+        payload = json.dumps(result, ensure_ascii=False)
+        first = await self._r.set(cache_key, payload, nx=True)
+        if first:
+            await self._r.incr(f"af:fakecount:{self.connector_id}:{mcp_method}")
+        else:
+            result = json.loads(await self._r.get(cache_key) or "{}")
+            result["_deduplicated"] = True
+        return CommandResult(
+            ok=True, data=result, latency_ms=int((time.monotonic() - started) * 1000)
+        )
+
+    def _execute(self, mcp_method: str | None, params: dict[str, Any]) -> dict[str, Any]:
+        if mcp_method == "resources/read":
+            uri = str(params.get("uri", ""))
+            return {
+                "contents": [{"uri": uri, "type": "text", "text": f"资源正文 {uri}"}],
+                "text": f"资源正文 {uri}",
+            }
+        if mcp_method == "prompts/get":
+            who = str(params.get("arguments", {}).get("who", ""))
+            return {
+                "messages": [{"role": "user", "content": {"type": "text", "text": f"hello {who}"}}],
+                "text": f"user: hello {who}",
+            }
+        raise PermanentNodeError("MCP-OP-001", f"unknown test mcp method '{mcp_method}'")
+
+
+__all__ = ["FakeLLMProvider", "FakeMcpConnector", "FakeToolConnector"]

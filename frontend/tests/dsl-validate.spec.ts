@@ -113,6 +113,24 @@ describe('dsl local validate', () => {
     expect(messages.some((m) => m.includes('operation'))).toBe(true)
   })
 
+  it('mcp 节点按 capability 校验定位参数', () => {
+    const dsl = base()
+    dsl.nodes.splice(1, 0, {
+      key: 'm1', type: 'mcp', config: { connectorId: 'c1', capability: 'resource' },
+    })
+    dsl.edges = [{ from: 'start', to: 'm1' }, { from: 'm1', to: 'end' }]
+    const messages = validateDslLocal(dsl).map((i) => i.message)
+    expect(messages.some((m) => m.includes('uri'))).toBe(true)
+
+    const ok = base()
+    ok.nodes.splice(1, 0, {
+      key: 'm1', type: 'mcp',
+      config: { connectorId: 'c1', capability: 'prompt', promptName: 'greet' },
+    })
+    ok.edges = [{ from: 'start', to: 'm1' }, { from: 'm1', to: 'end' }]
+    expect(validateDslLocal(ok)).toEqual([])
+  })
+
   it('retrieval 必须选择知识库并给出可操作提示', () => {
     const dsl = base()
     dsl.nodes.splice(1, 0, {
