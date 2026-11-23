@@ -130,7 +130,11 @@ async def test_http_tool_sends_mcp_method_only_when_set():
         "http://gw", "tok", "test.mcp", transport=httpx.MockTransport(handler)
     )
     await connector.invoke(
-        call_id="c1", operation="op", params={}, timeout_ms=1000, trace_id="t",
+        call_id="c1",
+        operation="op",
+        params={},
+        timeout_ms=1000,
+        trace_id="t",
         mcp_method="resources/read",
     )
     await connector.invoke(call_id="c2", operation="op", params={}, timeout_ms=1000, trace_id="t")

@@ -180,9 +180,7 @@ class FakeMcpConnector:
         if mcp_method == "prompts/get":
             who = str(params.get("arguments", {}).get("who", ""))
             return {
-                "messages": [
-                    {"role": "user", "content": {"type": "text", "text": f"hello {who}"}}
-                ],
+                "messages": [{"role": "user", "content": {"type": "text", "text": f"hello {who}"}}],
                 "text": f"user: hello {who}",
             }
         raise PermanentNodeError("MCP-OP-001", f"unknown test mcp method '{mcp_method}'")
