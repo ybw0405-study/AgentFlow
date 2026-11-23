@@ -8,6 +8,7 @@ import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.domain.ConnectorRepository.CredentialRow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -114,6 +115,20 @@ public class ConnectorInvoker {
         }
     }
 
+    /** MCP 工具清单探测结果。只回 name/description/inputSchema，端点与密钥不出本进程。 */
+    public record McpToolsResult(boolean ok, List<McpProtocol.ToolItem> tools, String errorCode) {
+        static McpToolsResult failure(String code) {
+            return new McpToolsResult(false, List.of(), code);
+        }
+    }
+
+    /** 一次 MCP 会话：sessionId 可为 null（无状态服务端），version 为协商后的协议版本。 */
+    private record McpSession(String sessionId, String protocolVersion) {
+    }
+
+    private record McpHttpResponse(int status, String sessionId, JsonNode message) {
+    }
+
     /**
      * 读取某个连接所指向端点的 {@code /models} 清单，供前端在建连接时挑选模型。
      *
@@ -172,6 +187,196 @@ public class ConnectorInvoker {
         } catch (Exception e) {
             log.warn("model probe for {} failed: {}", connector.id(), e.toString());
             return ProbeResult.failure("CONN-UPSTREAM-001");
+        }
+    }
+
+    /**
+     * MCP 工具调用：initialize → tools/call，operation 即 MCP 工具名，params 即 arguments。
+     *
+     * <p>与 HTTP 连接器共用同一套沙箱、凭据注入、callId 幂等缓存与响应上限；
+     * 区别只在于出网帧是 JSON-RPC 而非裸 REST。会话过期（带 session 的请求收到 404）
+     * 时重建一次会话再重发，对引擎透明；其余失败按 CONN-* 家族映射瞬时/永久。
+     */
+    private InvokeResult mcpInvoke(InvokeCommand cmd, ConnectorRow connector, JsonNode config,
+                                   long started, String cacheKey) {
+        long deadline = started + Duration.ofMillis(Math.max(cmd.timeoutMs(), 1_000)).toNanos();
+        try {
+            SandboxPolicy.ValidatedTarget target = mcpTarget(connector, config);
+            McpSession session = mcpInitialize(connector, config, target, deadline);
+            Map<String, Object> params = cmd.params() == null ? Map.of() : cmd.params();
+            JsonNode callResult;
+            try {
+                callResult = mcpRequest(connector, config, target, session,
+                        McpProtocol.toolsCall(2, cmd.operation(), params), 2, deadline);
+            } catch (McpProtocol.McpException e) {
+                if (e.status != 404 || session.sessionId() == null) {
+                    throw e;
+                }
+                session = mcpInitialize(connector, config, target, deadline);
+                callResult = mcpRequest(connector, config, target, session,
+                        McpProtocol.toolsCall(3, cmd.operation(), params), 3, deadline);
+            }
+            Map<String, Object> data = McpProtocol.callData(callResult);
+            if (callResult.path("isError").asBoolean(false)) {
+                // 工具级失败是确定性结果：不缓存、不重试，但保留 content 供下游判读
+                return new InvokeResult(false, data, "CONN-TOOL-001", false, elapsed(started), 200);
+            }
+            safeSet(cacheKey, JSON.writeValueAsString(data));
+            return new InvokeResult(true, data, null, false, elapsed(started), 200);
+        } catch (SandboxPolicy.Violation e) {
+            log.warn("sandbox rejected mcp connector {}: {}", cmd.connectorId(), e.getMessage());
+            return InvokeResult.failure("CONN-SANDBOX-001", false, elapsed(started));
+        } catch (CredentialException e) {
+            return InvokeResult.failure(e.code, false, elapsed(started));
+        } catch (McpProtocol.McpException e) {
+            return InvokeResult.failure(e.code, e.transientError, elapsed(started));
+        } catch (HttpTimeoutException e) {
+            return InvokeResult.failure("CONN-TIMEOUT", true, elapsed(started));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return InvokeResult.failure("CONN-TIMEOUT", true, elapsed(started));
+        } catch (Exception e) {
+            log.warn("mcp connector {} invoke failed: {}", cmd.connectorId(), e.toString());
+            return InvokeResult.failure("CONN-UPSTREAM-001", true, elapsed(started));
+        }
+    }
+
+    /**
+     * 探测 MCP 服务端的工具清单，供前端建连接时挑选工具名（operation）。
+     * 与 {@link #probeModels} 同口径：交互式操作不走 callId 缓存，分页与条数都有上限。
+     */
+    public McpToolsResult probeMcpTools(ConnectorRow connector, int timeoutMs) {
+        long deadline = System.nanoTime() + Duration.ofMillis(Math.max(timeoutMs, 1_000)).toNanos();
+        try {
+            SandboxPolicy.ValidatedTarget target = mcpTarget(connector, connector.config());
+            McpSession session = mcpInitialize(connector, connector.config(), target, deadline);
+            List<McpProtocol.ToolItem> tools = new java.util.ArrayList<>();
+            String cursor = null;
+            for (int page = 0; page < McpProtocol.MAX_LIST_PAGES; page++) {
+                JsonNode result = mcpRequest(connector, connector.config(), target, session,
+                        McpProtocol.toolsList(10 + page, cursor), 10 + page, deadline);
+                tools.addAll(McpProtocol.toolItems(result.path("tools")));
+                cursor = result.path("nextCursor").asText("");
+                if (cursor.isBlank() || tools.size() >= McpProtocol.MAX_TOOLS) {
+                    break;
+                }
+            }
+            if (tools.size() > McpProtocol.MAX_TOOLS) {
+                tools = tools.subList(0, McpProtocol.MAX_TOOLS);
+            }
+            return new McpToolsResult(true, List.copyOf(tools), null);
+        } catch (SandboxPolicy.Violation e) {
+            log.warn("sandbox rejected mcp probe for {}: {}", connector.id(), e.getMessage());
+            return McpToolsResult.failure("CONN-SANDBOX-001");
+        } catch (CredentialException e) {
+            return McpToolsResult.failure(e.code);
+        } catch (McpProtocol.McpException e) {
+            return McpToolsResult.failure(e.code);
+        } catch (HttpTimeoutException e) {
+            return McpToolsResult.failure("CONN-TIMEOUT");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return McpToolsResult.failure("CONN-TIMEOUT");
+        } catch (Exception e) {
+            log.warn("mcp probe for {} failed: {}", connector.id(), e.toString());
+            return McpToolsResult.failure("CONN-UPSTREAM-001");
+        }
+    }
+
+    /** MCP 单端点：baseUrl 即 JSON-RPC 端点，不做 operations 路径拼接。 */
+    private SandboxPolicy.ValidatedTarget mcpTarget(ConnectorRow connector, JsonNode config) {
+        String baseUrl = config.path("baseUrl").asText("");
+        if (baseUrl.isBlank()) {
+            throw new CredentialException("CONN-CONFIG-001", "baseUrl missing");
+        }
+        List<String> hosts = JSON.convertValue(config.path("allowedHosts"),
+                JSON.getTypeFactory().constructCollectionType(List.class, String.class));
+        SandboxPolicy.ValidatedTarget target =
+                sandbox.validateWithDns(baseUrl.replaceAll("/+$", ""), hosts);
+        sandbox.assertNoRebinding(target.uri().getHost(), target.resolved());
+        return target;
+    }
+
+    private McpSession mcpInitialize(ConnectorRow connector, JsonNode config,
+                                     SandboxPolicy.ValidatedTarget target, long deadline)
+            throws IOException, InterruptedException {
+        McpHttpResponse response = mcpPost(connector, config, target,
+                McpProtocol.initialize(1), null, null, 1, deadline);
+        JsonNode result = McpProtocol.result(response.message(), 1);
+        String version = McpProtocol.negotiatedVersion(result);
+        String sessionId = response.sessionId();
+        mcpPost(connector, config, target, McpProtocol.initialized(), sessionId, version, 0, deadline);
+        return new McpSession(sessionId, version);
+    }
+
+    private JsonNode mcpRequest(ConnectorRow connector, JsonNode config,
+                                SandboxPolicy.ValidatedTarget target, McpSession session,
+                                String body, int id, long deadline)
+            throws IOException, InterruptedException {
+        McpHttpResponse response = mcpPost(connector, config, target, body,
+                session.sessionId(), session.protocolVersion(), id, deadline);
+        return McpProtocol.result(response.message(), id);
+    }
+
+    /**
+     * 一次 JSON-RPC POST。响应可能是 JSON 或 SSE；202/204 无体（通知）；
+     * 3xx 不跟随；404 携带状态码抛出供会话过期判定。整段请求受 deadline 约束，
+     * 多次往返共享同一预算，不会把引擎侧 timeoutMs+5s 的客户端超时撑破。
+     */
+    private McpHttpResponse mcpPost(ConnectorRow connector, JsonNode config,
+                                    SandboxPolicy.ValidatedTarget target, String body,
+                                    String sessionId, String protocolVersion, int id, long deadline)
+            throws IOException, InterruptedException {
+        long remainingMs = Math.max(1, (deadline - System.nanoTime()) / 1_000_000);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(target.uri())
+                .timeout(Duration.ofMillis(remainingMs))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        if (sessionId != null) {
+            builder.header("Mcp-Session-Id", sessionId);
+        }
+        if (protocolVersion != null) {
+            builder.header("MCP-Protocol-Version", protocolVersion);
+        }
+        applyAuth(builder, connector, config, connector.tenantId());
+        config.path("headers").properties().forEach(e ->
+                builder.header(e.getKey(), e.getValue().asText()));
+
+        HttpResponse<InputStream> response = http.send(builder.build(),
+                HttpResponse.BodyHandlers.ofInputStream());
+        String newSession = response.headers().firstValue("Mcp-Session-Id").orElse(sessionId);
+        try (InputStream stream = response.body()) {
+            int status = response.statusCode();
+            if (status >= 300 && status < 400) {
+                throw new McpProtocol.McpException("CONN-REDIRECT-001", false, status);
+            }
+            if (status == 202 || status == 204) {
+                return new McpHttpResponse(status, newSession, null);
+            }
+            if (status >= 400) {
+                boolean transientError = status >= 500 || status == 429;
+                throw new McpProtocol.McpException(
+                        transientError ? "CONN-HTTP-5XX" : "CONN-HTTP-4XX", transientError, status);
+            }
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            JsonNode message = null;
+            if (contentType.startsWith("text/event-stream")) {
+                if (id > 0) {
+                    message = McpProtocol.sseResponse(stream, id, MAX_RESPONSE_BYTES,
+                            Duration.ofMillis(remainingMs));
+                }
+            } else {
+                byte[] bytes = BoundedBodyReader.read(stream, MAX_RESPONSE_BYTES,
+                        Duration.ofMillis(remainingMs));
+                if (bytes == null) {
+                    throw new McpProtocol.McpException("CONN-RESPONSE-TOO_LARGE", false);
+                }
+                if (bytes.length > 0) {
+                    message = McpProtocol.parse(bytes);
+                }
+            }
+            return new McpHttpResponse(status, newSession, message);
         }
     }
 
@@ -344,6 +549,9 @@ public class ConnectorInvoker {
         }
 
         JsonNode config = connector.config();
+        if ("MCP".equals(connector.type())) {
+            return mcpInvoke(cmd, connector, config, started, cacheKey);
+        }
         try {
             SandboxPolicy.ValidatedTarget target = buildUri(connector, config, cmd);
             URI uri = target.uri();

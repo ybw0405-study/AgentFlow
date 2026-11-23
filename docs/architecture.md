@@ -495,6 +495,7 @@ CREATE TABLE node_io (
 | CRUD | `/connectors` | 连接器增删改查（列表对成员可见，写操作 ADMIN+） | ADMIN+ |
 | PUT | `/connectors/{id}/authorize` | 保存凭据密文（API_KEY/BASIC/OAUTH2 client_secret） | ADMIN+ |
 | POST | `/connectors/{id}/oauth/authorize-url` `/oauth/callback` | OAuth2 授权码流程（state 防伪 10 分钟） | ADMIN+ |
+| POST | `/connectors/{id}/models/probe` `/connectors/{id}/mcp/tools` | 模型清单 / MCP 工具清单探测（服务端解密凭据后出网） | 租户成员 |
 | GET/POST | `/internal/connectors` `/internal/connectors/{id}/invoke` | 引擎侧目录与调用（X-Internal-Token） | 服务间 |
 | GET | `/admin/usage` `/admin/audit` | 复用 DocQA 管理端 | 平台 ADMIN |
 
@@ -664,6 +665,26 @@ stateDiagram-v2
 默认关闭（`AF_LLM_STREAM` 缺省 `false`），避免对不支持流式或行为有差异的上游造成回归。
 
 **与 §5.3 的差异（必须知晓）**：真实模型是外部非确定性副作用，且上游普遍不支持按 callId 幂等去重。因此 §5.3 的「恰好一次」论断对真实 provider 降级为 **at-least-once**：`CommandIssued` 已落但 `CommandCompleted` 未落时崩溃恢复会重发调用，可能产生重复计费。`AF_LLM_SEND_SEED=true` 可向上游传递确定性 seed 提高复现性，但不构成幂等保证。需要强幂等时应接入支持 idempotency key 的上游，或在 connector 层加结果缓存。
+
+**MCP 工具来源（`type=MCP`）**：`tool_connector` 的第三种类型，把远端 MCP（Model Context Protocol）
+服务接进既有 tool 节点，DSL 与引擎零改动——`operation` 填 MCP 工具名，`params_mapping` 渲染结果即
+`tools/call` 的 `arguments`。传输只实现 **Streamable HTTP**（单端点 JSON-RPC 2.0 POST）：
+`initialize` 协商版本（支持 `2025-03-26` / `2025-06-18`，未知版本拒绝）→ `notifications/initialized`
+→ `tools/call`；响应兼容 `application/json` 与 `text/event-stream` 两种形态（SSE 逐帧解出匹配 id 的
+响应即止，不等 EOF）。**不实现 stdio**：拉起本地进程超出出网沙箱的治理面。
+
+- 治理完全复用：`baseUrl` 即 JSON-RPC 端点，过 `SandboxPolicy`（白名单 + 私网拦截 + rebinding 复核），
+  凭据走 `tool_credential` 同一套 AES-256-GCM 注入请求头，响应经 `BoundedBodyReader` 裁剪 256KB，
+  结果按 `callId` 写 `af:conncall:*` 幂等缓存——崩溃重放不重复出网。
+- 会话：`Mcp-Session-Id` 随初始化响应建立，后续请求携带；带会话的请求收到 404 视为会话过期，
+  透明重建一次再重发。无状态服务端（不下发 session）同样支持。多次往返共享同一 `timeoutMs` 预算。
+- 错误码：`CONN-MCP-001`（协议损坏/版本未知，永久）、`CONN-MCP-002`（JSON-RPC error；仅 -32603
+  内部错误瞬时）、`CONN-TOOL-001`（工具结果 `isError=true`，永久，`data` 保留 `content` 供下游判读）；
+  HTTP 层沿用 `CONN-HTTP-4XX/5XX`、`CONN-REDIRECT-001`、`CONN-TIMEOUT`、`CONN-SANDBOX-001` 等。
+- 工具清单由 `POST /api/v1/connectors/{id}/mcp/tools` 现场拉取（分页上限 5 页 / 200 条，
+  name/description 截断），只回 name/description/inputSchema；连接器页「拉取工具」与创建后自动探测共用它。
+- 与连接器路径不流式的边界一致：MCP 的 SSE 仅用于**取回单个 JSON-RPC 响应**，不做逐 token 透传；
+  节点语义仍是「一次调用、整包结果、可按 callId 重放」。
 
 ---
 

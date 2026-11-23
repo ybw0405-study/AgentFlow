@@ -93,6 +93,12 @@ export function probeErrorMessage(code: string | null): string {
       return '请求超时，检查网络或换一个端点'
     case 'CONN-RESPONSE-001':
       return '端点不像 OpenAI 兼容服务（/models 没有返回模型列表）'
+    case 'CONN-MCP-001':
+      return '端点不像 MCP 服务（协议握手失败），检查 Base URL 是否指向 MCP 端点'
+    case 'CONN-MCP-002':
+      return 'MCP 服务端拒绝了请求，检查工具名与入参'
+    case 'CONN-TOOL-001':
+      return '工具执行返回错误，查看工作流节点输出里的 content'
     default:
       return code ? `连接失败：${code}` : '连接失败'
   }

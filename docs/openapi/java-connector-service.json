@@ -78,6 +78,23 @@
         },
         "type": "object"
       },
+      "ApiResponseMcpToolsResult": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/McpToolsResult"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ApiResponseProbeResult": {
         "properties": {
           "code": {
@@ -265,6 +282,23 @@
         },
         "type": "object"
       },
+      "McpToolsResult": {
+        "properties": {
+          "errorCode": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolItem"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "ModelItem": {
         "properties": {
           "contextWindow": {
@@ -326,6 +360,21 @@
           },
           "ok": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ToolItem": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -501,6 +550,36 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponseVoid"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "connector-controller"
+        ]
+      }
+    },
+    "/api/v1/connectors/{id}/mcp/tools": {
+      "post": {
+        "operationId": "probeMcpTools",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseMcpToolsResult"
                 }
               }
             },

@@ -302,6 +302,20 @@ export interface ModelProbeDto {
   errorCode: string | null
 }
 
+/** MCP 工具清单里的单个工具：name 即 tool 节点的 operation。 */
+export interface McpToolItem {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
+/** MCP 连接探测结果：只回工具名/描述/入参 schema，端点与密钥不出服务端。 */
+export interface McpToolsDto {
+  ok: boolean
+  tools: McpToolItem[]
+  errorCode: string | null
+}
+
 /** 模型连接里 config 的已知字段，仅在读取时用来收窄类型。 */
 export interface LlmConnectionConfig {
   baseUrl?: string
