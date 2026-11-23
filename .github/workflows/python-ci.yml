@@ -42,3 +42,6 @@ jobs:
       - name: pytest (unit + integration, testcontainers 自举 PG)
         working-directory: engine-api
         run: pytest -q
+      - name: workflow eval 回归（离线基线门禁，无网络无密钥）
+        working-directory: engine-api
+        run: python -m app.eval --check-baseline

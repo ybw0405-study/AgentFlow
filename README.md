@@ -396,9 +396,21 @@ POST /api/v1/admin/executions/sweep            # 立刻巡检一轮，返回 扫
 pytest                        # 全栈验收（仓库根目录，需先 scripts/start-dev.* 起服务）
 ```
 
-CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）、`e2e`（起真基础设施与服务，跑 `e2e/` 全栈验收，失败时上传各服务日志）。
+CI（`.github/workflows/`）：`java-ci`（测试+Checkstyle+ArchUnit）、`python-ci`（Ruff+Pytest+testcontainers PG+离线 eval 基线）、`frontend-ci`（typecheck+lint+vitest+build）、`contract-drift`（引擎 OpenAPI 生成物 vs 入库基线）、`e2e`（起真基础设施与服务，跑 `e2e/` 全栈验收，失败时上传各服务日志）、`eval-nightly`（真模型 llm 节点冒烟 + LLM judge）。
 
 `e2e` 的模型对端是 `e2e/support/fake_openai.py`：产品侧不接受离线 provider，CI 也没有密钥，所以由这个进程在 127.0.0.1 上冒充 OpenAI 兼容端点，通过 `AF_LLM_*` 注入。引擎侧走的仍是真实 HTTP 调用、真实超时与错误分类，`usage` 由该端点给出，因此 token 计量与成本报表照常参与断言；要求真实语义的用例（检索质量、推理模型行为）由 `AF_E2E_REAL_LLM=1` 门控。本机注入了真实密钥时跑 `AF_E2E_REAL_LLM=1 AF_E2E_SCHEDULE=1 pytest e2e`，两条门控都会实际执行。
+
+### 工作流确定性回归（eval harness）
+
+`engine-api/app/eval/` 是引擎侧的工作流回归 harness：固定 DSL + 固定 executionId/seed，在内存事件库 + fakeredis + 单测同款离线夹具上跑 8 个场景，断言节点执行顺序、重试退避、condition 分支、parallel 汇合、checkpoint 中断→续跑（`resumed=True` 且已完成节点不重跑、工具副作用恰好一次）。全程离线、不触网、不调真实模型；报告剔除耗时/时间戳等非确定字段后与入库基线 `app/eval/baseline.json` 比对，`python-ci` 与 `tests/unit/test_eval_harness.py` 双重门禁。
+
+```powershell
+cd engine-api
+.venv/Scripts/python.exe -m app.eval --check-baseline    # CI 同款门禁
+.venv/Scripts/python.exe -m app.eval --update-baseline   # 引擎语义有意变更后刷新基线，随 PR 提交
+```
+
+`eval-nightly`（每日 cron + 手动 dispatch）在离线基线之外，用仓库 secrets `AF_LLM_BASE_URL` / `AF_LLM_API_KEY` / `AF_LLM_MODEL` 注入真实 OpenAI 兼容端点，跑 llm 节点冒烟并由自建 LLM judge 输出 JSON 评分（均分 ≥ 0.8 门禁），报告上传 artifact；未配置密钥时显式失败，不静默跳过。它与平台「评测 / A/B」功能无关：前者回归引擎调度语义，后者评测业务工作流输出。
 
 提交规范、迁移与依赖升级流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
 

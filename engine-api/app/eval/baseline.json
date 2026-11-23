@@ -1,0 +1,349 @@
+{
+  "scenarios": {
+    "checkpoint-resume": {
+      "attempts": {
+        "end": 1,
+        "finalize": 1,
+        "nap": 1,
+        "prepare": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "end",
+        "finalize",
+        "nap",
+        "prepare",
+        "start"
+      ],
+      "completedOrder": [
+        "start",
+        "prepare",
+        "nap",
+        "finalize",
+        "end"
+      ],
+      "completionCounts": {
+        "end": 1,
+        "finalize": 1,
+        "nap": 1,
+        "prepare": 1,
+        "start": 1
+      },
+      "errorCode": null,
+      "failedCodes": [],
+      "interruptCheckpointNodes": [
+        "prepare",
+        "start"
+      ],
+      "merged": {},
+      "nodeStatuses": {
+        "end": "SUCCEEDED",
+        "finalize": "SUCCEEDED",
+        "nap": "SUCCEEDED",
+        "prepare": "SUCCEEDED",
+        "start": "SUCCEEDED"
+      },
+      "result": {
+        "answer": "[fake-llm:eval-model #c79cafa8] 确定性测试输出。输入摘要：续跑校验:prepared",
+        "prepped": "prepared"
+      },
+      "resumed": true,
+      "retryDelays": [],
+      "sideEffectCount": 1,
+      "skipped": [],
+      "status": "SUCCEEDED",
+      "stepsUsed": 5,
+      "tokenUsed": 33
+    },
+    "condition-high": {
+      "attempts": {
+        "end": 1,
+        "gate": 1,
+        "start": 1,
+        "yes": 1
+      },
+      "branches": {
+        "gate": "high"
+      },
+      "completedKeys": [
+        "end",
+        "gate",
+        "start",
+        "yes"
+      ],
+      "completedOrder": [
+        "start",
+        "gate",
+        "yes",
+        "end"
+      ],
+      "errorCode": null,
+      "failedCodes": [],
+      "merged": {},
+      "nodeStatuses": {
+        "end": "SUCCEEDED",
+        "gate": "SUCCEEDED",
+        "no": "SKIPPED",
+        "skipped_tail": "SKIPPED",
+        "start": "SUCCEEDED",
+        "yes": "SUCCEEDED"
+      },
+      "result": {
+        "grade": "PASS"
+      },
+      "retryDelays": [],
+      "skipped": [
+        "no",
+        "skipped_tail"
+      ],
+      "status": "SUCCEEDED",
+      "stepsUsed": 4,
+      "tokenUsed": 0
+    },
+    "condition-low": {
+      "attempts": {
+        "end": 1,
+        "gate": 1,
+        "no": 1,
+        "skipped_tail": 1,
+        "start": 1
+      },
+      "branches": {
+        "gate": "low"
+      },
+      "completedKeys": [
+        "end",
+        "gate",
+        "no",
+        "skipped_tail",
+        "start"
+      ],
+      "completedOrder": [
+        "start",
+        "gate",
+        "no",
+        "skipped_tail",
+        "end"
+      ],
+      "errorCode": null,
+      "failedCodes": [],
+      "merged": {},
+      "nodeStatuses": {
+        "end": "SUCCEEDED",
+        "gate": "SUCCEEDED",
+        "no": "SUCCEEDED",
+        "skipped_tail": "SUCCEEDED",
+        "start": "SUCCEEDED",
+        "yes": "SKIPPED"
+      },
+      "result": {
+        "grade": "FAIL"
+      },
+      "retryDelays": [],
+      "skipped": [
+        "yes"
+      ],
+      "status": "SUCCEEDED",
+      "stepsUsed": 5,
+      "tokenUsed": 0
+    },
+    "linear-order": {
+      "attempts": {
+        "draft": 1,
+        "end": 1,
+        "enrich": 1,
+        "prepare": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "draft",
+        "end",
+        "enrich",
+        "prepare",
+        "start"
+      ],
+      "completedOrder": [
+        "start",
+        "prepare",
+        "draft",
+        "enrich",
+        "end"
+      ],
+      "errorCode": null,
+      "failedCodes": [],
+      "merged": {},
+      "nodeStatuses": {
+        "draft": "SUCCEEDED",
+        "end": "SUCCEEDED",
+        "enrich": "SUCCEEDED",
+        "prepare": "SUCCEEDED",
+        "start": "SUCCEEDED"
+      },
+      "result": {
+        "answer": "[fake-llm:eval-model #1b2b2472] 确定性测试输出。输入摘要：请回答:AgentFlow 如何保证恰好一次?(prepared)",
+        "prepped": "prepared",
+        "query": "AgentFlow 如何保证恰好一次？"
+      },
+      "retryDelays": [],
+      "skipped": [],
+      "status": "SUCCEEDED",
+      "stepsUsed": 5,
+      "tokenUsed": 53
+    },
+    "parallel-join": {
+      "attempts": {
+        "end": 1,
+        "par": 1,
+        "par#left#end": 1,
+        "par#left#t": 1,
+        "par#right#end": 1,
+        "par#right#t": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "end",
+        "par",
+        "par#left#end",
+        "par#left#t",
+        "par#right#end",
+        "par#right#t",
+        "start"
+      ],
+      "errorCode": null,
+      "failedCodes": [],
+      "merged": {
+        "par": {
+          "left": {
+            "side": "left"
+          },
+          "right": {
+            "side": "right"
+          }
+        }
+      },
+      "nodeStatuses": {
+        "end": "SUCCEEDED",
+        "par": "SUCCEEDED",
+        "par#left#end": "SUCCEEDED",
+        "par#left#t": "SUCCEEDED",
+        "par#right#end": "SUCCEEDED",
+        "par#right#t": "SUCCEEDED",
+        "start": "SUCCEEDED"
+      },
+      "result": {
+        "left": "left",
+        "right": "right"
+      },
+      "retryDelays": [],
+      "skipped": [],
+      "status": "SUCCEEDED",
+      "stepsUsed": 7,
+      "tokenUsed": 0
+    },
+    "retry-backoff": {
+      "attempts": {
+        "call": 3,
+        "end": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "call",
+        "end",
+        "start"
+      ],
+      "completedOrder": [
+        "start",
+        "call",
+        "end"
+      ],
+      "errorCode": null,
+      "failedCodes": [
+        "LLM-TRANSIENT",
+        "LLM-TRANSIENT"
+      ],
+      "merged": {},
+      "nodeStatuses": {
+        "call": "SUCCEEDED",
+        "end": "SUCCEEDED",
+        "start": "SUCCEEDED"
+      },
+      "providerCalls": 3,
+      "result": {
+        "answer": "[fake-llm:eval-model #ef8fac8c] 确定性测试输出。输入摘要：重试校验"
+      },
+      "retryDelays": [
+        100,
+        200
+      ],
+      "skipped": [],
+      "status": "SUCCEEDED",
+      "stepsUsed": 3,
+      "tokenUsed": 29
+    },
+    "retry-exhausted": {
+      "attempts": {
+        "call": 2,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "start"
+      ],
+      "completedOrder": [
+        "start"
+      ],
+      "errorCode": "LLM-TRANSIENT",
+      "failedCodes": [
+        "LLM-TRANSIENT",
+        "LLM-TRANSIENT"
+      ],
+      "merged": {},
+      "nodeStatuses": {
+        "call": "FAILED",
+        "start": "SUCCEEDED"
+      },
+      "providerCalls": 2,
+      "result": null,
+      "retryDelays": [
+        100
+      ],
+      "skipped": [],
+      "status": "FAILED",
+      "stepsUsed": 1,
+      "tokenUsed": 0
+    },
+    "tool-no-retry": {
+      "attempts": {
+        "flaky": 1,
+        "start": 1
+      },
+      "branches": {},
+      "completedKeys": [
+        "start"
+      ],
+      "completedOrder": [
+        "start"
+      ],
+      "errorCode": "TOOL-FLAKY",
+      "failedCodes": [
+        "TOOL-FLAKY"
+      ],
+      "merged": {},
+      "nodeStatuses": {
+        "flaky": "FAILED",
+        "start": "SUCCEEDED"
+      },
+      "result": null,
+      "retryDelays": [],
+      "skipped": [],
+      "status": "FAILED",
+      "stepsUsed": 1,
+      "tokenUsed": 0
+    }
+  },
+  "version": 1
+}

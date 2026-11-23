@@ -1,0 +1,53 @@
+name: eval-nightly
+
+# 工作流 eval 的 nightly 真模型档：离线基线门禁之外，用真实 OpenAI 兼容端点
+# 跑 llm 节点冒烟，并由自建 LLM judge 输出 JSON 评分（均分 >= 0.8 门禁）。
+# 需要仓库 secrets：AF_LLM_BASE_URL / AF_LLM_API_KEY / AF_LLM_MODEL。
+# 未配置密钥时 live 步骤显式失败（退出 2），不静默跳过。
+# action 引用与 ci 各 workflow 同源：40 位 commit SHA，禁浮动 tag。
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-eval:
+    name: 真模型 llm 节点冒烟 + LLM judge
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: engine-api/requirements.lock.txt
+      - name: install (locked + verified hashes)
+        working-directory: engine-api
+        run: |
+          pip install --require-hashes -r requirements.lock.txt
+          pip install --no-deps -e .
+      - name: 离线回归基线（确定性路径先守住）
+        working-directory: engine-api
+        run: python -m app.eval --check-baseline
+      - name: 真模型冒烟 + judge（均分门禁）
+        working-directory: engine-api
+        env:
+          AF_LLM_BASE_URL: ${{ secrets.AF_LLM_BASE_URL }}
+          AF_LLM_API_KEY: ${{ secrets.AF_LLM_API_KEY }}
+          AF_LLM_MODEL: ${{ secrets.AF_LLM_MODEL }}
+        run: python -m app.eval --live --report eval-live-report.json
+      - name: 上传评测报告
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eval-live-report
+          path: engine-api/eval-live-report.json
+          if-no-files-found: error
