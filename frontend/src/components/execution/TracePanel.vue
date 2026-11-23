@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ExecutionDto } from '@/types/api'
 import { formatInstant } from '@/utils/instant'
 
 defineOptions({ name: 'TracePanel' })
 
-defineProps<{ execution: ExecutionDto }>()
+const props = defineProps<{ execution: ExecutionDto; langfuseBaseUrl?: string | null }>()
+
+// href 完全由后端运行时配置拼出，前端源码不出现任何绝对追踪地址
+const traceHref = computed(() => {
+  const base = props.langfuseBaseUrl?.replace(/\/+$/, '')
+  return base && props.execution.traceId ? `${base}/${props.execution.traceId}` : null
+})
 </script>
 
 <template>
@@ -17,7 +24,16 @@ defineProps<{ execution: ExecutionDto }>()
     </div>
     <div class="af-trace__row">
       <span class="af-faint">traceId</span>
+      <a
+        v-if="traceHref"
+        class="mono af-dim"
+        style="word-break: break-all"
+        :href="traceHref"
+        target="_blank"
+        rel="noopener noreferrer"
+      >{{ execution.traceId }}</a>
       <span
+        v-else
         class="mono af-dim"
         style="word-break: break-all"
       >{{ execution.traceId }}</span>

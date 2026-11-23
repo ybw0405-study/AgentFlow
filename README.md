@@ -211,6 +211,24 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 真实模型是**外部非确定性副作用**：callId 短期缓存与服务端去重可以挡住绝大多数重放，但缓存过期、跨进程崩溃或下游自身不幂等时仍可能重复计费（**整体语义是 at-least-once，不是恰好一次**）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
 - `outputMode=json` 的节点：provider 会自动加 system 提示并使用 `response_format`，返回值解析成 `parsed`。
 
+## 追踪导出（LangFuse）
+
+**复用 DocQA 的自托管 LangFuse v3 实例，不重复建基础设施。** 实例由 DocQA 仓库 compose 的 `langfuse` profile 提供（web 默认 `127.0.0.1:13000`，OTLP 入口 `/api/public/otel/v1/traces`）；AgentFlow 在该实例里开**独立 project**，用自己的 pk/sk 写入，与 DocQA 的数据按 project 隔离。本仓库只加配置与导出，不含任何 LangFuse 服务。
+
+默认关闭（`AF_LANGFUSE_TRACING_ENABLED=false`），关闭时不安装任何 OTel 组件，执行管道行为不变。开启：
+
+```powershell
+$env:AF_LANGFUSE_TRACING_ENABLED = 'true'
+$env:AF_LANGFUSE_PUBLIC_KEY  = '<AgentFlow project 的 pk>'
+$env:AF_LANGFUSE_SECRET_KEY  = '<AgentFlow project 的 sk>'
+# 可选：$env:AF_LANGFUSE_BASE_URL = 'http://127.0.0.1:13000/project/<projectId>/traces'
+```
+
+- 引擎把每次执行导出为一棵 span 树（执行根 span + 每节点 span），**traceId 与 Java/日志/前端透传的 W3C traceId 完全一致**；导出走第二个 OTLP HTTP exporter，既有事件/指标管道不受影响。
+- 脱敏与日志同一红线：span 只带 id/计数/model/outcome，提示词、回答、工具入参、错误 message 原文一律不进 span（有单测断言）。
+- 凭据守卫：启用但缺 pk/sk 启动即 fail-fast；endpoint 非回环地址必须显式 `AF_LANGFUSE_ALLOW_PRIVATE=true`。
+- 配置 `AF_LANGFUSE_BASE_URL`（workflow-service，含 project 路径的前缀）后，执行详情「追踪」面板的 traceId 渲染为外链直达 LangFuse；留空则保持纯文本。链接地址完全由后端运行时下发，前端源码不写死。
+
 ## 文档检索（知识库）
 
 `retrieval` 节点检索的是**你自己导入的文档**，不是固定示例语料。数据模型见 `db/mysql/migration/V009__knowledge.sql`：知识库 → 文档 → 切片三层，全部带 `tenant_id`，软删文档/知识库时同步物理清除切片，检索 SQL 因此不需要 JOIN 软删状态。
@@ -467,6 +485,11 @@ git add docs/openapi/java-*.json
 | `AF_LLM_JSON_RESPONSE_FORMAT` | true | 若上游不支持 `response_format` 则置 false |
 | `AF_LLM_SEND_SEED` | false | 是否向上游传递确定性 seed（仅部分厂商支持） |
 | `AF_LLM_ALLOW_INSECURE_HTTP` | false | 生产守护例外：允许明文 http 端点（仅本地调试） |
+| `AF_LANGFUSE_TRACING_ENABLED` | **false** | LangFuse OTLP 导出开关；关闭时不安装 OTel 组件，执行管道不变 |
+| `AF_LANGFUSE_PUBLIC_KEY` / `AF_LANGFUSE_SECRET_KEY` | 空 | AgentFlow 专属 project 的 pk/sk；启用导出但缺失即 fail-fast |
+| `AF_LANGFUSE_OTLP_ENDPOINT` | http://127.0.0.1:13000/api/public/otel/v1/traces | OTLP HTTP 入口（复用 DocQA 实例） |
+| `AF_LANGFUSE_ALLOW_PRIVATE` | false | 非回环 endpoint 需显式置 true |
+| `AF_LANGFUSE_BASE_URL` | 空 | 执行详情 traceId 外链前缀（含 project 路径）；空则纯文本 |
 | `AF_GATE_RELAY_INTERVAL_MS` | 5000 | 裁决 outbox 重投间隔（引擎不可达时补偿） |
 | `AF_EVAL_POLL_INTERVAL_MS` | 3000 | 评测/A-B 结果收口轮询间隔 |
 | `AF_RATE_LIMIT_TRIGGER_MAX` / `AF_RATE_LIMIT_LOGIN_MAX` | 20 / 10（start-dev 设 300） | 网关固定窗口限流（次/60s/用户｜IP） |

@@ -33,6 +33,7 @@ from .messaging import GateDecisionConsumer
 from .nodes import build_executors
 from .observability.logging import setup_logging
 from .observability.trace import current_trace_id, extract_trace_id
+from .observability.tracing import setup_tracing, shutdown_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        tracing_provider = setup_tracing(settings)
         redis = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,
@@ -129,6 +131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await closer()
             await store.close()
             await redis.aclose()
+            shutdown_tracing(tracing_provider)
 
     app = FastAPI(
         title="agentflow-engine",

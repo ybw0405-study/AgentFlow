@@ -997,6 +997,7 @@ stateDiagram-v2
 ## 9. 可观测性
 
 - **trace**：W3C `traceparent` 前端 → gateway → workflow-service → engine → Provider；所有日志行含 `traceId`、`executionId`、`tenantId`（MDC / structlog contextvars）。
+- **追踪后端（可选）**：`AF_LANGFUSE_TRACING_ENABLED=true` 时引擎经第二个 OTLP HTTP exporter 把执行/节点 span 导出到**复用的 DocQA 自托管 LangFuse**（独立 project，pk/sk 隔离）；span 的 traceId 与透传 traceId 一致，只带 id/计数/model/outcome（脱敏同日志红线）。默认关闭，不安装 OTel 组件。详见 README「追踪导出（LangFuse）」。
 - **指标**（Prometheus）：`af_execution_total{status}`、`af_execution_duration_seconds`（直方图）、`af_node_failed_total{nodeType,errorCode}`、`af_replay_total`、`af_lease_contention_total`、`af_budget_stop_total`。
 - **日志红线**：禁止出现原始 PII、提示词全文、用户问题原文、连接器密钥、DSN（CI grep + Code Review 双保险）。PII 日志只记类别与数量。
 

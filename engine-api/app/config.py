@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     llm_allow_insecure_http: bool = False  # 生产默认禁止明文 http 外送密钥
     llm_stream: bool = False  # LLM 节点逐 token 流式（OutputDelta 展示事件）；opt-in，默认关闭
 
+    # LangFuse 追踪导出：复用 DocQA 自托管实例（compose profile langfuse），按 project 隔离。
+    # 默认关闭：不安装任何 OTel 组件，执行管道与关闭前逐字节一致。
+    langfuse_tracing_enabled: bool = False
+    langfuse_otlp_endpoint: str = "http://127.0.0.1:13000/api/public/otel/v1/traces"
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    # 非回环 endpoint 必须显式 opt-in：pk/sk 组成的 Basic 凭据默认只发往本机
+    langfuse_allow_private: bool = False
+
 
 _WEAK_INTERNAL_TOKENS = {"dev-internal-token", ""}
 _DEV_MARKERS = {"dev", "local", "test", "development"}

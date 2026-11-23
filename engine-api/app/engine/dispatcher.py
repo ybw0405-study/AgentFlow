@@ -26,6 +26,7 @@ from ..events.types import EXECUTION_STATUS_OF_EVENT, TERMINAL_EVENTS, EventType
 from ..nodes.base import Policy
 from ..nodes.registry import NodeExecutor
 from ..observability.metrics import EXECUTION_TOTAL, LEASE_CONTENTION_TOTAL, REPLAY_TOTAL
+from ..observability.tracing import execution_span
 from .lease import Lease
 from .replay import rebuild_state_hydrated
 from .requests import ExecuteRequest
@@ -180,16 +181,27 @@ class Dispatcher:
                 max_steps=req.policy.max_steps,
                 deadline_ms=req.policy.deadline_ms,
             )
-            status = await self._scheduler.run(
-                execution_id=req.execution_id,
-                dsl=dsl,
-                state=state,
-                trace_id=req.trace_id,
-                policy=policy,
-                authorized_connector_ids=frozenset(req.authorized_connector_ids),
-                lease=lease,
-                space_id=req.space_id,
-            )
+            with execution_span(
+                req.trace_id,
+                {
+                    "execution_id": str(req.execution_id),
+                    "definition_id": req.definition_id,
+                    "version_id": req.version_id,
+                },
+            ) as span:
+                status = await self._scheduler.run(
+                    execution_id=req.execution_id,
+                    dsl=dsl,
+                    state=state,
+                    trace_id=req.trace_id,
+                    policy=policy,
+                    authorized_connector_ids=frozenset(req.authorized_connector_ids),
+                    lease=lease,
+                    space_id=req.space_id,
+                )
+                span.set_attribute("status", status)
+                span.set_attribute("token_used", state.token_used)
+                span.set_attribute("steps_used", state.steps_used)
             if status != "LEASE_LOST":
                 EXECUTION_TOTAL.labels(status=status.lower()).inc()
         except Exception:
