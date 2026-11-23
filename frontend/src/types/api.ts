@@ -128,6 +128,8 @@ export interface ExecutionDetail {
   nodes: NodeExecutionDto[]
   /** 终态执行的最终产出（引擎事件流里的 end 结果）；未终结或引擎不可达时为 null。 */
   result?: unknown
+  /** LangFuse 追踪链接前缀（后端运行时配置，含 project 路径）；未配置时不下发，traceId 保持纯文本。 */
+  langfuseBaseUrl?: string | null
 }
 
 export interface EngineEvent {

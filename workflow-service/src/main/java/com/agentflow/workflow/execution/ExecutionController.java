@@ -9,6 +9,7 @@ import com.agentflow.common.tenant.TenantContext;
 import com.agentflow.common.trace.TraceIdContext;
 import com.agentflow.workflow.sse.SseHub;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
@@ -36,17 +37,20 @@ public class ExecutionController {
     private final EngineGatewayClient engine;
     private final SseHub sseHub;
     private final TaskExecutor sseTaskExecutor;
+    private final String langfuseBaseUrl;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ExecutionController(ExecutionService service, WorkflowExecutionMapper executions,
                                NodeExecutionMapper nodes, EngineGatewayClient engine,
-                               SseHub sseHub, @Qualifier("sseTaskExecutor") TaskExecutor sseTaskExecutor) {
+                               SseHub sseHub, @Qualifier("sseTaskExecutor") TaskExecutor sseTaskExecutor,
+                               @Value("${agentflow.observability.langfuse-base-url:}") String langfuseBaseUrl) {
         this.service = service;
         this.executions = executions;
         this.nodes = nodes;
         this.engine = engine;
         this.sseHub = sseHub;
         this.sseTaskExecutor = sseTaskExecutor;
+        this.langfuseBaseUrl = langfuseBaseUrl;
     }
 
     /** CT-2：@Schema 让 springdoc 的运行时 spec 带出 required，前端生成类型才有约束力。 */
@@ -108,6 +112,10 @@ public class ExecutionController {
         body.put("execution", exec);
         body.put("nodes", nodes.listByExecution(id));
         body.put("result", finalResult(id, exec.status()));
+        // 运行时配置下发：前端据此把 traceId 渲染成外链；未配置时响应与之前完全一致
+        if (!langfuseBaseUrl.isBlank()) {
+            body.put("langfuseBaseUrl", langfuseBaseUrl);
+        }
         return ApiResponse.ok(body);
     }
 

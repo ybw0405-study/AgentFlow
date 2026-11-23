@@ -414,7 +414,10 @@ onUnmounted(() => {
         />
       </div>
       <div style="overflow: auto">
-        <TracePanel :execution="detail.execution" />
+        <TracePanel
+          :execution="detail.execution"
+          :langfuse-base-url="detail.langfuseBaseUrl"
+        />
         <div
           v-if="Object.keys(streamText).length > 0"
           style="padding: 12px"

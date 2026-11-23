@@ -42,6 +42,10 @@ agentflow:
   # scripts/start-dev.* 显式置 AF_DEMO_ACCOUNTS=true 开启。
   demo:
     enabled: ${AF_DEMO_ACCOUNTS:false}
+  observability:
+    # LangFuse 追踪链接前缀（含 project 路径，如 http://127.0.0.1:13000/project/<id>/traces）。
+    # 空 = 不下发链接，执行详情 traceId 保持纯文本；实例由 DocQA compose 的 langfuse profile 提供。
+    langfuse-base-url: ${AF_LANGFUSE_BASE_URL:}
   tenant:
     default-token-budget: ${AF_DEFAULT_TOKEN_BUDGET:50000}
     default-max-steps: ${AF_DEFAULT_MAX_STEPS:50}
