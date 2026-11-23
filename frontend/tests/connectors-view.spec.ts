@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   authorize: vi.fn(),
   probeModels: vi.fn(),
+  probeMcpTools: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -23,6 +24,7 @@ vi.mock('@/api', async (importOriginal) => {
       remove: mocks.remove,
       authorize: mocks.authorize,
       probeModels: mocks.probeModels,
+      probeMcpTools: mocks.probeMcpTools,
     },
   }
 })
@@ -289,5 +291,90 @@ describe('连接器页面：模型接入', () => {
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('3 个模型')
     expect(wrapper.findAll('button').some((b) => b.text() === '拉取模型')).toBe(true)
+  })
+})
+
+describe('连接器页面：MCP 工具服务', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset())
+    mocks.list.mockResolvedValue([])
+    mocks.update.mockResolvedValue({})
+    mocks.authorize.mockResolvedValue(undefined)
+    mocks.probeMcpTools.mockResolvedValue({
+      ok: true,
+      tools: [{ name: 'crm-search', description: '查客户', inputSchema: { type: 'object' } }],
+      errorCode: null,
+    })
+  })
+
+  it('建 MCP 连接：单端点配置不带 operations，建后自动探测工具', async () => {
+    mocks.create.mockResolvedValue({ id: 'c-mcp', name: 'crm-mcp' })
+
+    const wrapper = await mountView()
+    await wrapper.find('select').setValue('MCP')
+    await field(wrapper, 'crm-search').setValue('crm-mcp')
+    await field(wrapper, 'https://mcp.example.com/mcp').setValue('https://mcp.example.com/mcp')
+    await field(wrapper, 'api.example.com').setValue('mcp.example.com')
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('新建连接器'))
+    await btn!.trigger('click')
+    await flushPromises()
+
+    const body = mocks.create.mock.calls[0][0]
+    expect(body.type).toBe('MCP')
+    expect(body.config).toEqual({
+      baseUrl: 'https://mcp.example.com/mcp',
+      allowedHosts: ['mcp.example.com'],
+    })
+    expect(mocks.probeMcpTools).toHaveBeenCalledWith('c-mcp')
+    expect(mocks.probeModels).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('暴露 1 个工具')
+  })
+
+  it('MCP 行提供拉取工具入口，清单展示工具名', async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: 'c1',
+        tenantId: 'space-alpha',
+        name: 'crm-mcp',
+        type: 'MCP',
+        authType: 'NONE',
+        config: { baseUrl: 'https://mcp.example.com/mcp', allowedHosts: ['mcp.example.com'] },
+        enabled: true,
+        hasCredential: false,
+        inherited: false,
+      },
+    ])
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('MCP')
+    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取工具')
+    await refresh!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.probeMcpTools).toHaveBeenCalledWith('c1')
+    expect(wrapper.text()).toContain('crm-search')
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('协议握手失败时给出可操作的原因', async () => {
+    mocks.probeMcpTools.mockResolvedValue({ ok: false, tools: [], errorCode: 'CONN-MCP-001' })
+    mocks.list.mockResolvedValue([
+      {
+        id: 'c1',
+        tenantId: 'space-alpha',
+        name: 'crm-mcp',
+        type: 'MCP',
+        authType: 'NONE',
+        config: {},
+        enabled: true,
+        hasCredential: false,
+        inherited: false,
+      },
+    ])
+    const wrapper = await mountView()
+    const refresh = wrapper.findAll('button').find((b) => b.text() === '拉取工具')
+    await refresh!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('端点不像 MCP 服务')
   })
 })

@@ -47,9 +47,10 @@ public class ConnectorService {
     /**
      * 连接器类型。LLM 表示「模型接入」：baseUrl 指向 OpenAI 兼容端点，凭据是 API Key，
      * operations 声明 chat（POST /chat/completions）与 models（GET /models）。
-     * 与 HTTP 工具连接器共用同一套加密、归属与沙箱策略，区别只在于引擎怎么用它。
+     * MCP 表示远端 MCP 服务（Streamable HTTP 单端点）：operation 即工具名，
+     * 不需要 operations 路径表。三者共用同一套加密、归属与沙箱策略。
      */
-    private static final java.util.Set<String> TYPES = java.util.Set.of("HTTP", "LLM");
+    private static final java.util.Set<String> TYPES = java.util.Set.of("HTTP", "LLM", "MCP");
     /** token 响应只有几十字节，上限设小一些；解析前先兜住异常上游。 */
     private static final int MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -270,6 +271,19 @@ public class ConnectorService {
                     "only llm connectors expose a model list");
         }
         return invoker.probeModels(row, PROBE_TIMEOUT_MS);
+    }
+
+    /**
+     * 探测该 MCP 连接暴露的工具清单，用于建连接时挑选工具名（tool 节点的 operation）。
+     * 与 probeModels 同口径：可见即可探测，但只有 MCP 类型有统一语义。
+     */
+    public ConnectorInvoker.McpToolsResult probeMcpTools(TenantInfo tenant, String id) {
+        ConnectorRow row = requireVisible(tenant, id);
+        if (!"MCP".equals(row.type())) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "only mcp connectors expose a tool list");
+        }
+        return invoker.probeMcpTools(row, PROBE_TIMEOUT_MS);
     }
 
     public List<String> chainOf(String spaceId) {

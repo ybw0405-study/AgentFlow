@@ -23,8 +23,8 @@ const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const busy = ref(false)
 
-/** 两种连接器共用加密、归属与沙箱，只是引擎用它们的方式不同。 */
-type Kind = 'LLM' | 'HTTP'
+/** 三种连接器共用加密、归属与沙箱，只是引擎用它们的方式不同。 */
+type Kind = 'LLM' | 'HTTP' | 'MCP'
 
 const form = reactive({
   kind: 'LLM' as Kind,
@@ -80,6 +80,17 @@ function toolConfig(): Record<string, unknown> {
   }
 }
 
+/** MCP 是单端点协议，没有 operations 路径表；baseUrl 即 JSON-RPC 端点。 */
+function mcpConfig(): Record<string, unknown> {
+  return {
+    baseUrl: form.baseUrl.trim(),
+    allowedHosts: form.allowedHosts
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean),
+  }
+}
+
 async function load(): Promise<void> {
   try {
     connectors.value = await connectorApi.list()
@@ -103,7 +114,9 @@ async function create(): Promise<void> {
       name: form.name.trim(),
       type: form.kind,
       authType: form.authType,
-      config: isLlm ? llmConfig(typed, form.defaultModel.trim()) : toolConfig(),
+      config: isLlm
+        ? llmConfig(typed, form.defaultModel.trim())
+        : form.kind === 'MCP' ? mcpConfig() : toolConfig(),
     })
     if (form.authType !== 'NONE' && form.secret.trim()) {
       await connectorApi.authorize(created.id, form.secret.trim())
@@ -127,6 +140,13 @@ async function create(): Promise<void> {
         suffix = `，可选用 ${merged.length} 个模型`
       } else if (merged.length) {
         suffix = `，已用手填的 ${merged.length} 个模型${probe.errorCode ? `（自动拉取失败：${probeErrorMessage(probe.errorCode)}）` : ''}`
+      } else if (probe.errorCode) {
+        suffix = `，但${probeErrorMessage(probe.errorCode)}`
+      }
+    } else if (form.kind === 'MCP') {
+      const probe = await connectorApi.probeMcpTools(created.id)
+      if (probe.ok && probe.tools.length) {
+        suffix = `，暴露 ${probe.tools.length} 个工具（tool 节点 operation 填工具名）`
       } else if (probe.errorCode) {
         suffix = `，但${probeErrorMessage(probe.errorCode)}`
       }
@@ -183,6 +203,23 @@ async function refreshModels(row: ConnectorDto): Promise<void> {
   }
 }
 
+/** 重新拉一次 MCP 工具清单：服务端新增工具后，不必删掉连接重建。 */
+async function refreshTools(row: ConnectorDto): Promise<void> {
+  try {
+    const probe = await connectorApi.probeMcpTools(row.id)
+    if (!probe.ok) {
+      error.value = probeErrorMessage(probe.errorCode)
+      return
+    }
+    const names = probe.tools.map((t) => t.name)
+    notice.value = names.length
+      ? `${row.name}：${names.length} 个工具（${names.slice(0, 5).join('、')}${names.length > 5 ? '…' : ''}）`
+      : `${row.name}：服务端没有暴露工具`
+  } catch (e) {
+    error.value = describe(e)
+  }
+}
+
 async function toggle(row: ConnectorDto): Promise<void> {
   try {
     await connectorApi.update(row.id, { enabled: !row.enabled })
@@ -220,7 +257,8 @@ onMounted(load)
       style="margin-bottom: 12px; font-size: 12px"
     >
       凭据只以 AES-256-GCM 密文存储；出网受白名单与私网拦截约束（沙箱）。
-      模型连接建成后即可在画布的 llm 节点里直接选用它的模型。
+      模型连接建成后即可在画布的 llm 节点里直接选用它的模型；
+      MCP 连接建成后，tool 节点的 operation 填它暴露的工具名即可调用。
     </p>
 
     <div
@@ -258,6 +296,9 @@ onMounted(load)
           <option value="HTTP">
             HTTP 工具
           </option>
+          <option value="MCP">
+            MCP 工具服务
+          </option>
         </select>
       </div>
       <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px">
@@ -279,7 +320,7 @@ onMounted(load)
         <input
           v-model="form.baseUrl"
           class="af-input"
-          :placeholder="form.kind === 'LLM' ? 'https://api.deepseek.com/v1' : 'https://api.example.com'"
+          :placeholder="form.kind === 'LLM' ? 'https://api.deepseek.com/v1' : form.kind === 'MCP' ? 'https://mcp.example.com/mcp' : 'https://api.example.com'"
         >
       </div>
       <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px">
@@ -399,7 +440,7 @@ onMounted(load)
               </div>
             </td>
             <td class="mono af-dim">
-              {{ c.type === 'LLM' ? '模型接入' : 'HTTP' }}
+              {{ c.type === 'LLM' ? '模型接入' : c.type === 'MCP' ? 'MCP' : 'HTTP' }}
             </td>
             <td class="mono af-dim">
               {{ c.inherited ? '继承' : '本空间' }}
@@ -424,6 +465,13 @@ onMounted(load)
                   @click="refreshModels(c)"
                 >
                   拉取模型
+                </button>
+                <button
+                  v-if="c.type === 'MCP'"
+                  class="af-btn af-btn--sm"
+                  @click="refreshTools(c)"
+                >
+                  拉取工具
                 </button>
                 <button
                   class="af-btn af-btn--sm"

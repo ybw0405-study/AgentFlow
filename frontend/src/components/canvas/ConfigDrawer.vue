@@ -651,6 +651,12 @@ function editBody(): void {
         :value="cfg('operation', '')"
         @input="setCfg('operation', ($event.target as HTMLInputElement).value)"
       >
+      <div
+        class="af-faint"
+        style="font-size: 11px; margin-bottom: 6px"
+      >
+        HTTP 连接器填 operations 声明的操作名；MCP 连接器填工具名（连接器页「拉取工具」可查）。
+      </div>
       <label class="af-label">paramsMapping</label>
       <div
         v-for="([k, v], i) in mappingEntries('paramsMapping')"

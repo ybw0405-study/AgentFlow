@@ -166,6 +166,47 @@ class ConnectorServiceTest {
     }
 
     @Test
+    void createAcceptsMcpType() {
+        when(repo.findByTenantAndName("space-a", "c-mcp")).thenReturn(Optional.empty());
+        when(repo.findById(anyString())).thenReturn(Optional.of(row("new-id", "space-a", true)));
+
+        service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c-mcp", "MCP", "NONE", Map.of(
+                        "baseUrl", "https://mcp.example.com/mcp",
+                        "allowedHosts", List.of("mcp.example.com"))), "t");
+
+        verify(repo).insert(anyString(), anyString(), anyString(), eq("MCP"),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void mcpProbeOnlyAppliesToMcpConnectors() {
+        when(repo.findById("conn-x")).thenReturn(Optional.of(row("conn-x", "space-a", true)));
+        assertThatThrownBy(() -> service.probeMcpTools(tenant("space-a", "u-admin", "ADMIN"), "conn-x"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("only mcp connectors");
+        verify(invoker, never()).probeMcpTools(any(), anyInt());
+    }
+
+    @Test
+    void mcpProbeDelegatesForMcpConnector() {
+        Map<String, Object> config = Map.of("baseUrl", "https://mcp.example.com/mcp",
+                "allowedHosts", List.of("mcp.example.com"));
+        when(repo.findById("conn-mcp")).thenReturn(Optional.of(new ConnectorRow(
+                "conn-mcp", "space-a", "crm-mcp", "MCP", "NONE",
+                JSON.valueToTree(config), true, "u-admin")));
+        when(invoker.probeMcpTools(any(), anyInt())).thenReturn(
+                new ConnectorInvoker.McpToolsResult(true,
+                        List.of(new McpProtocol.ToolItem("crm-search", "查客户", Map.of())), null));
+
+        var result = service.probeMcpTools(tenant("space-a", "u-editor", "EDITOR"), "conn-mcp");
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.tools()).hasSize(1);
+        assertThat(result.tools().get(0).name()).isEqualTo("crm-search");
+    }
+
+    @Test
     void inheritedConnectorIsNotWritable() {
         when(repo.findById("org-conn")).thenReturn(Optional.of(row("org-conn", "org", true)));
         assertThatThrownBy(() -> service.update(tenant("space-a", "u-admin", "ADMIN"),

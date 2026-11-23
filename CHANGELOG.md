@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### 新增：MCP 工具来源
+
+- 连接器新增 `MCP` 类型（Streamable HTTP 单端点 JSON-RPC）：tool 节点的 `operation` 填 MCP 工具名即可
+  调用远端 MCP 服务，DSL 与引擎零改动。凭据加密、出网沙箱、256KB 响应裁剪、callId 幂等重放全部复用
+  既有治理；会话过期透明重建，JSON 与 SSE 两种响应形态都支持。不实现 stdio 传输。
+- 新增 `POST /api/v1/connectors/{id}/mcp/tools` 工具清单探测；连接器页支持 MCP 类型与「拉取工具」。
+- 新增错误码 `CONN-MCP-001`（协议损坏）、`CONN-MCP-002`（JSON-RPC error）、`CONN-TOOL-001`（工具级错误）。
+
 ### 第二轮：安全边界 / 试跑隔离 / CI 可信度
 
 - **AF-3**：`/engine/**` 收敛为方法 + 路径白名单（新增 `EnginePathPolicy`）；网关转发剥离客户端

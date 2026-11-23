@@ -87,6 +87,16 @@ public class ConnectorController {
         return ApiResponse.ok(connectors.probeModels(TenantContext.require(), id));
     }
 
+    /**
+     * 拉取该 MCP 连接暴露的工具清单。凭据在服务端解密并注入请求头，
+     * 前端只拿到 name/description/inputSchema，端点地址与密钥都不出本进程。
+     */
+    @PostMapping("/{id}/mcp/tools")
+    public ApiResponse<com.agentflow.connector.service.ConnectorInvoker.McpToolsResult> probeMcpTools(
+            @PathVariable String id) {
+        return ApiResponse.ok(connectors.probeMcpTools(TenantContext.require(), id));
+    }
+
     private static String traceId(HttpServletRequest request) {
         return org.slf4j.MDC.get(com.agentflow.common.trace.TraceIdContext.MDC_KEY);
     }
