@@ -20,6 +20,7 @@ import com.agentflow.connector.domain.ConnectorRepository.ConnectorRow;
 import com.agentflow.connector.tenant.JdbcTenantTreePort;
 import com.agentflow.connector.dto.ConnectorDtos.CreateRequest;
 import com.agentflow.connector.dto.ConnectorDtos.IdSummary;
+import com.agentflow.connector.dto.ConnectorDtos.UpdateRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
@@ -186,6 +187,66 @@ class ConnectorServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("only mcp connectors");
         verify(invoker, never()).probeMcpTools(any(), anyInt());
+    }
+
+    @Test
+    void samplingConfigMustReferenceEnabledLlmInSameTenantChain() {
+        Map<String, Object> base = Map.of("baseUrl", "https://mcp.example.com/mcp",
+                "allowedHosts", List.of("mcp.example.com"));
+        Map<String, Object> withSampling = new java.util.HashMap<>(base);
+        withSampling.put("sampling", Map.of("connectorId", "llm-1"));
+        when(repo.findByTenantAndName("space-a", "c-samp")).thenReturn(Optional.empty());
+        when(repo.findById(anyString())).thenReturn(Optional.of(row("new-id", "space-a", true)));
+        when(repo.findById("llm-1")).thenReturn(Optional.of(new ConnectorRow(
+                "llm-1", "space-a", "llm", "LLM", "NONE",
+                JSON.valueToTree(Map.of("baseUrl", "https://api.example.com",
+                        "allowedHosts", List.of("api.example.com"))), true, "u-admin")));
+        service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c-samp", "MCP", "NONE", withSampling), "t");
+        verify(repo).insert(anyString(), anyString(), anyString(), eq("MCP"),
+                anyString(), anyString(), anyString());
+
+        // 非 LLM 目标拒绝
+        when(repo.findById("llm-1")).thenReturn(Optional.of(row("llm-1", "space-a", true)));
+        assertThatThrownBy(() -> service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c-samp2", "MCP", "NONE", withSampling), "t"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("enabled LLM connector");
+
+        // 跨租户拒绝
+        when(repo.findById("llm-1")).thenReturn(Optional.of(new ConnectorRow(
+                "llm-1", "other-tenant", "llm", "LLM", "NONE",
+                JSON.valueToTree(base), true, "u-admin")));
+        assertThatThrownBy(() -> service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c-samp3", "MCP", "NONE", withSampling), "t"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("not visible");
+
+        // 上限越界拒绝
+        when(repo.findById("llm-1")).thenReturn(Optional.of(new ConnectorRow(
+                "llm-1", "space-a", "llm", "LLM", "NONE",
+                JSON.valueToTree(base), true, "u-admin")));
+        Map<String, Object> overCap = new java.util.HashMap<>(base);
+        overCap.put("sampling", Map.of("connectorId", "llm-1", "maxTokens", 99999));
+        assertThatThrownBy(() -> service.create(tenant("space-a", "u-admin", "ADMIN"),
+                new CreateRequest("c-samp4", "MCP", "NONE", overCap), "t"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("sampling.maxTokens");
+    }
+
+    @Test
+    void samplingCannotReferenceItself() {
+        when(repo.findById("conn-self")).thenReturn(Optional.of(new ConnectorRow(
+                "conn-self", "space-a", "self", "MCP", "NONE",
+                JSON.valueToTree(Map.of("baseUrl", "https://mcp.example.com/mcp",
+                        "allowedHosts", List.of("mcp.example.com"))), true, "u-admin")));
+        Map<String, Object> config = Map.of("baseUrl", "https://mcp.example.com/mcp",
+                "allowedHosts", List.of("mcp.example.com"),
+                "sampling", Map.of("connectorId", "conn-self"));
+        assertThatThrownBy(() -> service.update(tenant("space-a", "u-admin", "ADMIN"),
+                "conn-self", new UpdateRequest(null, null, config, null), "t"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("cannot reference itself");
     }
 
     @Test

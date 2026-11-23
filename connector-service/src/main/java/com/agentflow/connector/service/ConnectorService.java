@@ -93,6 +93,9 @@ public class ConnectorService {
         validateAuthType(authType);
         Map<String, Object> config = req.config() == null ? Map.of() : req.config();
         validateSandboxConfig(config);
+        if ("MCP".equals(type)) {
+            validateSampling(tenant.tenantId(), null, config);
+        }
         if (repo.findByTenantAndName(tenant.tenantId(), name).isPresent()) {
             throw new BusinessException(ErrorCode.COM_CONFLICT_001, "connector name exists");
         }
@@ -113,6 +116,9 @@ public class ConnectorService {
         Map<String, Object> config = req.config() == null
                 ? JSON.convertValue(row.config(), Map.class) : req.config();
         validateSandboxConfig(config);
+        if ("MCP".equals(row.type())) {
+            validateSampling(tenant.tenantId(), id, config);
+        }
         boolean enabled = req.enabled() == null || req.enabled();
         repo.updateConfig(id, tenant.tenantId(), name, authType, writeJson(config), enabled);
         audit.record(tenant, traceId, "CONN_UPDATED",
@@ -359,6 +365,53 @@ public class ConnectorService {
             throw new BusinessException(ErrorCode.COM_VALIDATION_001, "unsupported connector type");
         }
         return type;
+    }
+
+    /**
+     * sampling 必须指向同租户链内启用的 LLM 连接器：防 MCP→MCP 递归、防跨租户借密钥。
+     * 上限越界直接拒绝（而非静默钳制），让配置错误在创建时暴露。
+     */
+    private void validateSampling(String tenantId, String selfId, Map<String, Object> config) {
+        Object raw = config.get("sampling");
+        if (raw == null) {
+            return;
+        }
+        if (!(raw instanceof Map<?, ?> sampling)) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001, "sampling must be an object");
+        }
+        Object cid = sampling.get("connectorId");
+        if (!(cid instanceof String targetId) || targetId.isBlank()) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "sampling.connectorId required");
+        }
+        if (targetId.equals(selfId)) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "sampling cannot reference itself");
+        }
+        ConnectorRow target = repo.findById(targetId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.COM_VALIDATION_001,
+                        "sampling connector not found"));
+        if (!"LLM".equals(target.type()) || !target.enabled()) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "sampling connector must be an enabled LLM connector");
+        }
+        if (!chainOf(tenantId).contains(target.tenantId())) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    "sampling connector not visible");
+        }
+        requireRange(sampling.get("maxTokens"), 1, 4096, "sampling.maxTokens");
+        requireRange(sampling.get("maxRequests"), 1, 8, "sampling.maxRequests");
+    }
+
+    private static void requireRange(Object value, int min, int max, String field) {
+        if (value == null) {
+            return;
+        }
+        if (!(value instanceof Number number)
+                || number.intValue() < min || number.intValue() > max) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001,
+                    field + " must be within " + min + ".." + max);
+        }
     }
 
     /** 沙箱配置前置校验：宁可创建时失败，也不要运行时才发现出不去网。 */

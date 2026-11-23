@@ -230,25 +230,39 @@ public class ConnectorInvoker {
         long deadline = started + Duration.ofMillis(Math.max(cmd.timeoutMs(), 1_000)).toNanos();
         try {
             SandboxPolicy.ValidatedTarget target = mcpTarget(connector, config);
-            McpSession session = mcpInitialize(connector, config, target, deadline);
+            JsonNode samplingCfg = config.path("sampling");
+            String samplingConnector = samplingCfg.path("connectorId").asText("");
+            boolean samplingEnabled = !samplingConnector.isBlank();
+            int[] samplingCount = {0};
+            long[] samplingTokens = {0, 0};
+            java.util.concurrent.atomic.AtomicReference<McpSession> sessionRef =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            McpProtocol.ServerRequestHandler handler = samplingHandler(
+                    cmd, connector, config, target, samplingConnector, samplingEnabled,
+                    samplingCfg, deadline, samplingCount, samplingTokens, sessionRef);
+            sessionRef.set(mcpInitialize(connector, config, target, deadline, samplingEnabled));
             Map<String, Object> params = cmd.params() == null ? Map.of() : cmd.params();
             JsonNode callResult;
             try {
-                callResult = mcpRequest(connector, config, target, session,
-                        mcpFrame(method, 2, cmd.operation(), params), 2, deadline);
+                callResult = mcpRequest(connector, config, target, sessionRef.get(),
+                        mcpFrame(method, 2, cmd.operation(), params), 2, deadline, handler);
             } catch (McpProtocol.McpException e) {
-                if (e.status != 404 || session.sessionId() == null) {
+                if (e.status != 404 || sessionRef.get().sessionId() == null) {
                     throw e;
                 }
-                session = mcpInitialize(connector, config, target, deadline);
-                callResult = mcpRequest(connector, config, target, session,
-                        mcpFrame(method, 3, cmd.operation(), params), 3, deadline);
+                sessionRef.set(mcpInitialize(connector, config, target, deadline, samplingEnabled));
+                callResult = mcpRequest(connector, config, target, sessionRef.get(),
+                        mcpFrame(method, 3, cmd.operation(), params), 3, deadline, handler);
             }
             Map<String, Object> data = switch (method) {
                 case "resources/read" -> McpProtocol.readData(callResult);
                 case "prompts/get" -> McpProtocol.promptData(callResult);
                 default -> McpProtocol.callData(callResult);
             };
+            if (samplingCount[0] > 0) {
+                data.put("sampling", Map.of("requests", samplingCount[0],
+                        "promptTokens", samplingTokens[0], "completionTokens", samplingTokens[1]));
+            }
             if ("tools/call".equals(method) && callResult.path("isError").asBoolean(false)) {
                 // 工具级失败是确定性结果：不缓存、不重试，但保留 content 供下游判读
                 return new InvokeResult(false, data, "CONN-TOOL-001", false, elapsed(started), 200);
@@ -306,7 +320,7 @@ public class ConnectorInvoker {
     private McpSession mcpProbeSession(ConnectorRow connector, long deadline)
             throws IOException, InterruptedException {
         SandboxPolicy.ValidatedTarget target = mcpTarget(connector, connector.config());
-        return mcpInitialize(connector, connector.config(), target, deadline);
+        return mcpInitialize(connector, connector.config(), target, deadline, false);
     }
 
     /** 三类清单共用的翻页骨架：5 页 / 200 条上限，cursor 空即止。 */
@@ -319,7 +333,7 @@ public class ConnectorInvoker {
         String cursor = null;
         for (int page = 0; page < McpProtocol.MAX_LIST_PAGES; page++) {
             JsonNode result = mcpRequest(connector, connector.config(), target, session,
-                    frame.apply(10 + page, cursor), 10 + page, deadline);
+                    frame.apply(10 + page, cursor), 10 + page, deadline, null);
             items.addAll(parser.apply(result.path(field)));
             cursor = result.path("nextCursor").asText("");
             if (cursor.isBlank() || items.size() >= McpProtocol.MAX_TOOLS) {
@@ -383,6 +397,116 @@ public class ConnectorInvoker {
         return text;
     }
 
+    /**
+     * sampling 反向调用：服务端在 tools/call 的 SSE 流里发 sampling/createMessage，
+     * 这里同步借租户自己的 LLM 连接器回答，再续读原响应。
+     *
+     * <p>硬上限：每调用请求数（默认 4、上限 8）、max_tokens（默认 1024、上限 4096）、
+     * 共享 deadline。未配置/超帽/目标非 LLM 一律回 -32601 让服务端降级。
+     * 嵌套调用复用 {@link #invoke}：缓存、NX 锁、沙箱、凭据、租户链校验全部同口径；
+     * 子 callId 与父不同，不会自锁。成本不进引擎预算账本，靠上限兜底并回传计量元数据。
+     */
+    private McpProtocol.ServerRequestHandler samplingHandler(
+            InvokeCommand cmd, ConnectorRow connector, JsonNode config,
+            SandboxPolicy.ValidatedTarget target, String samplingConnector, boolean samplingEnabled,
+            JsonNode samplingCfg, long deadline, int[] samplingCount, long[] samplingTokens,
+            java.util.concurrent.atomic.AtomicReference<McpSession> sessionRef) {
+        int maxRequests = Math.max(1, Math.min(samplingCfg.path("maxRequests").asInt(4), 8));
+        int maxTokensCap = Math.max(1, Math.min(samplingCfg.path("maxTokens").asInt(1024), 4096));
+        return request -> {
+            int rid = request.path("id").asInt();
+            McpSession session = sessionRef.get();
+            String sid = session == null ? null : session.sessionId();
+            String ver = session == null ? null : session.protocolVersion();
+            if (!"sampling/createMessage".equals(request.path("method").asText())
+                    || !samplingEnabled || samplingCount[0] >= maxRequests) {
+                mcpPost(connector, config, target,
+                        McpProtocol.errorResponse(rid, -32601, "sampling not available"),
+                        sid, ver, 0, deadline, null);
+                return;
+            }
+            ConnectorRow llm = repo.findById(samplingConnector).orElse(null);
+            if (llm == null || !"LLM".equals(llm.type()) || !llm.enabled()) {
+                mcpPost(connector, config, target,
+                        McpProtocol.errorResponse(rid, -32601, "sampling connector unavailable"),
+                        sid, ver, 0, deadline, null);
+                return;
+            }
+            samplingCount[0]++;
+            JsonNode params = request.path("params");
+            List<Map<String, Object>> messages = new java.util.ArrayList<>();
+            String system = params.path("systemPrompt").asText("");
+            if (!system.isBlank()) {
+                messages.add(Map.of("role", "system", "content", system));
+            }
+            for (JsonNode message : params.path("messages")) {
+                String text = samplingText(message.path("content"));
+                if (!text.isEmpty()) {
+                    messages.add(Map.of("role", message.path("role").asText("user"),
+                            "content", text));
+                }
+            }
+            int maxTokens = Math.min(params.path("maxTokens").asInt(1024), maxTokensCap);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            String model = llm.config().path("defaultModel").asText("");
+            if (!model.isBlank()) {
+                payload.put("model", model);
+            }
+            payload.put("messages", messages);
+            payload.put("max_tokens", maxTokens);
+            payload.put("stream", false);
+            if (params.has("temperature")) {
+                payload.put("temperature", params.path("temperature").asDouble());
+            }
+            long remaining = Math.max(1, (deadline - System.nanoTime()) / 1_000_000);
+            InvokeResult sampled = invoke(new InvokeCommand(connector.tenantId(),
+                    samplingConnector, cmd.callId() + ":samp:" + samplingCount[0], "chat",
+                    payload, (int) remaining, cmd.traceId()));
+            if (!sampled.ok() || sampled.data() == null) {
+                mcpPost(connector, config, target,
+                        McpProtocol.errorResponse(rid, -32603,
+                                sampled.errorCode() == null ? "sampling failed" : sampled.errorCode()),
+                        sid, ver, 0, deadline, null);
+                return;
+            }
+            JsonNode upstream = JSON.valueToTree(sampled.data());
+            samplingTokens[0] += upstream.path("usage").path("prompt_tokens").asLong(0);
+            samplingTokens[1] += upstream.path("usage").path("completion_tokens").asLong(0);
+            JsonNode content = upstream.path("choices").path(0).path("message").path("content");
+            String text = content.isTextual() ? content.asText() : McpProtocol.joinText(content);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("role", "assistant");
+            result.put("content", Map.of("type", "text", "text", text));
+            result.put("model", upstream.path("model").asText(model));
+            result.put("stopReason", "endTurn");
+            Map<String, Object> reply = new LinkedHashMap<>();
+            reply.put("jsonrpc", "2.0");
+            reply.put("id", rid);
+            reply.put("result", result);
+            mcpPost(connector, config, target, JSON.writeValueAsString(reply), sid, ver, 0,
+                    deadline, null);
+        };
+    }
+
+    /** sampling 消息内容：text part 直取，resource part 内联文本；image/audio 跳过（text-only）。 */
+    private static String samplingText(JsonNode content) {
+        StringBuilder text = new StringBuilder();
+        Iterable<JsonNode> parts = content.isArray() ? content : List.of(content);
+        for (JsonNode part : parts) {
+            String type = part.path("type").asText("");
+            String value = "text".equals(type) ? part.path("text").asText("")
+                    : "resource".equals(type) ? part.path("resource").path("text").asText("") : "";
+            if (value.isEmpty()) {
+                continue;
+            }
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append(value);
+        }
+        return text.toString();
+    }
+
     /** MCP 单端点：baseUrl 即 JSON-RPC 端点，不做 operations 路径拼接。 */
     private SandboxPolicy.ValidatedTarget mcpTarget(ConnectorRow connector, JsonNode config) {
         String baseUrl = config.path("baseUrl").asText("");
@@ -398,23 +522,26 @@ public class ConnectorInvoker {
     }
 
     private McpSession mcpInitialize(ConnectorRow connector, JsonNode config,
-                                     SandboxPolicy.ValidatedTarget target, long deadline)
+                                     SandboxPolicy.ValidatedTarget target, long deadline,
+                                     boolean sampling)
             throws IOException, InterruptedException {
         McpHttpResponse response = mcpPost(connector, config, target,
-                McpProtocol.initialize(1), null, null, 1, deadline);
+                McpProtocol.initialize(1, sampling), null, null, 1, deadline, null);
         JsonNode result = McpProtocol.result(response.message(), 1);
         String version = McpProtocol.negotiatedVersion(result);
         String sessionId = response.sessionId();
-        mcpPost(connector, config, target, McpProtocol.initialized(), sessionId, version, 0, deadline);
+        mcpPost(connector, config, target, McpProtocol.initialized(), sessionId, version, 0,
+                deadline, null);
         return new McpSession(sessionId, version);
     }
 
     private JsonNode mcpRequest(ConnectorRow connector, JsonNode config,
                                 SandboxPolicy.ValidatedTarget target, McpSession session,
-                                String body, int id, long deadline)
+                                String body, int id, long deadline,
+                                McpProtocol.ServerRequestHandler handler)
             throws IOException, InterruptedException {
         McpHttpResponse response = mcpPost(connector, config, target, body,
-                session.sessionId(), session.protocolVersion(), id, deadline);
+                session.sessionId(), session.protocolVersion(), id, deadline, handler);
         return McpProtocol.result(response.message(), id);
     }
 
@@ -425,8 +552,15 @@ public class ConnectorInvoker {
      */
     private McpHttpResponse mcpPost(ConnectorRow connector, JsonNode config,
                                     SandboxPolicy.ValidatedTarget target, String body,
-                                    String sessionId, String protocolVersion, int id, long deadline)
+                                    String sessionId, String protocolVersion, int id, long deadline,
+                                    McpProtocol.ServerRequestHandler handler)
             throws IOException, InterruptedException {
+        // 未配置 sampling 时收到反向请求：回 -32601 让服务端降级，而不是挂住流
+        McpProtocol.ServerRequestHandler effective = handler != null ? handler : request ->
+                mcpPost(connector, config, target,
+                        McpProtocol.errorResponse(request.path("id").asInt(), -32601,
+                                "method not supported"),
+                        sessionId, protocolVersion, 0, deadline, null);
         long remainingMs = Math.max(1, (deadline - System.nanoTime()) / 1_000_000);
         HttpRequest.Builder builder = HttpRequest.newBuilder(target.uri())
                 .timeout(Duration.ofMillis(remainingMs))
@@ -464,7 +598,7 @@ public class ConnectorInvoker {
             if (contentType.startsWith("text/event-stream")) {
                 if (id > 0) {
                     message = McpProtocol.sseResponse(stream, id, MAX_RESPONSE_BYTES,
-                            Duration.ofMillis(remainingMs));
+                            Duration.ofMillis(remainingMs), effective);
                 }
             } else {
                 byte[] bytes = BoundedBodyReader.read(stream, MAX_RESPONSE_BYTES,

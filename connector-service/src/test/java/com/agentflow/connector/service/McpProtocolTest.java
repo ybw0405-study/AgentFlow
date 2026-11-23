@@ -172,6 +172,35 @@ class McpProtocolTest {
     }
 
     @Test
+    void sseHandlerReceivesServerRequestBeforeResult() throws Exception {
+        List<Integer> seen = new java.util.ArrayList<>();
+        String stream = "data: {\"jsonrpc\":\"2.0\",\"id\":900,"
+                + "\"method\":\"sampling/createMessage\",\"params\":{}}\n\n"
+                + "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[]}}\n\n";
+        JsonNode message = McpProtocol.sseResponse(
+                new ByteArrayInputStream(stream.getBytes(StandardCharsets.UTF_8)),
+                2, 256 * 1024, Duration.ofSeconds(5), request -> seen.add(request.path("id").asInt()));
+        assertThat(seen).containsExactly(900);
+        assertThat(McpProtocol.result(message, 2).has("content")).isTrue();
+    }
+
+    @Test
+    void errorResponseCarriesIdAndCode() throws Exception {
+        JsonNode reply = json(McpProtocol.errorResponse(900, -32601, "sampling not available"));
+        assertThat(reply.path("id").asInt()).isEqualTo(900);
+        assertThat(reply.path("error").path("code").asInt()).isEqualTo(-32601);
+        assertThat(reply.has("result")).isFalse();
+    }
+
+    @Test
+    void initializeDeclaresSamplingOnlyWhenConfigured() throws Exception {
+        assertThat(json(McpProtocol.initialize(1, true)).path("params").path("capabilities")
+                .has("sampling")).isTrue();
+        assertThat(json(McpProtocol.initialize(1, false)).path("params").path("capabilities")
+                .has("sampling")).isFalse();
+    }
+
+    @Test
     void resourceAndPromptItemsTruncateAndDropNameless() throws Exception {
         List<McpProtocol.ResourceItem> resources = McpProtocol.resourceItems(json(
                 "[{\"uri\":\"" + "u".repeat(300) + "\"},{\"name\":\"no uri\"}]"));

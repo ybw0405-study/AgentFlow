@@ -697,6 +697,18 @@ resource 以 `uri` 定位（模板字符串可用），prompt 以 `promptName` +
 （5 页 / 200 条 / 串截断），连接器页「拉取清单」一次汇总三类能力。
 治理与 tools 完全同链路：授权校验、callId 幂等、沙箱、凭据注入、瞬时/永久分类、可试跑。
 
+**MCP sampling（服务端反向借模型，默认关）**：MCP 连接配置 `sampling.connectorId` 指向
+**同租户链内启用的 LLM 连接器**才启用（创建/更新时校验，拒自指、拒跨租户、拒非 LLM），
+initialize 才声明 `capabilities.sampling`。服务端在 tools/call 的 **SSE 流**里发
+`sampling/createMessage` 时，connector-service 同步把消息转成 OpenAI chat 载荷
+（text part 直取、resource 文本内联、image/audio 跳过），经既有 `invoke` 借该 LLM 连接器回答
+（缓存/NX 锁/沙箱/凭据/租户链全复用；子 callId 与父不同不自锁），回包后续读原响应。
+硬上限：每调用请求数默认 4 上限 8、`max_tokens` 默认 1024 上限 4096（配置越界创建时拒绝）、
+共享同一 deadline；未配置/超帽/目标不可用回 JSON-RPC -32601 让服务端降级，LLM 失败回 -32603。
+计量元数据 `{requests, promptTokens, completionTokens}` 随工具结果回传。
+**已知限制**：sampling 成本不进引擎预算账本（靠硬上限兜底）；仅支持服务端以 SSE 回应 tools/call
+的形态（纯 JSON 响应承载不了反向请求）；text-only；嵌套 LLM 调用与父共享 wall-clock 预算。
+
 ---
 
 ## 6. DSL 规范

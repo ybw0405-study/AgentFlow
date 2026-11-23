@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+### 新增：MCP sampling（默认关）
+
+- MCP 连接可配置 `sampling.connectorId`（同租户链内启用的 LLM 连接器）：服务端反向请求
+  `sampling/createMessage` 时借租户自己的模型回答，硬上限每调用 4 请求 / 1024 token（上限 8 / 4096），
+  超帽或未配置回 -32601 降级；计量元数据随工具结果回传。成本不进引擎预算账本（已知限制）。
+
 ### 新增：MCP resources / prompts 能力
 
 - 新增 DSL 节点 `mcp`（`capability=resource|prompt`）：读 MCP 服务端资源、取提示模板；
