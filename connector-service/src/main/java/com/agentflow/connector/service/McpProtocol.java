@@ -65,11 +65,38 @@ final class McpProtocol {
     }
 
     static String initialize(int id) {
+        return initialize(id, false);
+    }
+
+    /** 仅在配置了 sampling 连接器时声明 sampling 能力——未声明则服务端不应反向请求。 */
+    static String initialize(int id, boolean sampling) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("protocolVersion", PREFERRED_VERSION);
-        params.put("capabilities", Map.of());
+        params.put("capabilities", sampling ? Map.of("sampling", Map.of()) : Map.of());
         params.put("clientInfo", Map.of("name", "agentflow-connector", "version", "1.0.0"));
         return request(id, "initialize", params);
+    }
+
+    /** JSON-RPC 错误回包：用于拒绝不支持/超帽的反向请求，让服务端可降级。 */
+    static String errorResponse(int id, int code, String message) {
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("code", code);
+        error.put("message", message);
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("jsonrpc", "2.0");
+        envelope.put("id", id);
+        envelope.put("error", error);
+        try {
+            return JSON.writeValueAsString(envelope);
+        } catch (Exception e) {
+            throw new McpException("CONN-MCP-001", false);
+        }
+    }
+
+    /** 服务端反向请求（如 sampling/createMessage）的处理钩子：实现方负责同步回包。 */
+    @FunctionalInterface
+    interface ServerRequestHandler {
+        void accept(JsonNode request) throws IOException, InterruptedException;
     }
 
     static String initialized() {
@@ -185,7 +212,23 @@ final class McpProtocol {
      * 总时长两条上限与 {@link BoundedBodyReader} 同口径。
      */
     static JsonNode sseResponse(InputStream in, int id, int maxBytes, Duration budget)
-            throws IOException {
+            throws IOException, InterruptedException {
+        return sseResponse(in, id, maxBytes, budget, request -> { });
+    }
+
+    /**
+     * 从 SSE 流里取出与 {@code id} 匹配的响应帧。
+     *
+     * <p>逐行读而非整段读：服务端可能保持流打开，等到 EOF 会超时。按 SSE 语义
+     * 空行分帧、{@code data:} 行拼接，忽略注释与服务端主动通知；字节总量与
+     * 总时长两条上限与 {@link BoundedBodyReader} 同口径。
+     *
+     * <p>带 method+id 的帧是**服务端反向请求**（sampling/createMessage）：交 handler
+     * 同步回包后继续读原响应——服务端在等回包，不回包流就不会推进。
+     */
+    static JsonNode sseResponse(InputStream in, int id, int maxBytes, Duration budget,
+                                ServerRequestHandler handler)
+            throws IOException, InterruptedException {
         BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         long deadline = System.nanoTime() + budget.toNanos();
         StringBuilder data = new StringBuilder();
@@ -200,8 +243,13 @@ final class McpProtocol {
                 throw new McpException("CONN-RESPONSE-TOO_LARGE", false);
             }
             if (line.isEmpty()) {
-                JsonNode message = matchFrame(data, id);
+                JsonNode frame = parseFrame(data);
                 data.setLength(0);
+                if (frame != null && frame.has("method") && frame.has("id")) {
+                    handler.accept(frame);
+                    continue;
+                }
+                JsonNode message = matchFrame(frame, id);
                 if (message != null) {
                     return message;
                 }
@@ -212,25 +260,30 @@ final class McpProtocol {
                 data.append(line.substring(5).stripLeading());
             }
         }
-        JsonNode message = matchFrame(data, id);
+        JsonNode message = matchFrame(parseFrame(data), id);
         if (message != null) {
             return message;
         }
         throw new McpException("CONN-MCP-001", false);
     }
 
-    private static JsonNode matchFrame(StringBuilder data, int id) {
+    private static JsonNode parseFrame(StringBuilder data) {
         if (data.length() == 0) {
             return null;
         }
         try {
             JsonNode node = JSON.readTree(data.toString());
-            if (node.isObject() && node.path("id").asInt(-1) == id
-                    && (node.has("result") || node.has("error"))) {
-                return node;
-            }
+            return node.isObject() ? node : null;
         } catch (Exception ignored) {
             // 非 JSON 的 data 帧（心跳等）直接跳过
+            return null;
+        }
+    }
+
+    private static JsonNode matchFrame(JsonNode node, int id) {
+        if (node != null && node.path("id").asInt(-1) == id
+                && (node.has("result") || node.has("error"))) {
+            return node;
         }
         return null;
     }
@@ -360,7 +413,7 @@ final class McpProtocol {
     }
 
     /** 拼接 content/contents 数组里的 text part；blob/image 等非文本 part 不进 text。 */
-    private static String joinText(JsonNode parts) {
+    static String joinText(JsonNode parts) {
         StringBuilder text = new StringBuilder();
         for (JsonNode part : parts) {
             if (!"text".equals(part.path("type").asText())) {

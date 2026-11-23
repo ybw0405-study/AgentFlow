@@ -43,6 +43,8 @@ class ConnectorMcpTest {
     private final AtomicReference<String> seenSession = new AtomicReference<>();
     private final AtomicInteger initializes = new AtomicInteger();
     private final AtomicInteger calls = new AtomicInteger();
+    private final AtomicReference<JsonNode> seenChat = new AtomicReference<>();
+    private final java.util.List<JsonNode> replies = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private final Map<String, String> cache = new ConcurrentHashMap<>();
     private ConnectorInvoker invoker;
     private ConnectorRepository repo;
@@ -52,10 +54,26 @@ class ConnectorMcpTest {
     @BeforeEach
     void setUp() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            seenChat.set(JSON.readTree(exchange.getRequestBody()));
+            if ("sampling-llmfail".equals(mode.get())) {
+                respond(exchange, 503, "{\"error\":\"down\"}");
+                return;
+            }
+            respond(exchange, 200, "{\"choices\":[{\"message\":{\"content\":\"sampled\"}}],"
+                    + "\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2},\"model\":\"stub-model\"}");
+        });
         server.createContext("/", exchange -> {
             seenApiKey.set(exchange.getRequestHeaders().getFirst("X-API-Key"));
             seenSession.set(exchange.getRequestHeaders().getFirst("Mcp-Session-Id"));
             JsonNode request = JSON.readTree(exchange.getRequestBody());
+            // 客户端对反向请求的回包（result/error 帧）：记录后 202
+            if (request.has("result") || request.has("error")) {
+                replies.add(request);
+                exchange.sendResponseHeaders(202, -1);
+                exchange.close();
+                return;
+            }
             String method = request.path("method").asText("");
             int id = request.path("id").asInt(0);
             // 会话过期模式：带 sess-1 的业务请求一律 404，重建后的 sess-2 放行
@@ -112,7 +130,20 @@ class ConnectorMcpTest {
                     String body = "{\"jsonrpc\":\"2.0\",\"id\":" + id
                             + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"pong\"}],"
                             + "\"isError\":false}}";
-                    if ("sse".equals(mode.get())) {
+                    if (mode.get().startsWith("sampling")) {
+                        // 服务端在 SSE 流里反向请求 sampling，等客户端回包后再给结果
+                        StringBuilder sse = new StringBuilder();
+                        int requests = "sampling-many".equals(mode.get()) ? 3 : 1;
+                        for (int i = 0; i < requests; i++) {
+                            sse.append("data: {\"jsonrpc\":\"2.0\",\"id\":").append(900 + i)
+                                    .append(",\"method\":\"sampling/createMessage\",\"params\":")
+                                    .append("{\"messages\":[{\"role\":\"user\",\"content\":")
+                                    .append("{\"type\":\"text\",\"text\":\"think\"}}],")
+                                    .append("\"maxTokens\":99999}}\n\n");
+                        }
+                        sse.append("data: ").append(body).append("\n\n");
+                        respondSseRaw(exchange, sse.toString());
+                    } else if ("sse".equals(mode.get())) {
                         respondSse(exchange, body);
                     } else {
                         respond(exchange, 200, body);
@@ -154,7 +185,13 @@ class ConnectorMcpTest {
 
     private static void respondSse(com.sun.net.httpserver.HttpExchange exchange, String json)
             throws java.io.IOException {
-        byte[] bytes = ("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8);
+        respondSseRaw(exchange, "data: " + json + "\n\n");
+    }
+
+    /** 已自带 data: 分帧的完整 SSE 流原样写出，不再加前缀。 */
+    private static void respondSseRaw(com.sun.net.httpserver.HttpExchange exchange, String sse)
+            throws java.io.IOException {
+        byte[] bytes = sse.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
         exchange.sendResponseHeaders(200, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) {
@@ -170,6 +207,29 @@ class ConnectorMcpTest {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         Map<String, Object> config = Map.of("baseUrl", baseUrl, "allowedHosts", allowedHosts);
         return new ConnectorRow("conn-1", "space-a", "stub-mcp", "MCP", authType,
+                JSON.valueToTree(config), true, "u-admin");
+    }
+
+    /** 带 sampling 配置的 MCP 连接：借同租户的 LLM 连接器回答反向请求。 */
+    private ConnectorRow samplingConnector(int maxRequests) throws Exception {
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        Map<String, Object> config = Map.of(
+                "baseUrl", baseUrl,
+                "allowedHosts", List.of("127.0.0.1"),
+                "sampling", Map.of("connectorId", "llm-1", "maxTokens", 64,
+                        "maxRequests", maxRequests));
+        return new ConnectorRow("conn-1", "space-a", "stub-mcp", "MCP", "NONE",
+                JSON.valueToTree(config), true, "u-admin");
+    }
+
+    private ConnectorRow llmConnector() throws Exception {
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        Map<String, Object> config = Map.of(
+                "baseUrl", baseUrl,
+                "allowedHosts", List.of("127.0.0.1"),
+                "defaultModel", "stub-model",
+                "operations", Map.of("chat", Map.of("method", "POST", "path", "/chat/completions")));
+        return new ConnectorRow("llm-1", "space-a", "stub-llm", "LLM", "NONE",
                 JSON.valueToTree(config), true, "u-admin");
     }
 
@@ -329,6 +389,63 @@ class ConnectorMcpTest {
                 Map.of("uri", "test://doc")));
         assertThat(result.ok()).isTrue();
         assertThat(initializes.get()).isEqualTo(2);
+    }
+
+    @Test
+    void samplingBorrowsTenantLlmAndClampsTokens() throws Exception {
+        mode.set("sampling");
+        when(repo.findById("conn-1")).thenReturn(Optional.of(samplingConnector(4)));
+        when(repo.findById("llm-1")).thenReturn(Optional.of(llmConnector()));
+        var result = invoker.invoke(command("call-samp"));
+        assertThat(result.ok()).isTrue();
+        assertThat(result.data()).containsKey("sampling");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sampling = (Map<String, Object>) result.data().get("sampling");
+        assertThat(sampling).containsEntry("requests", 1)
+                .containsEntry("promptTokens", 3L).containsEntry("completionTokens", 2L);
+        // 服务端要 99999 token，被配置上限 64 钳制；模型取 LLM 连接的 defaultModel
+        assertThat(seenChat.get().path("max_tokens").asInt()).isEqualTo(64);
+        assertThat(seenChat.get().path("model").asText()).isEqualTo("stub-model");
+        assertThat(replies).hasSize(1);
+        assertThat(replies.get(0).path("result").path("content").path("text").asText())
+                .isEqualTo("sampled");
+        assertThat(replies.get(0).path("id").asInt()).isEqualTo(900);
+    }
+
+    @Test
+    void samplingRequestCapRepliesMethodNotFound() throws Exception {
+        mode.set("sampling-many");
+        when(repo.findById("conn-1")).thenReturn(Optional.of(samplingConnector(2)));
+        when(repo.findById("llm-1")).thenReturn(Optional.of(llmConnector()));
+        var result = invoker.invoke(command("call-samp-cap"));
+        assertThat(result.ok()).isTrue();
+        assertThat(replies).hasSize(3);
+        assertThat(replies.get(2).path("error").path("code").asInt()).isEqualTo(-32601);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sampling = (Map<String, Object>) result.data().get("sampling");
+        assertThat(sampling).containsEntry("requests", 2);
+    }
+
+    @Test
+    void samplingUnconfiguredRepliesMethodNotFound() throws Exception {
+        mode.set("sampling");
+        when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE")));
+        var result = invoker.invoke(command("call-samp-off"));
+        assertThat(result.ok()).isTrue();
+        assertThat(replies).hasSize(1);
+        assertThat(replies.get(0).path("error").path("code").asInt()).isEqualTo(-32601);
+        assertThat(result.data()).doesNotContainKey("sampling");
+    }
+
+    @Test
+    void samplingLlmFailureRepliesInternalError() throws Exception {
+        mode.set("sampling-llmfail");
+        when(repo.findById("conn-1")).thenReturn(Optional.of(samplingConnector(4)));
+        when(repo.findById("llm-1")).thenReturn(Optional.of(llmConnector()));
+        var result = invoker.invoke(command("call-samp-fail"));
+        assertThat(result.ok()).isTrue();
+        assertThat(replies).hasSize(1);
+        assertThat(replies.get(0).path("error").path("code").asInt()).isEqualTo(-32603);
     }
 
     @Test
