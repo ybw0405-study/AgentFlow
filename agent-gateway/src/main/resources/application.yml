@@ -37,6 +37,10 @@ agentflow:
     # 网关→引擎的独立凭据，由服务端注入、客户端头一律剥离。
     # 未显式配置时回退控制面令牌（兼容本地 dev / 现有部署）；生产必须设为不同的强值。
     internal-token: ${AF_ENGINE_INTERNAL_TOKEN:${AF_INTERNAL_TOKEN:dev-internal-token}}
+    circuit-breaker:
+      # /engine 上游熔断：连续失败达阈值即 OPEN，冷却后 HALF_OPEN 探测放行
+      failure-threshold: ${AF_ENGINE_CB_FAILURE_THRESHOLD:5}
+      cooldown-ms: ${AF_ENGINE_CB_COOLDOWN_MS:30000}
   jwt:
     secret: ${AF_JWT_SECRET:dev-only-secret-key-0123456789abcdef}
   internal-token: ${AF_INTERNAL_TOKEN:dev-internal-token}
