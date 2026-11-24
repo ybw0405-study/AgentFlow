@@ -35,7 +35,7 @@ from .state import ExecutionState
 
 logger = logging.getLogger(__name__)
 
-# 关停 / 故障清理（B4、）：finally 里的续约循环与租约释放必须带超时，
+# 关停 / 故障清理（B4）：finally 里的续约循环与租约释放必须带超时，
 # Redis TCP 半开时它们既不抛也不返回，无条件 await 会让 _run 永久卡在收尾。
 _CLEANUP_AWAIT_TIMEOUT_S = 3.0
 
@@ -303,7 +303,7 @@ class Dispatcher:
 
         顺序不可颠倒：**先落终态，再删 spec**。spec 是恢复扫描唯一能识别
         「这是试跑」的依据；若先删 spec 而 tracker 仍为 OPEN，下一轮扫描就会
-        把它当崩溃业务执行续跑。终态事件同时让  的终态保护拒绝任何迟到的
+        把它当崩溃业务执行续跑。终态事件同时让事件存储的终态保护拒绝任何迟到的
         节点事件，避免试跑超时后仍继续消费模型额度。
         """
         task = self._tasks.pop(execution_id, None)

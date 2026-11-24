@@ -23,7 +23,7 @@
 
 ```mermaid
 flowchart LR
-    FE[Vue3 + Vue Flow 前端] --> GW[agent-gateway :8080<br/>认证·限流·KillSwitch·熔断]
+    FE[Vue3 + Vue Flow 前端] --> GW[agent-gateway :8080<br/>认证·限流·KillSwitch·超时降级]
     GW --> WF[workflow-service :8084<br/>工作流/版本/执行索引/投影/SSE]
     GW --> AUD[audit-service :8086<br/>MQ 消费 + 审计查询]
     GW --> CONN[connector-service :8085<br/>连接器/凭据加密/出网沙箱]
@@ -379,7 +379,7 @@ Windows 上运行中的 jar 是独占打开的，不先停就会在 `spring-boot
 | engine-api :8000 | `GET /internal/health` | 进程存活 |
 | engine-api :8000 | `GET /internal/metrics` | Prometheus 文本（需内部令牌） |
 
-返回 200 为 `UP`，503 为 `DEGRADED`（至少一个依赖不可用，不应继续接流量）。这些端点不需要凭据——它们在 `/api/v1/**` 之外，不经过网关的认证、限流与熔断过滤器，可直接配成 docker-compose healthcheck 或 k8s 的 liveness / readiness probe。
+返回 200 为 `UP`，503 为 `DEGRADED`（至少一个依赖不可用，不应继续接流量）。这些端点不需要凭据——它们在 `/api/v1/**` 之外，不经过网关的认证、限流与 KillSwitch 过滤器，可直接配成 docker-compose healthcheck 或 k8s 的 liveness / readiness probe。
 
 生产守护开启时不返回依赖明细，只给 `unavailable`，避免把内部拓扑暴露给未认证调用方。
 

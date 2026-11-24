@@ -409,7 +409,7 @@ class _ExplodingLease:
 
     async def release(self) -> None:
         # Redis 全挂时 release 同样会抛（而不是静默 return None）：关停测试据此
-        # 验证「清理失败也不能让 _run 卡在 finally / _tasks 残留」（B4 /）。
+        # 验证「清理失败也不能让 _run 卡在 finally / _tasks 残留」（B4）。
         raise RedisConnectionError("redis down")
 
 
