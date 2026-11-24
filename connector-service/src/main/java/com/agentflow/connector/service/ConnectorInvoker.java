@@ -17,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -917,17 +918,8 @@ public class ConnectorInvoker {
             if (credential.oauthToken() == null) {
                 throw new CredentialException("CONN-CREDENTIAL-001", "oauth token not configured");
             }
-            JsonNode token;
-            try {
-                token = JSON.readTree(cipher.open(credential.oauthToken(), aad,
-                        credential.keyId() == null ? cipher.keyId() : credential.keyId()));
-            } catch (Exception e) {
-                throw new CredentialException("CONN-CREDENTIAL-002", "oauth token unreadable");
-            }
-            long expiresAt = token.path("expiresAt").asLong(0);
-            if (expiresAt > 0 && expiresAt < System.currentTimeMillis() / 1000) {
-                throw new CredentialException("CONN-CREDENTIAL-EXPIRED", "oauth token expired");
-            }
+            // 过期且有 refresh_token 时透明刷新，避免调用方因 access token 过期直接失败
+            JsonNode token = resolveOauthToken(connector, config, credential, aad);
             String type = token.path("tokenType").asText("Bearer");
             builder.header("Authorization", type + " " + token.path("accessToken").asText());
             return;
@@ -946,6 +938,110 @@ public class ConnectorInvoker {
             String headerName = config.path("auth").path("headerName").asText("X-API-Key");
             builder.header(headerName, authValue(config, secret));
         }
+    }
+
+    /**
+     * 解析 OAUTH2 access token。过期时若有 refresh_token 则透明刷新并写回，
+     * 否则抛过期错误；未过期或无过期时间直接返回。
+     */
+    private JsonNode resolveOauthToken(ConnectorRow connector, JsonNode config,
+                                       CredentialRow credential, byte[] aad) {
+        JsonNode token;
+        try {
+            token = JSON.readTree(cipher.open(credential.oauthToken(), aad,
+                    credential.keyId() == null ? cipher.keyId() : credential.keyId()));
+        } catch (Exception e) {
+            throw new CredentialException("CONN-CREDENTIAL-002", "oauth token unreadable");
+        }
+        long expiresAt = token.path("expiresAt").asLong(0);
+        if (expiresAt <= 0 || expiresAt >= System.currentTimeMillis() / 1000) {
+            return token;
+        }
+        String refreshToken = token.path("refreshToken").asText("");
+        if (refreshToken.isBlank()) {
+            throw new CredentialException("CONN-CREDENTIAL-EXPIRED", "oauth token expired");
+        }
+        return refreshOauthToken(connector, config, credential, aad, refreshToken);
+    }
+
+    /**
+     * 用 refresh_token 换新 access_token 并写回凭据。服务端可能轮换 refresh_token，
+     * 一并落库；刷新失败按过期处理（重试无益，需管理员重新授权）。
+     */
+    private JsonNode refreshOauthToken(ConnectorRow connector, JsonNode config,
+                                       CredentialRow credential, byte[] aad,
+                                       String refreshToken) {
+        JsonNode oauth = config.path("oauth");
+        String tokenUrl = oauth.path("tokenUrl").asText("");
+        if (tokenUrl.isBlank()) {
+            throw new CredentialException("CONN-CREDENTIAL-001", "oauth.tokenUrl required");
+        }
+        URI uri = sandbox.validate(tokenUrl, oauthHosts(config));
+        if (credential.secret() == null) {
+            throw new CredentialException("CONN-CREDENTIAL-001", "oauth client secret not configured");
+        }
+        String clientSecret = new String(cipher.open(credential.secret(), aad,
+                credential.keyId() == null ? cipher.keyId() : credential.keyId()),
+                StandardCharsets.UTF_8);
+        String form = "grant_type=refresh_token"
+                + "&refresh_token=" + URLEncoder.encode(refreshToken, StandardCharsets.UTF_8)
+                + "&client_id=" + URLEncoder.encode(oauth.path("clientId").asText(""),
+                        StandardCharsets.UTF_8)
+                + "&client_secret=" + URLEncoder.encode(clientSecret, StandardCharsets.UTF_8);
+        try {
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(Duration.ofSeconds(10))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .POST(HttpRequest.BodyPublishers.ofString(form, StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<InputStream> response = http.send(request,
+                    HttpResponse.BodyHandlers.ofInputStream());
+            byte[] payload;
+            try (InputStream stream = response.body()) {
+                payload = BoundedBodyReader.read(stream, MAX_RESPONSE_BYTES, Duration.ofSeconds(10));
+            }
+            if (payload == null || response.statusCode() >= 400) {
+                throw new CredentialException("CONN-CREDENTIAL-EXPIRED", "oauth refresh failed");
+            }
+            JsonNode refreshed = JSON.readTree(payload);
+            String accessToken = refreshed.path("access_token").asText("");
+            if (accessToken.isBlank()) {
+                throw new CredentialException("CONN-CREDENTIAL-EXPIRED",
+                        "oauth refresh returned no access_token");
+            }
+            long expiresIn = refreshed.path("expires_in").asLong(0);
+            Map<String, Object> stored = new LinkedHashMap<>();
+            stored.put("accessToken", accessToken);
+            stored.put("tokenType", refreshed.path("token_type").asText("Bearer"));
+            stored.put("scope", refreshed.path("scope").asText(""));
+            String rotated = refreshed.path("refresh_token").asText(refreshToken);
+            if (!rotated.isBlank()) {
+                stored.put("refreshToken", rotated);
+            }
+            stored.put("expiresAt", expiresIn > 0
+                    ? System.currentTimeMillis() / 1000 + expiresIn : 0);
+            byte[] sealed = cipher.seal(
+                    JSON.writeValueAsString(stored).getBytes(StandardCharsets.UTF_8), aad);
+            repo.upsertCredential(UUID.randomUUID().toString(), connector.id(), connector.tenantId(),
+                    credential.secret(), sealed, cipher.keyId(),
+                    expiresIn > 0 ? new Timestamp(System.currentTimeMillis() + expiresIn * 1000) : null,
+                    stored.get("scope").toString());
+            return JSON.valueToTree(stored);
+        } catch (CredentialException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("oauth refresh failed for connector {}: {}", connector.id(), e.toString());
+            throw new CredentialException("CONN-CREDENTIAL-EXPIRED", "oauth refresh failed");
+        }
+    }
+
+    /** oauth.allowedHosts 优先，缺省回退顶层 allowedHosts。 */
+    private List<String> oauthHosts(JsonNode config) {
+        JsonNode oauth = config.path("oauth");
+        JsonNode node = oauth.path("allowedHosts").isMissingNode()
+                ? config.path("allowedHosts") : oauth.path("allowedHosts");
+        return JSON.convertValue(node,
+                JSON.getTypeFactory().constructCollectionType(List.class, String.class));
     }
 
     /**

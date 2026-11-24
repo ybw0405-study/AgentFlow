@@ -18,7 +18,7 @@ MCP 支持 tools / resources / prompts 三层能力与 sampling 反向调用（�
 
 ```mermaid
 flowchart LR
-    FE[Vue3 + Vue Flow 前端] --> GW[agent-gateway :8080<br/>认证·限流·KillSwitch·熔断]
+    FE[Vue3 + Vue Flow 前端] --> GW[agent-gateway :8080<br/>认证·限流·KillSwitch·超时降级]
     GW --> WF[workflow-service :8084<br/>工作流/版本/执行索引/投影/SSE]
     GW --> AUD[audit-service :8086<br/>MQ 消费 + 审计查询]
     GW --> CONN[connector-service :8085<br/>连接器/凭据加密/出网沙箱]

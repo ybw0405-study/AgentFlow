@@ -9,7 +9,7 @@
 
 | # | 决策 | 理由 |
 |---|---|---|
-| D1 | Java 侧对 Python 的唯一调用路径：workflow-service → gateway 内部路由 `/engine/**` → engine-api。engine-api 仅监听内网网卡，所有 internal 调用要求 `X-Internal-Token` + `traceparent` | 满足 §5.2「唯一调用入口」与 ArchUnit 依赖方向；治理（超时/熔断/deadline）集中在 gateway |
+| D1 | Java 侧对 Python 的唯一调用路径：workflow-service → gateway 内部路由 `/engine/**` → engine-api。engine-api 仅监听内网网卡，所有 internal 调用要求 `X-Internal-Token` + `traceparent` | 满足 §5.2「唯一调用入口」与 ArchUnit 依赖方向；治理（超时/deadline）集中在 gateway |
 | D2 | 事件回流三通道：① 权威投影 = workflow-service Projector 轮询 engine `GET /internal/events?afterSeq=`（游标存 MySQL `projector_cursor`）；② 实时推送 = engine 追加事件后发布 Redis 频道 `af:exec-events`（at-most-once），SSE Hub 订阅扇出，断线用 `afterSeq` 追平；③ 审计兜底 = Projector 转发 RocketMQ `af.audit.events` | PG 由 Python 独占写入，Java 不直连事件库；SSE 不依赖 MQ 即可低延迟；MQ 只兜审计 |
 | D3 | 工具副作用路径：P0–P1 用 engine 内置 `mock.*` 连接器（开发装置，无凭据、无外网，调用计数落 Redis，按 `callId` 去重）；P2 起真实工具调用由 engine 发 `ToolCommand` → gateway → connector-service 执行，**凭据只在 connector-service 解密，Python 永不见明文** | 满足 §5.2「Python 绝不可以直连外部服务明文凭据」，同时让 P0 的 tool 节点可演示 |
 | D4 | 崩溃恢复：engine 启动时扫描自有 PG 表 `execution_tracker`（非终态 execution），逐个尝试获取租约续跑；workflow-service 另设兜底任务，对 MySQL 中超期 RUNNING 的执行做幂等 re-drive | 恢复不依赖业务库；双保险 |
@@ -33,7 +33,7 @@ flowchart TB
 
     subgraph GW[agent-gateway :8080]
         SEC[认证/租户解析/限流]
-        GOV[AI 治理: 预算钳制·KillSwitch·熔断·deadline·trace]
+        GOV[AI 治理: 预算钳制·KillSwitch·deadline·trace]
         SSEP[SSE 代理]
     end
 
@@ -1028,7 +1028,7 @@ initialize 才声明 `capabilities.sampling`。服务端在 tools/call 的 **SSE
 |---|---|---|
 | `AGT-AUTH-001` | 401 | 未认证/令牌失效（不区分账号是否存在） |
 | `AGT-RATE_LIMIT-001` | 429 | 网关限流 |
-| `AGT-UPSTREAM-001` | 502 | engine 不可用（熔断开启） |
+| `AGT-UPSTREAM-001` | 502 | engine 不可用（超时/连接失败） |
 | `AGT-UPSTREAM-003` | 503 | Kill Switch 开启 |
 | `WF-NOT_FOUND-001` | 404 | 资源不存在或跨租户（不区分） |
 | `WF-FORBIDDEN-001` | 403 | 角色不足（审计记录尝试） |
@@ -1092,7 +1092,7 @@ AgentFlow/
 │       ├── config/       # RouteConfig（/api/v1/**、/engine/** 内部路由）、SecurityConfig、RedisConfig
 │       ├── filter/       # AuthGlobalFilter, TenantResolveFilter, RateLimitFilter,
 │       │                 # GovernanceFilter（预算钳制/KillSwitch）, TraceFilter
-│       └── governance/   # PolicyClampService, KillSwitchService, EngineCircuitBreaker
+│       └── proxy/        # EngineProxyController, EnginePathPolicy（/engine 白名单 + 凭据隔离）
 │   └── src/test/java/... # 钳制、KillSwitch、404 语义、ArchUnit
 ├── workflow-service/
 │   ├── pom.xml

@@ -1,5 +1,7 @@
 package com.agentflow.gateway.proxy;
 
+import com.agentflow.common.error.BusinessException;
+import com.agentflow.common.error.ErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.Locale;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 /**
  * /engine/** 手工反向代理（HTTP/1.1）。
@@ -37,15 +40,19 @@ public class EngineProxyController {
 
     private final RestClient http;
     private final String engineToken;
+    private final EngineCircuitBreaker circuitBreaker;
 
     public EngineProxyController(
             @Value("${agentflow.engine.base-url:http://127.0.0.1:8000}") String engineBase,
-            @Value("${agentflow.engine.internal-token}") String engineToken) {
+            @Value("${agentflow.engine.internal-token}") String engineToken,
+            @Value("${agentflow.engine.circuit-breaker.failure-threshold:5}") int failureThreshold,
+            @Value("${agentflow.engine.circuit-breaker.cooldown-ms:30000}") long cooldownMs) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2_000);
         factory.setReadTimeout(30_000);
         this.http = RestClient.builder().baseUrl(engineBase).requestFactory(factory).build();
         this.engineToken = engineToken;
+        this.circuitBreaker = new EngineCircuitBreaker(failureThreshold, cooldownMs);
     }
 
     /**
@@ -68,6 +75,10 @@ public class EngineProxyController {
     public ResponseEntity<byte[]> proxy(HttpServletRequest request,
                                         @RequestBody(required = false) byte[] body)
             throws IOException {
+        if (!circuitBreaker.allowRequest()) {
+            // 熔断打开：快速失败不再打上游，等冷却窗口结束后由 HALF_OPEN 探测放行
+            throw new BusinessException(ErrorCode.AGT_UPSTREAM_001, "engine circuit open");
+        }
         String path = request.getRequestURI().substring("/engine".length());
         String query = request.getQueryString();
         String uri = path + (query != null ? "?" + query : "");
@@ -78,8 +89,22 @@ public class EngineProxyController {
         if (body != null && body.length > 0) {
             spec.body(body);
         }
-        return spec.exchange((req, res) -> ResponseEntity.status(res.getStatusCode())
-                .headers(res.getHeaders())
-                .body(res.bodyTo(byte[].class)));
+        try {
+            ResponseEntity<byte[]> resp = spec.exchange((req, res) -> ResponseEntity
+                    .status(res.getStatusCode())
+                    .headers(res.getHeaders())
+                    .body(res.bodyTo(byte[].class)));
+            // 5xx 视为上游故障；4xx 是客户端错误，不触发熔断
+            if (resp.getStatusCode().is5xxServerError()) {
+                circuitBreaker.onFailure();
+            } else {
+                circuitBreaker.onSuccess();
+            }
+            return resp;
+        } catch (RestClientException e) {
+            // 连接失败/超时（Spring 包装为 RestClientException）
+            circuitBreaker.onFailure();
+            throw e;
+        }
     }
 }
