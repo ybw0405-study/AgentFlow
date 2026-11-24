@@ -59,6 +59,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 约定
         path = self.path.split("?", 1)[0].rstrip("/")
+        if path.endswith("/embeddings"):
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                request = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, json.JSONDecodeError):
+                self._send(400, {"error": {"message": "malformed json"}})
+                return
+            texts = request.get("input") or []
+            if isinstance(texts, str):
+                texts = [texts]
+            self._send(
+                200,
+                {
+                    "object": "list",
+                    "model": request.get("model") or self.server.model_name,
+                    "data": [
+                        {"object": "embedding", "index": i, "embedding": _fake_embedding(t)}
+                        for i, t in enumerate(texts)
+                    ],
+                    "usage": {"prompt_tokens": sum(len(t) for t in texts), "total_tokens": sum(len(t) for t in texts)},
+                },
+            )
+            return
         if not path.endswith("/chat/completions"):
             self._send(404, {"error": {"message": f"no route {path}"}})
             return
@@ -73,6 +96,23 @@ class Handler(BaseHTTPRequestHandler):
         # prompt_tokens，让「按模型/按租户」的用量报表有可分辨的数字。
         wants_json = _wants_json(request)
         content = _JSON_REPLY if wants_json else _REPLY
+        if request.get("stream"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            prompt_chars = sum(len(str(m.get("content", ""))) for m in request.get("messages", []))
+            prompt_tokens = max(1, prompt_chars // 2)
+            completion = max(1, len(content) // 2)
+            usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion,
+                     "total_tokens": prompt_tokens + completion}
+            frames = [
+                {"choices": [{"index": 0, "delta": {"content": content}}]},
+                {"choices": [], "usage": usage},
+            ]
+            for frame in frames:
+                self.wfile.write(("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n").encode("utf-8"))
+            self.wfile.write(b"data: [DONE]\n\n")
+            return
         prompt_chars = sum(len(str(m.get("content", ""))) for m in request.get("messages", []))
         prompt_tokens = max(1, prompt_chars // 2)
         completion_tokens = max(1, len(content) // 2)
@@ -125,5 +165,20 @@ def main() -> None:
         server.shutdown()
 
 
+def _fake_embedding(text: str) -> list[float]:
+    """确定性词袋哈希向量：CJK 单字 + ASCII 词落桶计数后 L2 归一（1024 维）。"""
+    import math
+    import re as _re
+    import zlib
+
+    vec = [0.0] * 1024
+    tokens = _re.findall(r"[一-鿿]|[a-z0-9]+", str(text).lower())
+    for tok in tokens:
+        vec[zlib.crc32(tok.encode("utf-8")) % 1024] += 1.0
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / norm for x in vec]
+
+
 if __name__ == "__main__":
     main()
+

@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### 新增：语义检索（vector / hybrid）
+
+- `retrieval` 节点新增 `retrievalMode: lexical|vector|hybrid`（默认 lexical，行为不变）；画布配置抽屉同步可选。
+- engine 侧 pgvector 向量索引（V003 迁移）：查询触发懒索引、content hash 增量、stale 清理、租户+知识库+模型三重谓词；infra 与集成测试 PG 镜像换 pgvector/pgvector:pg16。
+- 新增 OpenAI 兼容 embedding provider（`AF_EMBEDDING_*`）与内部切片清单端点 `/internal/knowledge/chunks`；hybrid 用 RRF 融合词法与向量名次。
+- 未配置/超上限均 fail-closed 明确错误码；事件带 retrievalMode 与 indexStats 可对账。
+- 回归：15 条单元 + 3 条真库集成 + 2 条 e2e（hybrid/vector 真跑）；Java OpenAPI 基线同步刷新。
+
 ### 修复：深度体检第一轮（2026-11-24）
 
 - **Docker 交付层**：新增 `ops/docker-compose.app.yml` 全栈叠加编排（镜像不在本地时自动从源码构建）；前端镜像改用真实 nginx 配置（SPA history fallback + `/api` 反代 + SSE 关缓冲），修复深链接刷新 404 与容器内无法访问后端；引擎镜像随带 PG 迁移目录并固定绝对路径；`AF_CONTAINERS=1 scripts/start-dev.sh` 一条命令起全栈。

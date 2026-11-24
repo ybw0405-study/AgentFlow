@@ -34,6 +34,7 @@ from .nodes import build_executors
 from .observability.logging import setup_logging
 from .observability.trace import current_trace_id, extract_trace_id
 from .observability.tracing import setup_tracing, shutdown_tracing
+from .rag import KnowledgeVectorStore, OpenAIEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             subworkflow_resolver,
             connector_gateway=(settings.gateway_base_url, settings.internal_token),
             knowledge_gateway=(settings.gateway_base_url, settings.internal_token),
+            embedding_provider=OpenAIEmbeddingProvider.from_settings(settings),
+            vector_store=KnowledgeVectorStore(store.pool),
+            index_cap=settings.retrieval_index_cap,
         )
         dispatcher = Dispatcher(settings, store, event_log, redis, executors, budget)
         app.state.settings = settings

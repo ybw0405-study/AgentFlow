@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     mq_enabled: bool = False
     mq_consume: bool = True
     mq_namesrv: str = "127.0.0.1:9876"
+
+    # 语义检索（retrieval 节点 vector/hybrid 模式）：未配置时向量模式明确报
+    # RETRIEVAL-VECTOR-NOT_CONFIGURED-001，lexical 默认行为逐字节不变。
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_model: str = "text-embedding-v3"
+    embedding_dimensions: int = 1024
+    embedding_timeout_ms: int = 10000
+    # 单次请求懒索引的切片上限（超出明确拒绝，不静默截断）
+    retrieval_index_cap: int = 2000
     mq_gate_topic: str = "af-gate-decision"
     mq_gate_group: str = "af-engine-gate-consumer"
     mq_poll_timeout_ms: int = 3_000

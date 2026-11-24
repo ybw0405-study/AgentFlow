@@ -19,6 +19,14 @@ ARG PYTHON_BASE_DIGEST=sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf10
 # ---------- 1. Java 构建 ----------
 FROM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS java-build
 WORKDIR /src
+# 依赖层缓存：pom 不变时跳过 go-offline 重解析（多模块互依赖未安装，best-effort）
+COPY pom.xml ./
+COPY common/pom.xml common/
+COPY workflow-service/pom.xml workflow-service/
+COPY agent-gateway/pom.xml agent-gateway/
+COPY audit-service/pom.xml audit-service/
+COPY connector-service/pom.xml connector-service/
+RUN mvn -B -ntp -q dependency:go-offline -Dcheckstyle.skip || true
 COPY . .
 RUN mkdir -p /out \
  && mvn -B -ntp -DskipTests -Dcheckstyle.skip package \

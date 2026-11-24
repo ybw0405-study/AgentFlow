@@ -116,6 +116,7 @@ export function newNodeConfig(
         queryTemplate: '{{ vars.question }}',
         topK: 5,
         minScore: 0,
+        retrievalMode: 'lexical',
       }
     case 'tool':
       // 不预填任何 mock 连接器：真实连接由连接器页创建，留空由校验提示补齐。

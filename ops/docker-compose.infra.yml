@@ -58,7 +58,7 @@ services:
       - mysql -h mysql -uroot -proot agentflow < /grants/least-privilege.sql
 
   postgres:
-    image: postgres:16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e  # 原 tag: postgres:16-alpine
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a  # 原 tag: pgvector/pgvector:pg16（V003 向量索引需要 pgvector 扩展）
     container_name: agentflow-postgres
     environment:
       POSTGRES_USER: agentflow

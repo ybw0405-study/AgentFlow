@@ -67,7 +67,7 @@ scripts/start-dev.sh
 | 人工审批 | human_gate 挂起 / 恢复 / 超时裁决；审批人 ROLE / USERS / 受限表达式 |
 | 触发器 | Webhook（HMAC + 幂等键 + 限流）与分钟粒度定时（补跑策略有界补偿） |
 | 连接器 | AES-256-GCM 凭据、OAuth2、出网沙箱、MCP tools/resources/prompts/sampling |
-| 知识库与检索 | 建库 / 导入 / 切片 / 本地 BM25 词法检索（**非语义向量**，见已知限制 9） |
+| 知识库与检索 | 建库 / 导入 / 切片；lexical BM25 / vector pgvector / hybrid RRF 三模式（vector 需 `AF_EMBEDDING_*`，见已知限制 9） |
 | 成本中心 | 预算账本投影、月度额度、按工作流 / 按天 / 按模型分解、试跑份额 |
 | 评测 | 数据集 / 用例 / 四种断言 / A/B 双版本对比；nightly 真模型冒烟 + LLM judge |
 | 可观测 | SSE 实时节点状态、OTel + LangFuse（可选）、Prometheus 指标、审计只追加 |
@@ -77,7 +77,7 @@ scripts/start-dev.sh
 `eval-nightly` 每日以真实 OpenAI 兼容端点跑 LLM 节点冒烟并由 LLM judge 打分（均分 ≥ 0.8 门禁）。
 最近一次触发（2026-11-24，`deepseek-chat`）：3 用例均分 **1.0**，门禁通过；报告见该 run 的
 `eval-live-report` artifact。离线侧另有确定性回归 harness 与 OpenAPI 契约漂移门禁。
-**检索节点当前为词法 BM25，语义向量检索在 roadmap**——请勿把「CI 全绿」误读为「已具备语义检索」。
+检索默认词法 BM25；配置 `AF_EMBEDDING_*` 后启用 pgvector 语义与 RRF 混合（懒索引、租户/模型谓词隔离）。
 
 ## 技术栈
 

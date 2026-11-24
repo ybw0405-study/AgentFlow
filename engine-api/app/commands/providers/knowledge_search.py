@@ -14,6 +14,7 @@ import httpx
 from ...errors import PermanentNodeError, TransientNodeError
 
 _SEARCH_PATH = "/internal/knowledge/search"
+_CHUNKS_PATH = "/internal/knowledge/chunks"
 
 
 class KnowledgeSearchClient:
@@ -82,6 +83,52 @@ class KnowledgeSearchClient:
                 "RETRIEVAL-RESPONSE-001", "malformed knowledge search response"
             )
         return data
+
+    async def list_chunks(
+        self,
+        *,
+        tenant_id: str,
+        knowledge_base_ids: list[str],
+        limit: int,
+        trace_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """懒索引用：拉取知识库切片清单（控制面仍是权威源）。"""
+        body = {
+            "tenantId": tenant_id,
+            "knowledgeBaseIds": knowledge_base_ids,
+            "limit": limit,
+        }
+        try:
+            resp = await self._client.post(
+                _CHUNKS_PATH, json=body, headers={**self._headers, "X-Trace-Id": trace_id}
+            )
+        except httpx.TimeoutException as exc:
+            raise TransientNodeError(
+                "RETRIEVAL-TIMEOUT-001", "knowledge chunks request timed out"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise TransientNodeError(
+                "RETRIEVAL-UPSTREAM-001", "knowledge service unreachable"
+            ) from exc
+        if resp.status_code in (401, 403, 404):
+            raise PermanentNodeError(
+                "RETRIEVAL-NOT_FOUND-001", "knowledge service rejected the internal call"
+            )
+        if resp.status_code != 200:
+            raise TransientNodeError(
+                "RETRIEVAL-UPSTREAM-001", f"knowledge service returned HTTP {resp.status_code}"
+            )
+        try:
+            data = resp.json()["data"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PermanentNodeError(
+                "RETRIEVAL-RESPONSE-001", "malformed knowledge chunks response"
+            ) from exc
+        if not isinstance(data, list):
+            raise PermanentNodeError(
+                "RETRIEVAL-RESPONSE-001", "malformed knowledge chunks response"
+            )
+        return [row for row in data if isinstance(row, dict)]
 
     async def aclose(self) -> None:
         await self._client.aclose()

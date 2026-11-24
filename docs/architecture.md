@@ -2431,3 +2431,22 @@ CI 立刻红，不会静默放过。
   `ExecutionReaperTest`（连续确认、恢复清零、持有租约暂缓）。
 - 前端：`dsl-validate.spec.ts`（深度契约）、`model-capabilities.spec.ts`（推断口径）。
 - CI：`check-java-routes.py` 纳入 `contract-drift`；`verify-all.ps1` 同步纳入两条契约检查。
+
+## 21. 语义检索：pgvector 懒索引与 RRF 融合（2026-11-24）
+
+`retrieval` 节点三模式：`lexical`（控制面 BM25，默认）、`vector`、`hybrid`。
+向量面落在 **engine 侧 PG**（V003 迁移，pgvector 扩展），不破坏 D2「PG 由 Python 独占写」：
+
+- **权威源不变**：切片正文与清单仍在控制面 MySQL；engine 经新增内部端点
+  `POST /internal/knowledge/chunks`（X-Internal-Token，租户归属逐 kb 复核）拉清单。
+- **懒索引**：vector/hybrid 首次查询时按 `sha256(content)` 增量嵌入（批 32），
+  upsert 以 `(chunk_id, model)` 冲突更新；清单中消失的切片做 stale 清理。
+  索引与切片缓存是 engine 侧派生数据，控制面重建文档后哈希变化即自动重嵌。
+- **空间隔离**：谓词 `tenant_id + kb_id + model` 三重过滤；换 embedding 模型即换空间，不混召回。
+- **融合**：hybrid 用 RRF（k=60）融合词法与向量两路名次，不依赖两路分数可比；
+  `minScore` 只作用于词法路。产出形状与 lexical 完全同构（results/citations/text）。
+- **fail-closed**：未配置 `AF_EMBEDDING_*` 时 vector/hybrid 报
+  `RETRIEVAL-VECTOR-NOT_CONFIGURED-001`；超索引上限报 `RETRIEVAL-INDEX-CAP-001`；
+  embedding 错误分类与 LLM provider 同口径（401/403/400/404/422 永久，429/5xx/超时瞬时）。
+- **事件留痕**：`COMMAND_ISSUED/COMPLETED` 带 `retrievalMode` 与 `indexStats`
+  （embedded/cached/deleted），成本与索引行为可对账。
