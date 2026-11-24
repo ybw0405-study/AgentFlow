@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-24
+
 ### 新增：语义检索（vector / hybrid）
 
 - `retrieval` 节点新增 `retrievalMode: lexical|vector|hybrid`（默认 lexical，行为不变）；画布配置抽屉同步可选。

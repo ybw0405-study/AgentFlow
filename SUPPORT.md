@@ -24,7 +24,7 @@
 
 ## 提问前请准备
 
-- 版本或提交：根 `pom.xml` 与 `frontend/package.json` 的版本号（当前均为 `0.5.1`），
+- 版本或提交：根 `pom.xml` 与 `frontend/package.json` 的版本号（当前均为 `0.6.0`），
   以及 `git rev-parse --short HEAD` 的输出
 - 环境：操作系统、JDK 17 / Maven 3.9+ / Node ≥22 / Python ≥3.11 / Docker Desktop 的实际版本
 - 复现步骤、期望结果与实际结果；若与执行 / 迁移相关，附涉及的迁移版本号（`V0xx`）
