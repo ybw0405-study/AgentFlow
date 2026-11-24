@@ -237,6 +237,10 @@ public class ConnectorService {
             stored.put("accessToken", accessToken);
             stored.put("tokenType", token.path("token_type").asText("Bearer"));
             stored.put("scope", token.path("scope").asText(""));
+            String refreshToken = token.path("refresh_token").asText("");
+            if (!refreshToken.isBlank()) {
+                stored.put("refreshToken", refreshToken);
+            }
             stored.put("expiresAt", expiresIn > 0
                     ? System.currentTimeMillis() / 1000 + expiresIn : 0);
             byte[] sealed = cipher.seal(writeJson(stored).getBytes(StandardCharsets.UTF_8),
