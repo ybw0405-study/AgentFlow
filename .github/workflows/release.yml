@@ -150,11 +150,17 @@ jobs:
           BASE="${REGISTRY}/${REPO_LOWER}"
           : > digests.txt
           # 构建期解析 python 基础镜像的真实 digest，绝不写入编造值。
-          PYTHON_BASE_DIGEST="$(docker buildx imagetools inspect python:3.13-slim \
-            | awk '/^Digest:[[:space:]]/{print $2; exit}')"
+          # inspect 依赖 runner 到 docker.io 的可达性；失败时回退 Dockerfile 内置的
+          # 真实 digest（本机 inspect 解析入库的值），并保留 stderr 供诊断。
+          PYTHON_BASE_DIGEST="$(docker buildx imagetools inspect python:3.13-slim 2>inspect.err \
+            | awk '/^Digest:[[:space:]]/{print $2; exit}' || true)"
           case "$PYTHON_BASE_DIGEST" in
             sha256:*) echo "python:3.13-slim 固定到 ${PYTHON_BASE_DIGEST}" ;;
-            *) echo "无法解析 python:3.13-slim 的真实 digest，拒绝构建" >&2; exit 1 ;;
+            *)
+              echo "warn: inspect 失败，回退 Dockerfile 内置真实 digest；inspect stderr：" >&2
+              cat inspect.err >&2 || true
+              PYTHON_BASE_DIGEST=""
+              ;;
           esac
           export PYTHON_BASE_DIGEST
           build_one() {
@@ -165,8 +171,10 @@ jobs:
             if [ -n "$jar" ]; then
               args=(--build-arg "JAR_PATH=/out/${jar}.jar" "${args[@]}")
             fi
-            # 每个 target 都会经过全局 ARG 声明，传入真实 digest 供 python-base 使用。
-            args=(--build-arg "PYTHON_BASE_DIGEST=${PYTHON_BASE_DIGEST}" "${args[@]}")
+            # 每个 target 都会经过全局 ARG 声明；解析成功才覆盖，否则用 Dockerfile 默认真实 digest。
+            if [ -n "$PYTHON_BASE_DIGEST" ]; then
+              args=(--build-arg "PYTHON_BASE_DIGEST=${PYTHON_BASE_DIGEST}" "${args[@]}")
+            fi
             echo "==> building ${image} (target=${target})"
             docker buildx build "${args[@]}"
             local digest
