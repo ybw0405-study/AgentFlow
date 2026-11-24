@@ -65,7 +65,7 @@ class InMemoryEventStore:
         return ev
 
     async def ping(self) -> None:
-        """readiness 探针的内存替身（AF-8 的 API 层测试用）。"""
+        """readiness 探针的内存替身（的 API 层测试用）。"""
         return None
 
     async def read_all(self, execution_id):
@@ -123,7 +123,7 @@ class InMemoryEventStore:
         return self.specs.get(execution_id)
 
     async def delete_spec(self, execution_id):
-        """AF-6 试跑收口后清理，与真实 EventStore.delete_spec 语义一致。"""
+        """试跑收口后清理，与真实 EventStore.delete_spec 语义一致。"""
         self.specs.pop(execution_id, None)
 
     async def put_node_io(self, execution_id, node_key, direction, payload):
@@ -147,7 +147,7 @@ class NullPublisher:
 
 @pytest.fixture
 def settings() -> Settings:
-    # AF-3 后入站 /internal/** 认 engine_token；本地测试里显式设为同值，
+    #  后入站 /internal/** 认 engine_token；本地测试里显式设为同值，
     # 让既有「带 X-Internal-Token」的用例继续覆盖 API 行为（生产必须不同）。
     return Settings(internal_token="test-token", engine_token="test-token")
 

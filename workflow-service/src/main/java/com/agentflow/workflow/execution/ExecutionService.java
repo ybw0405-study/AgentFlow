@@ -233,7 +233,7 @@ public class ExecutionService {
             executions.markFailedDispatch(executionId, "FAILED", ErrorCode.AGT_UPSTREAM_001.code());
             throw e;
         }
-        // AF-1：引擎「接受但未派发」（租约被占 / 关停中，或旧版引擎的 202+RUNNING）
+        // 引擎「接受但未派发」（租约被占 / 关停中，或旧版引擎的 202+RUNNING）
         // 会带 note。此时引擎侧根本没有这条执行，绝不能记 EXECUTION_TRIGGERED /
         // 留下一条永远等不到事件的 PENDING —— 明确收口成 DISPATCH_REJECTED。
         Object note = dispatch == null ? null : dispatch.get("note");

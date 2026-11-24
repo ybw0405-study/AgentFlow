@@ -64,7 +64,7 @@ class EventConcurrencyError(EngineError):
 
 
 class EventTerminalError(EngineError):
-    """终态不可逆（AF-9）：已 TERMINAL 的执行拒绝再追加非终态事件。"""
+    """终态不可逆：已 TERMINAL 的执行拒绝再追加非终态事件。"""
 
     def __init__(self, message: str = "execution already terminal") -> None:
         super().__init__("EVT-TERMINAL-001", message)

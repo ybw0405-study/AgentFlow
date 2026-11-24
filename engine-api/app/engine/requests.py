@@ -34,7 +34,7 @@ class ExecuteRequest(CamelModel):
     policy: PolicyIn = PolicyIn()
     trace_id: str
     execution_seed: str | None = None
-    # AF-6：试跑与真实执行共用 dispatcher，但绝不能被崩溃恢复扫描当成
+    # 试跑与真实执行共用 dispatcher，但绝不能被崩溃恢复扫描当成
     # 「未跑完的业务执行」续跑（会重复调用模型、重复计费）。该标记随 spec
     # 一起持久化，恢复扫描据此直接强制落终态并清理，不派发任何节点。
     preview: bool = False

@@ -12,7 +12,7 @@ ARG PYTHON_BASE_DIGEST=sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf10
 #
 # 所有运行阶段均以非 root UID/GID 10001 运行；HEALTHCHECK 指向 readiness 端点：
 #   Java 服务 -> GET /health（common/HealthController，依赖 down 返回 503）
-#   Python 引擎 -> GET /internal/health/ready（AF-8，真探 PG + Redis）
+#   Python 引擎 -> GET /internal/health/ready（真探 PG + Redis）
 #   前端静态站 -> GET /（入口 HTML 可返回即 ready）
 # 基础镜像带 digest 的取值来自本机 docker image inspect 的真实 RepoDigests。
 
@@ -69,6 +69,10 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
 
 FROM python-base AS engine-api
 COPY engine-api/ ./
+# 启动期 run_migrations 读 pg_migrations_path；默认相对路径 ../db/postgres/migration
+# 在容器内不存在，必须随镜像携带并固定绝对路径。
+COPY db/postgres/migration /db/postgres/migration
+ENV AF_PG_MIGRATIONS_PATH=/db/postgres/migration
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt \
  && pip install --no-cache-dir --no-deps -e .
 USER 10001:10001
@@ -77,9 +81,10 @@ ENTRYPOINT ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--p
 # ---------- 5. 前端静态站 ----------
 FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS frontend
 COPY --from=frontend-build /src/frontend/dist /usr/share/nginx/html
+# SPA history fallback + /api 反代 + SSE 关缓冲；缺了 fallback 深链接刷新会 404。
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 USER root
-RUN chown -R 10001:10001 /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run /tmp \
- && sed -i 's/listen  *80;/listen 8080;/' /etc/nginx/conf.d/default.conf
+RUN chown -R 10001:10001 /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run /tmp
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \

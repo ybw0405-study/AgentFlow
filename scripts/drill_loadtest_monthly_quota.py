@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""批次 4 / 性能压测脚本骨架 — 重点：AgentFlow 月度额度跨月窗口（AF-5）。
+"""批次 4 / 性能压测脚本骨架 — 重点：AgentFlow 月度额度跨月窗口。
 
-背景（方案 AF-5）：`BudgetLedgerMapper.java` 用 `DATE_FORMAT(NOW(3),'%Y-%m')`
+背景（方案）：`BudgetLedgerMapper.java` 用 `DATE_FORMAT(NOW(3),'%Y-%m')`
 算账期（MySQL 侧、UTC 月），`ExecutionService.java` 用
 `YearMonth.now(ZoneId.of("Asia/Shanghai"))`（CST 月），compose 未设
 `--default-time-zone`。跨月边界（UTC 与 CST 差 8h）会出现：

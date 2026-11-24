@@ -277,7 +277,7 @@ def test_production_guard_rejects_plain_http_endpoint(monkeypatch):
     monkeypatch.setenv("AF_PRODUCTION", "true")
     settings = Settings(
         internal_token="strong-production-token",
-        engine_token="distinct-engine-token",  # AF-3：生产入站凭据须与控制面分离
+        engine_token="distinct-engine-token",  # 生产入站凭据须与控制面分离
         llm_base_url="http://internal-llm.local/v1",
         llm_api_key=KEY,
     )
@@ -289,7 +289,7 @@ def test_production_guard_allows_https(monkeypatch):
     monkeypatch.setenv("AF_PRODUCTION", "true")
     settings = Settings(
         internal_token="strong-production-token",
-        engine_token="distinct-engine-token",  # AF-3：生产入站凭据须与控制面分离
+        engine_token="distinct-engine-token",  # 生产入站凭据须与控制面分离
         llm_base_url="https://api.deepseek.com/v1",
         llm_api_key=KEY,
     )
@@ -297,7 +297,7 @@ def test_production_guard_allows_https(monkeypatch):
 
 
 def test_production_guard_requires_distinct_engine_token(monkeypatch):
-    """AF-3：生产模式不允入站凭据回退成控制面共享令牌。"""
+    """生产模式不允入站凭据回退成控制面共享令牌。"""
     monkeypatch.setenv("AF_PRODUCTION", "true")
     merged = Settings(
         internal_token="strong-production-token",

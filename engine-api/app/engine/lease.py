@@ -18,7 +18,7 @@ from redis.exceptions import WatchError
 logger = logging.getLogger(__name__)
 
 _RENEW_RETRIES = 5
-# 单次租约 Redis 操作的硬超时（AF-7）：client 的 socket_timeout 只覆盖真实网络，
+# 单次租约 Redis 操作的硬超时：client 的 socket_timeout 只覆盖真实网络，
 # 这里再兜一层，防止 WATCH/MULTI 或 TCP 半开让调用方既不返回也不抛。
 OP_TIMEOUT_S = 2.0
 

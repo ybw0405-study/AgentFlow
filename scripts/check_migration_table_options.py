@@ -1,4 +1,4 @@
-"""AF-11 守卫：所有 CREATE TABLE 必须显式带 ENGINE + CHARSET + COLLATE。
+""" 守卫：所有 CREATE TABLE 必须显式带 ENGINE + CHARSET + COLLATE。
 
 为什么三项都要：
   * ENGINE=InnoDB —— 非 InnoDB 时 ON DUPLICATE KEY UPDATE / 事务 / FK 语义不成立；
@@ -105,7 +105,7 @@ def main() -> int:
         return 0
     errors = check_dir()
     if errors:
-        print("AF-11 守卫 FAIL:")
+        print(" 守卫 FAIL:")
         for err in errors:
             print("  - " + err)
         return 1
@@ -114,7 +114,7 @@ def main() -> int:
         for path in sorted(MIGRATION_DIR.glob("V*.sql"))
         for name, _ in table_options(path.read_text(encoding="utf-8"))
     ]
-    print(f"AF-11 守卫 PASS：{len(tables)} 张表均带 ENGINE+CHARSET+COLLATE")
+    print(f" 守卫 PASS：{len(tables)} 张表均带 ENGINE+CHARSET+COLLATE")
     return 0
 
 

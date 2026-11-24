@@ -225,7 +225,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: .python-version
-      - name: AF-10 空库 + 已迁移库各重放一次
+      - name:  空库 + 已迁移库各重放一次
         run: python scripts/check_migrations_idempotent.py --require-replay
-      - name: AF-12 跨表引用一致性（真库）
+      - name:  跨表引用一致性（真库）
         run: python scripts/check_cross_table_consistency.py --require-db --bootstrap-migrations

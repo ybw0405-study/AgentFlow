@@ -12,7 +12,7 @@
   I2 提交只有一条通道（outbox 与业务写入同事务）；引擎「接受但未派发」必须返回明确错误，202 != 成功。
   I3 定时任务统一 LeaderElector，单实例假设不能只写在文档里。
   I6 关停顺序：停止接收 -> drain 在途 -> 停后台 -> 关连接池。
-  AF-6 preview 打标并从恢复扫描排除，超时/重启不续跑、不重复计费。
+   preview 打标并从恢复扫描排除，超时/重启不续跑、不重复计费。
 
 【脚手架定位 / 诚实边界】
   * 这是可执行骨架，不是已跑通的 e2e。本机没有真实生产环境、真实业务数据、
@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 PATH_SUBMIT = "/api/workflows/{definition_id}/executions"   # 控制面提交
 PATH_EXECUTION = "/api/executions/{execution_id}"          # 控制面投影查询
 PATH_ENGINE_READY = "/internal/health"                     # 引擎 liveness/readiness
-PATH_GATEWAY_PROBE = "/engine/internal/executions"         # 应被白名单 404（AF-3）
+PATH_GATEWAY_PROBE = "/engine/internal/executions"         # 应被白名单 404
 
 STAGES = [
     "preflight",             # 网关 / 控制面 / 引擎可达，内部凭据注入校验
@@ -51,7 +51,7 @@ STAGES = [
     "engine_event_stream",   # 事件流写入、单调 last_seq
     "projection_terminal",   # MySQL 投影终态与事件流一致
     "terminal_immutable",    # 乱序/重放事件不改回非终态（I1）
-    "preview_no_resume",     # preview 超时/重启不续跑（AF-6）
+    "preview_no_resume",     # preview 超时/重启不续跑
     "report",
 ]
 
@@ -60,9 +60,9 @@ ASSERTIONS = [
     "I2 提交单通道：outbox 行与业务写入同事务；引擎未派发返回 409/5xx 而非 202",
     "I3 投影器/Reaper/relay 走 LeaderElector，仅单实例生效",
     "I6 关停先 drain 在途 _tasks 再关 store/redis（含真实在跑任务）",
-    "AF-3 /engine/** 白名单外 404；客户端 X-Internal-Token 被剥离改服务端注入",
-    "AF-6 preview 打标、finally 强制终态、恢复扫描不续跑",
-    "AF-8 readiness 探 PG+Redis，依赖 down 返回 503",
+    " /engine/** 白名单外 404；客户端 X-Internal-Token 被剥离改服务端注入",
+    " preview 打标、finally 强制终态、恢复扫描不续跑",
+    " readiness 探 PG+Redis，依赖 down 返回 503",
 ]
 
 
@@ -131,7 +131,7 @@ def run(args: argparse.Namespace) -> int:
     code, _ = http_json("GET", args.engine_url + PATH_ENGINE_READY, None, hdr, args.timeout)
     r.add("preflight", code == 200, f"引擎 readiness HTTP {code}")
 
-    # 白名单外路径 + 客户端自带令牌应被网关拒绝/剥离（AF-3）
+    # 白名单外路径 + 客户端自带令牌应被网关拒绝/剥离
     code, _ = http_json("GET", args.gateway_url + PATH_GATEWAY_PROBE, None,
                         dict(hdr, **{"X-Internal-Token": "client-supplied"}), args.timeout)
     r.add("gateway_whitelist", code in (403, 404), f"未授权 /engine/** 路径 HTTP {code}（期望 403/404）")

@@ -97,7 +97,7 @@ async def llm_models(request: Request) -> LlmModelsResponse:
 @router.post("/executions", status_code=202)
 async def execute(body: ExecuteRequest, request: Request) -> dict[str, Any]:
     result = await request.app.state.dispatcher.submit(body)
-    # AF-1：带 note 的结果表示「引擎接受但没派发」（租约被占 / 关停中）。
+    # 带 note 的结果表示「引擎接受但没派发」（租约被占 / 关停中）。
     # 回 202 会让控制面插入 PENDING 并记 EXECUTION_TRIGGERED，而引擎侧根本
     # 没有这条执行 —— 必须给明确错误码，让调用方把假 PENDING 收口。
     note = result.get("note")
@@ -146,7 +146,7 @@ async def preview_node(body: NodePreviewRequest, request: Request) -> dict[str, 
 
     execution_id = uuid.uuid4()
     dispatcher = request.app.state.dispatcher
-    # AF-6：试跑无论正常结束、超时还是抛异常，都必须强制落终态并清掉 spec。
+    # 试跑无论正常结束、超时还是抛异常，都必须强制落终态并清掉 spec。
     # 否则 execution_tracker 会留一条 OPEN，恢复扫描（启动扫描 + 周期 sweep）
     # 会在引擎重启后把它当「崩溃的业务执行」续跑，重复调用模型并重复计费。
     dispatched = False
@@ -299,7 +299,7 @@ async def tail_events(
     limit: int = Query(500, ge=1),
     space_id: str | None = Query(None, alias="spaceId"),
 ) -> dict[str, Any]:
-    """事件尾读。AF-3：调用方带 spaceId 时，过滤条件下推到引擎 SQL 层，
+    """事件尾读。调用方带 spaceId 时，过滤条件下推到引擎 SQL 层，
     不再无条件返回全租户事件。空/空白视为未指定（系统级投影器走全局路径）。
     """
     limit = min(limit, _settings(request).event_tail_max_limit)
@@ -356,13 +356,13 @@ async def health() -> dict[str, str]:
 
 @router.get("/health/live")
 async def health_live() -> dict[str, str]:
-    """liveness（AF-8）：恒活，绝不因依赖抖动让编排器把存活实例摘除。"""
+    """liveness：恒活，绝不因依赖抖动让编排器把存活实例摘除。"""
     return {"status": "ok"}
 
 
 @router.get("/health/ready")
 async def health_ready(request: Request) -> Response:
-    """readiness（AF-8）：短超时 SELECT 1 探 PG + Redis PING，任一 down 返回 503。
+    """readiness：短超时 SELECT 1 探 PG + Redis PING，任一 down 返回 503。
 
     与 Java 侧 HealthController 的 UP/DEGRADED 口径对齐；每个依赖独立探测，
     单次超时由 settings.health_probe_timeout_s 约束，不会拖住探针调用方。

@@ -49,7 +49,7 @@ async def test_release_deletes_own_lease(fake_redis) -> None:
 
 
 class _HangingRedis:
-    """模拟 Redis TCP 半开：调用既不返回也不抛（AF-7 的故障形态）。"""
+    """模拟 Redis TCP 半开：调用既不返回也不抛（的故障形态）。"""
 
     async def get(self, *args, **kwargs):
         await asyncio.Event().wait()
@@ -70,7 +70,7 @@ class _HangingPipeline:
 
 
 async def test_lease_ops_time_out_on_half_open_redis(monkeypatch):
-    """Redis 半开时 renew / held_by_me 必须超时返回，而不是永久阻塞（AF-7）。"""
+    """Redis 半开时 renew / held_by_me 必须超时返回，而不是永久阻塞。"""
     monkeypatch.setattr(lease_module, "OP_TIMEOUT_S", 0.05)
     lease = Lease(_HangingRedis(), "af:lease:hang", ttl_ms=1000, owner="worker-a")
 

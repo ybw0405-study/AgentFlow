@@ -72,6 +72,14 @@ for t in af-audit-event af-gate-decision; do
   fi
 done
 
+if [ "${AF_CONTAINERS:-0}" = "1" ]; then
+  echo '==> [4/5] AF_CONTAINERS=1：全栈 compose 起应用层'
+  docker compose -f "$ROOT/ops/docker-compose.infra.yml" \
+                 -f "$ROOT/ops/docker-compose.app.yml" up -d
+  echo '==> 网关 http://127.0.0.1:8080 / 前端 http://127.0.0.1:8081'
+  exit 0
+fi
+
 echo '==> [4/5] engine-api :8000'
 PY="$ROOT/engine-api/.venv/Scripts/python.exe"
 [ -x "$PY" ] || PY="$ROOT/engine-api/.venv/bin/python"

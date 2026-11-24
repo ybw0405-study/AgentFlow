@@ -5,7 +5,7 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * AF-3：/engine/** 的路径白名单（方法 + 精确路径）。
+ * /engine/** 的路径白名单（方法 + 精确路径）。
  *
  * <p>此前 {@code @RequestMapping("/engine/**")} 把任意剩余 URI 原样拼到引擎 base-url：
  * 只要拿着一个共享 X-Internal-Token 就能直达 {@code /internal/events}（全局事件尾读）、

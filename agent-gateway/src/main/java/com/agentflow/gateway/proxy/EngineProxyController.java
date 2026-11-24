@@ -19,7 +19,7 @@ import org.springframework.web.client.RestClient;
  * 原因：gateway-mvc 的 JDK HttpClient 默认 HTTP/2 并对上游发起 h2c 升级，
  * 而引擎（uvicorn）只说 HTTP/1.1 → 400。引擎路由全部是短 JSON 请求，手工代理可控。
  *
- * <p>AF-3 信任边界：客户端提供的内部令牌 / 用户凭据一律**剥离**，改由服务端注入
+ * <p> 信任边界：客户端提供的内部令牌 / 用户凭据一律**剥离**，改由服务端注入
  * 引擎专用凭据 {@code agentflow.engine.internal-token}。即便调用方持有控制面共享令牌，
  * 也无法拿它直连引擎；配合 {@link EnginePathPolicy} 的路径白名单，可达面收敛到
  * 控制面实际用到的最小集合。

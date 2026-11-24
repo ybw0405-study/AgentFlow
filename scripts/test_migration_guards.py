@@ -1,4 +1,4 @@
-"""AF-10 / AF-11 / AF-12 守卫脚本的静态回归用例（不需真实 MySQL）。
+""" 守卫脚本的静态回归用例（不需真实 MySQL）。
 
 运行：engine-api/.venv/Scripts/python.exe -m pytest scripts/test_migration_guards.py -q
 真实重放由三个脚本自己（带 MySQL）负责，这里只钉住「守卫本身会不会失灵」。
@@ -20,7 +20,7 @@ import check_migration_table_options as table_opts  # noqa: E402
 import check_migrations_idempotent as idem  # noqa: E402
 
 
-# ---- AF-11：CREATE TABLE 选项守卫 ----
+# ---- CREATE TABLE 选项守卫 ----
 
 
 def test_table_options_accepts_compliant_ddl():
@@ -58,11 +58,11 @@ def test_all_real_migrations_pass_table_options_guard():
     total = sum(
         len(table_opts.table_options(p.read_text(encoding="utf-8")))
         for p in sorted((ROOT / "db/mysql/migration").glob("V*.sql"))
-    )
+   )
     assert total == 28, "迁移表数量变化时必须同步复核守卫与 grants 对账"
 
 
-# ---- AF-10：幂等静态审计 ----
+# ---- 幂等静态审计 ----
 
 
 def test_static_audit_passes_on_real_migrations():
@@ -79,10 +79,10 @@ def test_static_audit_detects_unguarded_add_column_and_index():
             "CREATE TABLE t (id INT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
             "COLLATE=utf8mb4_unicode_ci;",
             encoding="utf-8",
-        )
+       )
         (d / "V002__bad.sql").write_text(
             "ALTER TABLE t ADD COLUMN c INT;", encoding="utf-8"
-        )
+       )
         original = idem.MIGRATION_DIR
         idem.MIGRATION_DIR = d
         try:
@@ -101,12 +101,12 @@ def test_static_audit_rejects_drop_before_create_trigger():
             "CREATE TABLE t (id INT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
             "COLLATE=utf8mb4_unicode_ci;",
             encoding="utf-8",
-        )
+       )
         (d / "V002__bad.sql").write_text(
             "DROP TRIGGER IF EXISTS trg;\n"
             "CREATE TRIGGER IF NOT EXISTS trg BEFORE UPDATE ON t FOR EACH ROW BEGIN SET NEW.id=1; END;",
             encoding="utf-8",
-        )
+       )
         original = idem.MIGRATION_DIR
         idem.MIGRATION_DIR = d
         try:
@@ -128,19 +128,19 @@ def test_migrations_are_version_ordered_and_increments_detected():
 def test_v019_creates_before_dropping_and_uses_if_not_exists():
     sql = (ROOT / "db/mysql/migration/V019__immutable_version_columns.sql").read_text(
         encoding="utf-8"
-    )
+   )
     assert sql.index("CREATE TRIGGER IF NOT EXISTS trg_wv_no_update_af10") < sql.index(
         "DROP TRIGGER IF EXISTS trg_wv_no_update"
-    ), "V019 必须「先建后删」，否则重现保护空窗"
+   ), "V019 必须「先建后删」，否则重现保护空窗"
 
 
-# ---- AF-12：跨表一致性查询生成 ----
+# ---- 跨表一致性查询生成 ----
 
 
 def test_orphan_query_wellformed():
     q = consistency.orphan_query(
         ("node_execution", "execution_id", "workflow_execution", "id")
-    )
+   )
     assert "LEFT JOIN" in q and "IS NULL" in q
     assert "`node_execution`" in q and "`workflow_execution`" in q
 

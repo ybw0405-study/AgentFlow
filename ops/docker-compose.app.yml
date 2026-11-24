@@ -1,0 +1,205 @@
+# AgentFlow 应用层（全容器交付）。与 infra 叠加启动：
+#   AF_CONTAINERS=1 scripts/start-dev.sh          # 推荐：脚本注入 env 并预建 topic
+#   docker compose -f ops/docker-compose.infra.yml -f ops/docker-compose.app.yml up -d
+# 直接 compose 时进程环境需自带 AF_* （密钥类），或先复制 ops/env/local.env.example
+# 为 ops/env/local.env 填写后经 env_file 注入（required: false，缺文件不报错）。
+#
+# image 为 GHCR 制品名（release 推送）；同时声明 build，镜像不在本地时从源码构建，
+# 私有 package 或未登录 GHCR 的克隆者也能一条命令起全栈。
+# 容器内一律走 compose 服务名 + 容器端口，不再用宿主机映射端口。
+name: agentflow
+
+x-java-env: &java-env
+  AF_MYSQL_HOST: mysql
+  AF_MYSQL_PORT: "3306"
+  AF_MYSQL_PASSWORD: ${AF_MYSQL_PASSWORD:-root}
+  AF_REDIS_HOST: redis
+  AF_REDIS_PORT: "6379"
+  AF_ROCKETMQ_NAMESRV: rocketmq-namesrv:9876
+  AF_MQ_ENABLED: "true"
+  AF_JWT_SECRET: ${AF_JWT_SECRET:-dev-only-secret-key-0123456789abcdef}
+  AF_INTERNAL_TOKEN: ${AF_INTERNAL_TOKEN:-dev-internal-token}
+  AF_COOKIE_SECURE: "false"
+
+# 凭据/配置透传：值来自进程环境（start-dev.sh 导出），替换结果为字面量。
+# 刻意不用 env_file：compose 会对 env_file 内容做二次插值，含 $ 的凭据会被吞段。
+x-java-secrets: &java-secrets
+  AF_MYSQL_USER: ${AF_MYSQL_USER:-}
+  AF_MYSQL_USE_TLS: ${AF_MYSQL_USE_TLS:-}
+  AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL: ${AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:-}
+  AF_CRED_MASTER_KEY: ${AF_CRED_MASTER_KEY:-}
+  AF_CRED_MASTER_KEY_PREVIOUS: ${AF_CRED_MASTER_KEY_PREVIOUS:-}
+  AF_DEMO_ACCOUNTS: ${AF_DEMO_ACCOUNTS:-}
+  AF_JWT_TTL_SECONDS: ${AF_JWT_TTL_SECONDS:-}
+  AF_BCRYPT_STRENGTH: ${AF_BCRYPT_STRENGTH:-}
+  AF_RATE_LIMIT_TRIGGER_MAX: ${AF_RATE_LIMIT_TRIGGER_MAX:-}
+  AF_RATE_LIMIT_LOGIN_MAX: ${AF_RATE_LIMIT_LOGIN_MAX:-}
+  AF_DEFAULT_TOKEN_BUDGET: ${AF_DEFAULT_TOKEN_BUDGET:-}
+  AF_MONTHLY_TOKEN_LIMIT: ${AF_MONTHLY_TOKEN_LIMIT:-}
+  AF_MONTHLY_CALL_LIMIT: ${AF_MONTHLY_CALL_LIMIT:-}
+  AF_LANGFUSE_BASE_URL: ${AF_LANGFUSE_BASE_URL:-}
+  AF_AUDIT_SINK: ${AF_AUDIT_SINK:-}
+  AF_ENV: ${AF_ENV:-}
+  AF_PRODUCTION: ${AF_PRODUCTION:-}
+
+x-engine-secrets: &engine-secrets
+  AF_LLM_STREAM: ${AF_LLM_STREAM:-}
+  AF_LLM_ALLOW_INSECURE_HTTP: ${AF_LLM_ALLOW_INSECURE_HTTP:-}
+  AF_ENV: ${AF_ENV:-}
+  AF_PRODUCTION: ${AF_PRODUCTION:-}
+  AF_MQ_CONSUME: ${AF_MQ_CONSUME:-}
+
+services:
+  mq-init:
+    image: apache/rocketmq:5.3.1@sha256:d2b231c1b9204129e4f4dd65ec1521c81b8d6826e5f1fe8daa521dab0db5bf16
+    container_name: agentflow-mq-init
+    depends_on:
+      rocketmq-broker:
+        condition: service_healthy
+    environment:
+      HOME: /tmp
+    # mqadmin 失败仍返回 0，按 topicRoute 有无 brokerDatas 判定；注册周期 ~30s 带重试。
+    command:
+      - sh
+      - -c
+      - |
+        for t in af-audit-event af-gate-decision; do
+          ok=false
+          for i in $$(seq 1 18); do
+            sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t $$t >/dev/null 2>&1
+            if sh mqadmin topicRoute -t $$t -n rocketmq-namesrv:9876 2>/dev/null | grep -q brokerDatas; then
+              ok=true; break
+            fi
+            sleep 5
+          done
+          [ "$$ok" = true ] || { echo "topic $$t 预建失败" >&2; exit 1; }
+        done
+
+  engine-api:
+    image: ghcr.io/ybw0405-study/agentflow-engine-api:${AF_IMAGE_TAG:-0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: engine-api
+    container_name: agentflow-engine
+    environment:
+      <<: *engine-secrets
+      AF_PG_DSN: postgresql://agentflow:agentflow@postgres:5432/agentflow_events
+      AF_REDIS_URL: redis://redis:6379/0
+      AF_GATEWAY_BASE_URL: http://agent-gateway:8080
+      AF_MQ_ENABLED: "true"
+      AF_MQ_NAMESRV: rocketmq-namesrv:9876
+      AF_INTERNAL_TOKEN: ${AF_INTERNAL_TOKEN:-dev-internal-token}
+      AF_ENGINE_INTERNAL_TOKEN: ${AF_ENGINE_INTERNAL_TOKEN:-dev-internal-token}
+      AF_LLM_BASE_URL: ${AF_LLM_BASE_URL:-}
+      AF_LLM_API_KEY: ${AF_LLM_API_KEY:-}
+      AF_LLM_MODEL: ${AF_LLM_MODEL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mq-init:
+        condition: service_completed_successfully
+
+  workflow-service:
+    image: ghcr.io/ybw0405-study/agentflow-workflow-service:${AF_IMAGE_TAG:-0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: java-service
+      args:
+        JAR_PATH: /out/workflow-service.jar
+    container_name: agentflow-workflow
+    environment:
+      <<: [*java-env, *java-secrets]
+      AF_GATEWAY_BASE: http://agent-gateway:8080
+    depends_on:
+      mysql:
+        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
+      grants:
+        condition: service_completed_successfully
+      mq-init:
+        condition: service_completed_successfully
+
+  connector-service:
+    image: ghcr.io/ybw0405-study/agentflow-connector-service:${AF_IMAGE_TAG:-0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: java-service
+      args:
+        JAR_PATH: /out/connector-service.jar
+    container_name: agentflow-connector
+    environment:
+      <<: [*java-env, *java-secrets]
+      AF_CRED_MASTER_KEY: ${AF_CRED_MASTER_KEY:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      grants:
+        condition: service_completed_successfully
+
+  audit-service:
+    image: ghcr.io/ybw0405-study/agentflow-audit-service:${AF_IMAGE_TAG:-0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: java-service
+      args:
+        JAR_PATH: /out/audit-service.jar
+    container_name: agentflow-audit
+    environment:
+      <<: [*java-env, *java-secrets]
+      AF_AUDIT_MYSQL_USER: ${AF_AUDIT_MYSQL_USER:-root}
+      AF_AUDIT_MYSQL_PASSWORD: ${AF_AUDIT_MYSQL_PASSWORD:-root}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      grants:
+        condition: service_completed_successfully
+      mq-init:
+        condition: service_completed_successfully
+
+  agent-gateway:
+    image: ghcr.io/ybw0405-study/agentflow-agent-gateway:${AF_IMAGE_TAG:-0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: java-service
+      args:
+        JAR_PATH: /out/agent-gateway.jar
+    container_name: agentflow-gateway
+    environment:
+      <<: [*java-env, *java-secrets]
+      AF_ENGINE_SERVICE: http://engine-api:8000
+      AF_ENGINE_INTERNAL_TOKEN: ${AF_ENGINE_INTERNAL_TOKEN:-dev-internal-token}
+      AF_WORKFLOW_SERVICE: http://workflow-service:8084
+      AF_CONNECTOR_SERVICE: http://connector-service:8085
+      AF_AUDIT_SERVICE: http://audit-service:8086
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      workflow-service:
+        condition: service_healthy
+      connector-service:
+        condition: service_healthy
+      audit-service:
+        condition: service_healthy
+      engine-api:
+        condition: service_healthy
+
+  frontend:
+    image: ghcr.io/ybw0405-study/agentflow-frontend:${AF_IMAGE_TAG:-0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: frontend
+    container_name: agentflow-frontend
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      agent-gateway:
+        condition: service_healthy

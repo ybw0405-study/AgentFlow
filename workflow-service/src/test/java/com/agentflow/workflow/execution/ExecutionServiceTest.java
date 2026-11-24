@@ -155,7 +155,7 @@ class ExecutionServiceTest {
     @Test
     void engineAcceptsButDoesNotDispatchIsNotRecordedAsTriggered() {
         givenDefinitionAndVersion();
-        // 租约被占：引擎返回 200/202 带 note，但根本没建任务、没落事件（AF-1）
+        // 租约被占：引擎返回 200/202 带 note，但根本没建任务、没落事件
         when(engine.submitExecution(any())).thenReturn(Map.of(
                 "status", "RUNNING", "note", "lease held by another worker"));
 

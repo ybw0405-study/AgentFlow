@@ -33,7 +33,7 @@ class EventStore:
             self._pool = None
 
     async def ping(self) -> None:
-        """readiness 探针（AF-8）：短超时 SELECT 1 确认连接池可用。"""
+        """readiness 探针：短超时 SELECT 1 确认连接池可用。"""
         pool = self._require_pool()
         async with pool.acquire() as conn:
             await conn.fetchval("SELECT 1")
@@ -66,7 +66,7 @@ class EventStore:
                         "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
                         str(execution_id),
                     )
-                    # 终态不可逆（AF-9）：advisory lock 已把同一执行的写入者串行化，
+                    # 终态不可逆：advisory lock 已把同一执行的写入者串行化，
                     # 读到 TERMINAL 即说明执行已结束。迟到的非终态事件一律拒绝，
                     # 否则下面的 upsert 会把 tracker 回写成 OPEN，恢复扫描又捞出去续跑。
                     tracker = await conn.fetchrow(
@@ -134,7 +134,7 @@ class EventStore:
         return [self._row_to_event(r) for r in rows]
 
     async def tail(self, after_seq: int, limit: int, *, space_id: str | None = None) -> list[Event]:
-        """全局事件尾读。AF-3：space_id 非空时把空间谓词下推到 SQL。
+        """全局事件尾读。space_id 非空时把空间谓词下推到 SQL。
 
         execution_spec.spec 是提交的 ExecuteRequest 快照（canonical_dump，
         camelCase 键 spaceId）。用 EXISTS 关联而不是给事件表加列：事件表是
@@ -260,7 +260,7 @@ class EventStore:
         return json.loads(row["spec"]) if row else None
 
     async def delete_spec(self, execution_id: uuid.UUID) -> None:
-        """AF-6：试跑收口后清理 spec。只在 tracker 已落终态之后调用，
+        """试跑收口后清理 spec。只在 tracker 已落终态之后调用，
         否则恢复扫描会丢失 preview 标记、把调试执行当成崩溃业务执行续跑。
         """
         pool = self._require_pool()

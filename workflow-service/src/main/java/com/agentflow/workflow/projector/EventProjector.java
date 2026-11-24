@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  * 一个副本投影」的尽力租约（Redis 不可用时 fail-open）。租约是减少重复劳动的优化，不是
  * 正确性依赖——部署上必须保证投影器单实例运行，或由下游唯一约束兜底。
  *
- * <p><b>空间范围（AF-3）</b>：默认 {@code agentflow.projector.space-id} 为空，投影器作为
+ * <p><b>空间范围</b>：默认 {@code agentflow.projector.space-id} 为空，投影器作为
  * 系统级组件读取全部事件（游标仍是单条全局 projector_cursor）。按 space 分片部署时，
  * 显式配置该值，引擎会把 {@code spaceId} 谓词下推到事件流 SQL，投影器只看到本分片事件。
  */
@@ -36,7 +36,7 @@ public class EventProjector {
     private final ProjectorWriter writer;
     private final RedisLease lease;
     private final int pageSize;
-    /** AF-3：非空时把投影范围下推到指定 space；空（默认）为系统级全局投影。 */
+    /** 非空时把投影范围下推到指定 space；空（默认）为系统级全局投影。 */
     private final String spaceId;
 
     public EventProjector(EngineGatewayClient engine, ProjectorWriter writer,

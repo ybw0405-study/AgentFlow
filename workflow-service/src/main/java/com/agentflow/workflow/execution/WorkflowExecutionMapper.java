@@ -64,7 +64,7 @@ public interface WorkflowExecutionMapper {
             + " WHERE id = #{id} AND status = 'PENDING'")
     int markRunning(@Param("id") String id, @Param("status") String status);
 
-    /** 终态不可逆（AF-2）：与 markRunning/markSuspended/markResumed 一样带前置状态条件，
+    /** 终态不可逆：与 markRunning/markSuspended/markResumed 一样带前置状态条件，
      *  乱序/重放事件不得把 CANCELLED 改回 SUCCEEDED，Reaper postMortem 也不得覆盖已成功行。 */
     @Update("UPDATE workflow_execution SET status = #{status}, token_used = #{tokenUsed},"
             + " steps_used = #{stepsUsed}, error_code = #{errorCode}, finished_at = NOW(3)"

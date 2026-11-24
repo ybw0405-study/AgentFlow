@@ -24,17 +24,16 @@ cd frontend; npm install; cd ..
   `Java 路由粗筛（秒级，无需起服务）` / `最小授权脚本与迁移表集合对账`）、
   `enforce_admins=true`、线性历史、禁 force push / 删除、`dismiss_stale_reviews=true`、
   要求解决所有 conversation。
-- **审批门槛仍为 0**：`required_approving_review_count=0`、`require_code_owner_reviews=false`。
-  原因见下节「单人仓库无法做到第二人复核」——设成 1 会让唯一维护者无法合并自己的 PR。
-  这是当前唯一有意保留的弱门禁，需要第二个 GitHub 账号才能补强。
+- **审批门槛为 1**：`required_approving_review_count=1`、`require_code_owner_reviews=true`。
+  个人项目由备用账号 `Y-super000` 履行第二人 review 与批准（模拟双人流程）；
+  作者账号不能批准自己的 PR，故合并一律经该备用账号审批。
 - 仓库级安全开关**已启用 3 项**：`dependabot_security_updates` / `secret_scanning` /
   `secret_scanning_push_protection`（可用 `gh api repos/ybw0405-study/AgentFlow --jq .security_and_analysis` 反查）。
   `secret_scanning_non_provider_patterns` 与 `secret_scanning_validity_checks` 经 API 提交后
   仍回 `disabled`，需到 Settings → Code security and analysis 网页确认是否受账户计划限制。
 - `.github/workflows/` 的流水线与 `security.yml`、`CODEOWNERS` 仍**需合并推送到 `main`**
   才会对 PR 生效；文件入仓 ≠ 已经跑过。
-- PR #11 与 DocQA PR #26 已打 `do-not-merge` 标签并附发布顺序说明（runbook 见
-  `修复执行报告.md` 第 5 节）。
+- 历史 PR #11 与 DocQA PR #26 曾打 `do-not-merge` 标签并附发布顺序说明（已合并关闭）。
 
 ### 回读校验 / 剩余待办
 
