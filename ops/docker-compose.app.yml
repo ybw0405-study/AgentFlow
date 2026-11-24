@@ -76,7 +76,7 @@ services:
         done
 
   engine-api:
-    image: ghcr.io/ybw0405-study/agentflow-engine-api:${AF_IMAGE_TAG:-0.5.1}
+    image: ghcr.io/ybw0405-study/agentflow-engine-api:${AF_IMAGE_TAG:-0.6.0}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -103,7 +103,7 @@ services:
         condition: service_completed_successfully
 
   workflow-service:
-    image: ghcr.io/ybw0405-study/agentflow-workflow-service:${AF_IMAGE_TAG:-0.5.1}
+    image: ghcr.io/ybw0405-study/agentflow-workflow-service:${AF_IMAGE_TAG:-0.6.0}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -125,7 +125,7 @@ services:
         condition: service_completed_successfully
 
   connector-service:
-    image: ghcr.io/ybw0405-study/agentflow-connector-service:${AF_IMAGE_TAG:-0.5.1}
+    image: ghcr.io/ybw0405-study/agentflow-connector-service:${AF_IMAGE_TAG:-0.6.0}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -143,7 +143,7 @@ services:
         condition: service_completed_successfully
 
   audit-service:
-    image: ghcr.io/ybw0405-study/agentflow-audit-service:${AF_IMAGE_TAG:-0.5.1}
+    image: ghcr.io/ybw0405-study/agentflow-audit-service:${AF_IMAGE_TAG:-0.6.0}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -164,7 +164,7 @@ services:
         condition: service_completed_successfully
 
   agent-gateway:
-    image: ghcr.io/ybw0405-study/agentflow-agent-gateway:${AF_IMAGE_TAG:-0.5.1}
+    image: ghcr.io/ybw0405-study/agentflow-agent-gateway:${AF_IMAGE_TAG:-0.6.0}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -192,7 +192,7 @@ services:
         condition: service_healthy
 
   frontend:
-    image: ghcr.io/ybw0405-study/agentflow-frontend:${AF_IMAGE_TAG:-0.5.1}
+    image: ghcr.io/ybw0405-study/agentflow-frontend:${AF_IMAGE_TAG:-0.6.0}
     build:
       context: ..
       dockerfile: Dockerfile
