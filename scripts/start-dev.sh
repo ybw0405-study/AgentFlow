@@ -17,7 +17,7 @@ for c in agentflow-mysql agentflow-rmq-broker; do
   done
   [ "$state" = "healthy" ] || { echo "$c 未在 3 分钟内 healthy" >&2; exit 1; }
 done
-docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow < "$ROOT/scripts/seed-demo.sql" || true
+docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -p"${AF_MYSQL_ROOT_PASSWORD:-root}" agentflow < "$ROOT/scripts/seed-demo.sql" || true
 
 echo '==> [3/5] 构建 Java 服务'
 (cd "$ROOT" && mvn -q -DskipTests -Dcheckstyle.skip package)
