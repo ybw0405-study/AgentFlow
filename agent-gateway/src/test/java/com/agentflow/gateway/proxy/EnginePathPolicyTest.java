@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/** AF-3：白名单必须恰好覆盖控制面真实调用，多一条都算放宽了攻击面。 */
+/** 白名单必须恰好覆盖控制面真实调用，多一条都算放宽了攻击面。 */
 class EnginePathPolicyTest {
 
     private static final String ID = UUID.randomUUID().toString();

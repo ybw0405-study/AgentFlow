@@ -92,7 +92,7 @@ async def test_terminal_event_marks_tracker(store):
 
 
 async def test_terminal_tracker_is_irreversible(store):
-    """AF-9：终态优先 + 终态后拒绝非终态事件（真实 PG 语义）。
+    """终态优先 + 终态后拒绝非终态事件（真实 PG 语义）。
 
     迟到/乱序事件不得把 tracker 回写成 OPEN，否则恢复扫描会把已完成执行
     重新捞出去续跑（真实模型重复调用、重复计费）。

@@ -18,13 +18,13 @@ slo:
     target: 0.999
     window: 30d
   - name: terminal_immutability
-    description: 终态不可逆成功率（乱序/重放事件不改回非终态，I1/AF-2/AF-9）
+    description: 终态不可逆成功率（乱序/重放事件不改回非终态，I1/）
     sli: "sum(rate(agentflow_terminal_guard_checks_total{result='pass'}[5m])) / sum(rate(agentflow_terminal_guard_checks_total[5m]))"
     target: 1.0
     window: 30d
     note: "硬红线：任何一次终态回写即视为破线"
   - name: lease_takeover_latency
-    description: Redis 半开 / 实例关停后租约接管时延（AF-7 / B4）
+    description: Redis 半开 / 实例关停后租约接管时延（/ B4）
     sli: "histogram_quantile(0.99, sum(rate(agentflow_lease_takeover_seconds_bucket[5m])) by (le))"
     target_seconds: 30.0
     window: 30d
@@ -34,23 +34,23 @@ slo:
     target_seconds: 5.0
     window: 30d
   - name: monthly_quota_consistency
-    description: 月度额度账期一致性（Java period == SQL period，AF-5/I5）
+    description: 月度额度账期一致性（Java period == SQL period，/I5）
     sli: "sum(rate(agentflow_quota_period_checks_total{result='pass'}[5m])) / sum(rate(agentflow_quota_period_checks_total[5m]))"
     target: 1.0
     window: 30d
     note: "跨月窗口（UTC 与 CST 差 8h）为必测点：账本不得劈成两月、不得超发或少算"
   - name: engine_readiness
-    description: 引擎 readiness 真实探测（AF-8：探 PG + Redis）
+    description: 引擎 readiness 真实探测（探 PG + Redis）
     sli: "agentflow_engine_ready_status"
     target: 1.0
     window: 30d
   - name: preview_no_resume
-    description: preview 不因重启/超时被恢复扫描续跑（AF-6）
+    description: preview 不因重启/超时被恢复扫描续跑
     sli: "1 - sum(rate(agentflow_preview_resumed_total[5m])) / sum(rate(agentflow_preview_total[5m]))"
     target: 1.0
     window: 30d
   - name: gateway_whitelist
-    description: /engine/** 白名单外路径被拒（AF-3）
+    description: /engine/** 白名单外路径被拒
     sli: "sum(rate(agentflow_gateway_whitelist_checks_total{result='pass'}[5m])) / sum(rate(agentflow_gateway_whitelist_checks_total[5m]))"
     target: 1.0
     window: 30d
@@ -98,7 +98,7 @@ prometheus:
             team: agentflow
             batch: "4"
           annotations:
-            summary: "终态被回写（I1 / AF-2 / AF-9 破线）"
+            summary: "终态被回写（I1 /  破线）"
             description: "检查 markTerminal WHERE 前置状态、execution_tracker 终态守卫、Reaper 排除已终态行。"
             runbook: "scripts/drill_canary_rollback_runbook.md 第 4 / 5 节"
 
@@ -110,7 +110,7 @@ prometheus:
             team: agentflow
             batch: "4"
           annotations:
-            summary: "月度额度跨月劈月（AF-5：Java CST 月与 SQL UTC 月不一致）"
+            summary: "月度额度跨月劈月（Java CST 月与 SQL UTC 月不一致）"
             description: "period 必须由注入的 PeriodClock 统一计算后传参，任何 SQL 不得用 NOW() 算账期。"
 
         - alert: AgentFlowLeaseTakeoverSlow
@@ -143,7 +143,7 @@ prometheus:
             team: agentflow
             batch: "4"
           annotations:
-            summary: "preview 被恢复扫描续跑（AF-6，可能重复调用模型/重复计费）"
+            summary: "preview 被恢复扫描续跑（，可能重复调用模型/重复计费）"
             description: "确认 preview 打标、finally 强制终态、恢复扫描跳过 preview spec。"
 
         - alert: AgentFlowEngineReadinessDown
@@ -165,5 +165,5 @@ prometheus:
             team: agentflow
             batch: "4"
           annotations:
-            summary: "/engine/** 白名单外路径被放行或客户端内部令牌未被剥离（AF-3）"
+            summary: "/engine/** 白名单外路径被放行或客户端内部令牌未被剥离"
             description: "网关应剥离 X-Internal-Token 并由服务端注入 engine.internal-token。"

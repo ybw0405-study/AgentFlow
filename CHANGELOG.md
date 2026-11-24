@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### 修复：深度体检第一轮（2026-11-24）
+
+- **Docker 交付层**：新增 `ops/docker-compose.app.yml` 全栈叠加编排（镜像不在本地时自动从源码构建）；前端镜像改用真实 nginx 配置（SPA history fallback + `/api` 反代 + SSE 关缓冲），修复深链接刷新 404 与容器内无法访问后端；引擎镜像随带 PG 迁移目录并固定绝对路径；`AF_CONTAINERS=1 scripts/start-dev.sh` 一条命令起全栈。
+- **eval-nightly**：配置仓库 secrets 并手动触发全绿（deepseek-chat，3 用例均分 1.0，门禁 0.8）。
+- **注释治理**：悬空决策代号改写为自解释表述；MySQL 迁移注释因 Flyway checksum 保留代号，新增 `docs/migration-comment-codes.md` 索引；README 重构为一屏 pitch + 架构 + 快速开始 + 能力表，已知限制长文移 `docs/known-limitations.md`，旧全文归档 `docs/product-guide.md`。
+- **CI**：e2e 工作流新增 `compose-config` job 校验叠加编排语法与插值。
+- **CONTRIBUTING**：同步分支保护现状（审批门槛 1、备用账号 Y-super000 履行第二人 review）。
+
 ### 新增：MCP sampling（默认关）
 
 - MCP 连接可配置 `sampling.connectorId`（同租户链内启用的 LLM 连接器）：服务端反向请求

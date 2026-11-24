@@ -143,7 +143,7 @@ public class EngineGatewayClient {
     }
 
     /**
-     * AF-3：事件尾读 URI。spaceId 非空时把空间谓词下推到引擎，避免单次请求
+     * 事件尾读 URI。spaceId 非空时把空间谓词下推到引擎，避免单次请求
      * 无条件读到全租户事件；为空时保留全局语义（系统级投影器，见 EventProjector）。
      * 包级可见，供契约测试断言下推参数不会随重构悄悄退化。
      */

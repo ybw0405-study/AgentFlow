@@ -12,7 +12,7 @@ public class WorkflowServiceApplication {
 
     public static void main(String[] args) {
         SpringApplication app = new SpringApplication(WorkflowServiceApplication.class);
-        // AF-4：校验 Spring 实际解析出的属性值，而不是只读环境变量。
+        // 校验 Spring 实际解析出的属性值，而不是只读环境变量。
         app.addInitializers(context -> {
             Environment env = context.getEnvironment();
             ProductionGuard.requireStrong("agentflow.jwt.secret",

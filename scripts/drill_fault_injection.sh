@@ -2,9 +2,9 @@
 # =============================================================================
 # 批次 4 / 故障注入脚本骨架 — AgentFlow
 # -----------------------------------------------------------------------------
-# 三类注入（方案第 6 节批次 4 + AF-7 / B4 / AF-8）：
-#   redis-halfopen   Redis TCP 半开 -> 租约 renew 不永久阻塞（AF-7）
-#   mq-backlog       MQ 堆积        -> 事件投影 / 重投 / 终态不回写（AF-9）
+# 三类注入（方案第 6 节批次 4 +  / B4 / ）：
+#   redis-halfopen   Redis TCP 半开 -> 租约 renew 不永久阻塞
+#   mq-backlog       MQ 堆积        -> 事件投影 / 重投 / 终态不回写
 #   rolling-restart  实例滚动关停    -> shutdown 三级收口、在途任务 drain（B4）
 #
 # 【脚手架定位 / 诚实边界】
@@ -55,7 +55,7 @@ say "===========================================================================
 
 case "$case_name" in
   redis-halfopen)
-    say "目的：Redis 半开（连接不 reset、既不抛也不返回）时，lease.renew/release 不永久阻塞（AF-7）。"
+    say "目的：Redis 半开（连接不 reset、既不抛也不返回）时，lease.renew/release 不永久阻塞。"
     say "前置：redis client 设 socket_timeout/socket_connect_timeout；renew/held_by_me/release 用 wait_for 包裹；"
     say "      dispatcher finally 的 await 加超时与 return_exceptions。"
     say "注入思路（择一）："
@@ -66,14 +66,14 @@ case "$case_name" in
     say "观测点："
     say "  - renew() 是否在 wait_for 超时内返回，而非让 _run 卡在 finally"
     say "  - _tasks 是否清空、租约是否 release、start_sweep 能否接管（不是永久僵死）"
-    say "  - /internal/health readiness 是否探 Redis 并返回 503（AF-8，LB 摘除）"
+    say "  - /internal/health readiness 是否探 Redis 并返回 503（，LB 摘除）"
     say "  - 不出现误导性 'worker crashed' 刷屏"
     say "恢复：DEBUG SLEEP 到期 / network connect / 删除 iptables 规则"
     say "判据：接管时延 < SLO（见 drill_slo_alerts.yaml）；无永久僵死执行；恢复后 PING 通。"
     ;;
 
   mq-backlog)
-    say "目的：MQ 堆积 / 迟到事件下，终态不可逆（AF-2/AF-9）、投影单调（I1）。"
+    say "目的：MQ 堆积 / 迟到事件下，终态不可逆、投影单调（I1）。"
     say "前置：记录基线堆积深度；确认事件流 last_seq 单调、execution_tracker 终态守卫。"
     say "注入思路：暂停 EventProjector 消费 / 批量投递事件，制造堆积与乱序重放。"
     run "docker pause ${TARGET:-agentflow-workflow} || true"
@@ -98,7 +98,7 @@ case "$case_name" in
     say "  - shutdown 顺序：置停止接收 -> gather(*_tasks, return_exceptions=True) -> sweep/gate -> 才关 store/redis"
     say "  - 在途执行不撞已关闭连接池、不出现 'Task was destroyed but it is pending!'"
     say "  - 租约在 TTL 内被正常接管（不误导为 worker crashed）"
-    say "  - preview 执行不因重启被恢复扫描续跑（AF-6）"
+    say "  - preview 执行不因重启被恢复扫描续跑"
     say "  - 新实例 readiness 变绿后才接流量"
     say "恢复：按 digest 拉起实例（docker start ${TARGET:-agentflow-engine}）；确认 /internal/health readiness 200"
     say "判据：零在途丢失、store/redis 在任务结束后才关闭、租约接管时延 < SLO。"

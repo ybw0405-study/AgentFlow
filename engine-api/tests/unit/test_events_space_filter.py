@@ -1,4 +1,4 @@
-"""AF-3 回归：/internal/events 全局事件尾读的 spaceId 过滤下推。
+"""回归：/internal/events 全局事件尾读的 spaceId 过滤下推。
 
 覆盖四层：真实 EventStore 的 SQL、内存替身语义、HTTP 端点接线、
 以及「Java 调用签名 ↔ 引擎端点 ↔ OpenAPI」的跨服务契约。

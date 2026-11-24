@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | P1 | 制品按 **digest** 可部署（G17，当前仓库无镜像时此项为**阻断**） | 方案 5.3 / G17；`rollback` 要求「按 digest 部署上一版本」当前不可执行 |
 | P2 | 版本单一来源，`pom.xml` / `package.json` / CHANGELOG / tag 一致 | G12 |
-| P3 | 四个 `*Application` 的 `ProductionGuard` 强制显式 DB 账号、两个内部 token 不同且为强值 | AF-3 / AF-4 |
+| P3 | 四个 `*Application` 的 `ProductionGuard` 强制显式 DB 账号、两个内部 token 不同且为强值 |  |
 | P4 | `execution_outbox` 双写开关可回退（架构 4.1 第 1–3 步每步可独立上线、可回滚） | 方案 4.1 |
 | P5 | SLO 与告警已加载、错误预算基线已取 | 同目录 `drill_slo_alerts.yaml` |
 | P6 | 监控：引擎 readiness、租约接管时延、投影延迟、月度账期一致性、MQ 堆积 | — |
@@ -59,11 +59,11 @@ curl -fsS http://127.0.0.1:8000/internal/health   # readiness 200 后才放量
 
 - **I2 提交语义**：`submitExecution` 返回体 `status/note` 被校验；引擎「接受但未派发」返回 409/5xx，不是 202。
 - **I1 终态不可逆**：乱序/重放事件不把 CANCELLED 改回 SUCCEEDED；`execution_tracker` 终态后不回写 OPEN。
-- **AF-6 preview**：preview 打标、finally 强制终态、恢复扫描不续跑、不重复计费。
-- **AF-5 账期**：`PeriodClock` 统一算 period，Java 与 SQL 账期一致；跨月窗口账本 1 行、不超发、不少算。
+- ** preview**：preview 打标、finally 强制终态、恢复扫描不续跑、不重复计费。
+- ** 账期**：`PeriodClock` 统一算 period，Java 与 SQL 账期一致；跨月窗口账本 1 行、不超发、不少算。
 - **I6 / B4 关停**：滚动关停在途任务先 drain，store/redis 在任务结束后才关闭。
-- **AF-3 网关**：`/engine/**` 白名单外 404，客户端 `X-Internal-Token` 被剥离、改服务端注入。
-- **AF-8 健康检查**：readiness 探 PG+Redis，依赖 down 返回 503 并被摘除。
+- ** 网关**：`/engine/**` 白名单外 404，客户端 `X-Internal-Token` 被剥离、改服务端注入。
+- ** 健康检查**：readiness 探 PG+Redis，依赖 down 返回 503 并被摘除。
 - **错误预算**：任一级消耗超阈值立即停止晋级。
 
 ---
@@ -72,11 +72,11 @@ curl -fsS http://127.0.0.1:8000/internal/health   # readiness 200 后才放量
 
 1. 执行真相分裂：双写两侧结果不一致、控制面 PENDING 而引擎无执行；
 2. 终态被回写 / 投影漂移（I1 破线）；
-3. 跨月账期劈月、额度超发或少算（AF-5）；
-4. 租约接管时延突破 SLO / 出现永久僵死执行（AF-7）；
-5. preview 被恢复扫描续跑、重复计费（AF-6）；
+3. 跨月账期劈月、额度超发或少算；
+4. 租约接管时延突破 SLO / 出现永久僵死执行；
+5. preview 被恢复扫描续跑、重复计费；
 6. readiness 持续 503 且无法自愈；
-7. 引擎/网关内部凭据校验异常（AF-3/AF-4）。
+7. 引擎/网关内部凭据校验异常。
 
 ---
 

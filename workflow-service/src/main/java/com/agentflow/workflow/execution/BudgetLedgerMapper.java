@@ -17,7 +17,7 @@ import org.apache.ibatis.annotations.Update;
 public interface BudgetLedgerMapper {
 
     /**
-     * 账期唯一来源（AF-5 / 不变量 I5）：Asia/Shanghai 的 yyyy-MM。
+     * 账期唯一来源（/ 不变量 I5）：Asia/Shanghai 的 yyyy-MM。
      *
      * <p>SQL 里的 {@code DATE_FORMAT(NOW(3),'%Y-%m')} 按数据库时区算，与 Java 侧
      * （Asia/Shanghai）在跨月边界会分裂成两个月账本：月度额度硬约束查空账本失效、

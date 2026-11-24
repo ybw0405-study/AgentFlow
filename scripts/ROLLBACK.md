@@ -1,4 +1,4 @@
-# 迁移回滚与升级 runbook（AF-10 / AF-11 / V019）
+# 迁移回滚与升级 runbook（/ V019）
 
 本轮修改了**已经应用过的**迁移文件（`V001`–`V011` 补 `COLLATE`，`V008`/`V012`–`V018`
 改幂等守卫，`V019` 改触发器替换顺序）。在存量库上部署前**必须**按本 runbook 顺序操作，
@@ -31,7 +31,7 @@ mysql -e "SELECT version, description, success FROM flyway_schema_history ORDER 
 > 确实执行失败（history 里 `success=0`），repair 后下次启动会重新执行它 —— 这正是
 > 幂等守卫存在的意义。
 
-## 2. 存量表的 collation（AF-11 的边界，不粉饰）
+## 2. 存量表的 collation（的边界，不粉饰）
 
 `V001`–`V011` 补的 `ENGINE/CHARSET/COLLATE` **只影响空库新建的表**。已经存在的表
 不会因为改了迁移文件而自动变色。要统一存量表，需单独评估后执行（会重建索引，务必
@@ -50,13 +50,13 @@ ALTER TABLE <table> CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 症状：`workflow_version` 的 `immutable=1` 行竟然能被改 `dsl_json` / `published_at`。
 
 ```bash
-# A. 只丢了 AF-10 版触发器（trg_wv_no_update_af10）：
+# A. 只丢了  版触发器（trg_wv_no_update_af10）：
 mysql <db> < scripts/rollback/reapply_V019_protection.sql
 # 该文件 CREATE ... IF NOT EXISTS，不 DROP，任何状态下执行都不会扩大空窗。
 
 # B. 需要整体回退到 V002 旧定义：
 mysql <db> < scripts/rollback/U019__restore_v002_immutable_trigger.sql
-# 先建回原名触发器，再删 AF-10 版，全程至少一条保护存在。
+# 先建回原名触发器，再删  版，全程至少一条保护存在。
 ```
 
 验证保护真的生效（本机 MySQL 8.4 实测口径）：

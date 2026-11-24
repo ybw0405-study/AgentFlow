@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 
-/** AF-3：客户端凭据必须被剥离，引擎令牌只能由服务端注入一份。 */
+/** 客户端凭据必须被剥离，引擎令牌只能由服务端注入一份。 */
 class EngineProxyControllerTest {
 
     @Test

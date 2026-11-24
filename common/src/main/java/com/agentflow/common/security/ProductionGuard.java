@@ -116,7 +116,7 @@ public final class ProductionGuard {
     }
 
     /**
-     * AF-3：网关→引擎凭据必须与控制面凭据分离。只做「注入」而不强制分离的话，
+     * 网关→引擎凭据必须与控制面凭据分离。只做「注入」而不强制分离的话，
      * 拿到控制面共享令牌的人依然可以绕开网关直连引擎 /internal/**。
      */
     public static void requireDistinct(String name, String controlPlaneToken,
@@ -129,12 +129,12 @@ public final class ProductionGuard {
                 || controlPlaneToken.equals(engineToken)) {
             throw new IllegalStateException(
                     "FAIL-FAST: " + name
-                            + " must be a strong value distinct from the control-plane token (AF-3)");
+                            + " must be a strong value distinct from the control-plane token");
         }
     }
 
     /**
-     * AF-4：生产环境数据源账号必须由环境变量**显式注入**，且与 Spring 实际解析出的
+     * 生产环境数据源账号必须由环境变量**显式注入**，且与 Spring 实际解析出的
      * datasource username 完全一致、不得为 root。
      *
      * <p>只校验 System.getenv 会漏掉两种绕过：{@code --spring.datasource.username=root}

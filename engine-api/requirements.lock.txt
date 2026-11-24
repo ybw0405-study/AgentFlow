@@ -1,4 +1,4 @@
-# AgentFlow engine-api 依赖锁文件（G15：精确版本 + 真实 --hash）
+# AgentFlow engine-api 依赖锁文件（精确版本 + 真实 --hash）
 # 由 ops/gen-requirements-hashes.py 生成；hash 取自 PyPI JSON API，
 # 覆盖对应版本的全部发行文件。请勿手工编辑；重新生成：
 #     python ops/gen-requirements-hashes.py

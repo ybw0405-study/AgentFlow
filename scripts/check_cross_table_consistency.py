@@ -1,4 +1,4 @@
-"""AF-12 迁移后跨表引用一致性校验。
+""" 迁移后跨表引用一致性校验。
 
 方案给了两条路：补 FK ON DELETE RESTRICT，或产出迁移后一致性校验脚本。
 本仓库选后者（脚本路径），理由：现有数据可能已有孤儿行，直接在存量库上
@@ -53,7 +53,7 @@ def orphan_query(ref: tuple[str, str, str, str]) -> str:
         f"SELECT COUNT(*) FROM `{child}` c "
         f"LEFT JOIN `{parent}` p ON c.`{col}` = p.`{parent_col}` "
         f"WHERE c.`{col}` IS NOT NULL AND p.`{parent_col}` IS NULL"
-    )
+   )
 
 
 def fk_query() -> str:
@@ -67,7 +67,7 @@ def fk_query() -> str:
         "WHERE kcu.TABLE_SCHEMA = DATABASE() "
         "  AND kcu.REFERENCED_TABLE_NAME IS NOT NULL "
         "ORDER BY kcu.TABLE_NAME, kcu.COLUMN_NAME"
-    )
+   )
 
 
 def self_test() -> None:
@@ -97,16 +97,16 @@ def main() -> int:
     try:
         executor = build_executor()
     except RuntimeError as exc:
-        print(f"AF-12 无法连接 MySQL: {exc}")
+        print(f" 无法连接 MySQL: {exc}")
         if args.require_db:
             return 1
-        print("AF-12 真库校验 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
+        print(" 真库校验 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
         return 0
     if executor is None:
-        print("AF-12 真库校验 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
+        print(" 真库校验 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
         return 1 if args.require_db else 0
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", db):
-        print(f"AF-12 FAIL: 非法数据库名 {db!r}")
+        print(f" FAIL: 非法数据库名 {db!r}")
         return 1
 
     try:
@@ -117,18 +117,18 @@ def main() -> int:
                 f"DROP DATABASE IF EXISTS `{db}`; "
                 f"CREATE DATABASE `{db}` "
                 "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-            )
+           )
             files = migration_files()
             for path in files:
                 executor.db(db, path.read_text(encoding="utf-8"))
-            print(f"AF-12 真库 {db} 已灌入 {len(files)} 份迁移")
+            print(f" 真库 {db} 已灌入 {len(files)} 份迁移")
         orphans: list[str] = []
         for ref in REFERENCES:
             count = int(executor.query(db, orphan_query(ref)).strip() or "0")
             if count:
                 orphans.append(f"{ref[0]}.{ref[1]} -> {ref[2]}.{ref[3]}: {count} 行孤儿")
         if orphans:
-            print("AF-12 一致性校验 FAIL（存在孤儿行）:")
+            print(" 一致性校验 FAIL（存在孤儿行）:")
             for line in orphans:
                 print("  - " + line)
             return 1
@@ -140,20 +140,20 @@ def main() -> int:
         ]
         bad_rules = [r for r in fk_rows if len(r) >= 5 and r[4] in ("CASCADE", "SET NULL")]
         if bad_rules:
-            print("AF-12 FAIL：已有 FK 的 DELETE_RULE 会静默扩大删除面:")
+            print(" FAIL：已有 FK 的 DELETE_RULE 会静默扩大删除面:")
             for r in bad_rules:
                 print("  - " + "\t".join(r))
             return 1
 
         fk_pairs = {(r[1], r[2]) for r in fk_rows if len(r) >= 5}
         no_fk = [f"{c}.{col}" for c, col, _, _ in REFERENCES if (c, col) not in fk_pairs]
-        print(f"AF-12 PASS：{len(REFERENCES)} 条跨表引用 0 孤儿；"
+        print(f" PASS：{len(REFERENCES)} 条跨表引用 0 孤儿；"
               f"已有 {len(fk_rows)} 条 DB 级 FK 且 DELETE_RULE 安全")
-        print(f"AF-12 提示：{len(no_fk)} 条引用仍无 DB 级 FK（靠本门禁兜底）: "
+        print(f" 提示：{len(no_fk)} 条引用仍无 DB 级 FK（靠本门禁兜底）: "
               + ", ".join(no_fk))
         return 0
     except RuntimeError as exc:
-        print(f"AF-12 FAIL: {exc}")
+        print(f" FAIL: {exc}")
         return 1
     finally:
         executor.cleanup()

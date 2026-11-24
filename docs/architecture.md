@@ -167,7 +167,7 @@ CREATE TABLE tenant (
   KEY idx_tenant_parent (parent_id)
 );
 
-CREATE TABLE app_user (                                  -- 复用 DocQA 结构
+CREATE TABLE app_user (                                 -- 复用 DocQA 结构
   id            CHAR(36)     NOT NULL,
   email         VARCHAR(255) NOT NULL,
   password_hash VARCHAR(100) NOT NULL,                   -- bcrypt
@@ -181,7 +181,7 @@ CREATE TABLE app_user (                                  -- 复用 DocQA 结构
   UNIQUE KEY uq_user_email (uq_email)
 );
 
-CREATE TABLE refresh_token (                             -- 复用 DocQA 轮换模型
+CREATE TABLE refresh_token (                            -- 复用 DocQA 轮换模型
   id         CHAR(36)    NOT NULL,
   user_id    CHAR(36)    NOT NULL,
   token_hash CHAR(64)    NOT NULL,                       -- sha256(token)
@@ -425,7 +425,7 @@ CREATE TABLE notification (
 ```
 
 > 上面的 `trg_wv_no_update` 是 **V002 的初始定义**。`V019__immutable_version_columns.sql`
-> 会把不可变保护扩展到 `published_at` / `published_by` / `immutable` 本身；AF-10 后该迁移
+> 会把不可变保护扩展到 `published_at` / `published_by` / `immutable` 本身； 后该迁移
 > 改为「先建后删」：先 `CREATE TRIGGER IF NOT EXISTS trg_wv_no_update_af10`（新定义），
 > 再 `DROP TRIGGER trg_wv_no_update`（V002 旧定义），避免 DDL 隐式提交造成保护空窗。
 > 因此**升级后库里的 BEFORE UPDATE 触发器名是 `trg_wv_no_update_af10`**，
@@ -447,7 +447,7 @@ CREATE TABLE execution_event (
 CREATE UNIQUE INDEX idx_ee_version ON execution_event(execution_id, aggregate_version);
 CREATE INDEX        idx_ee_exec    ON execution_event(execution_id, seq);
 
-CREATE TABLE execution_tracker (                          -- 恢复扫描用，与事件同 TX 更新
+CREATE TABLE execution_tracker (                         -- 恢复扫描用，与事件同 TX 更新
   execution_id UUID PRIMARY KEY,
   status       TEXT NOT NULL,                             -- OPEN / TERMINAL
   last_seq     BIGINT NOT NULL,

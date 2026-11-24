@@ -42,7 +42,7 @@ class ProjectorWriterTest {
 
     @Test
     void markTerminalSqlGuardsAgainstOverwritingTerminalRows() throws Exception {
-        // AF-2：终态不可逆必须落在 SQL 层（mock 测不出 WHERE），直接校验注解文本。
+        // 终态不可逆必须落在 SQL 层（mock 测不出 WHERE），直接校验注解文本。
         var method = WorkflowExecutionMapper.class.getMethod("markTerminal", String.class,
                 String.class, int.class, int.class, String.class);
         Update update = method.getAnnotation(Update.class);
@@ -53,7 +53,7 @@ class ProjectorWriterTest {
 
     @Test
     void budgetAccrualPeriodComesFromJavaNotSqlNow() throws Exception {
-        // AF-5：账期必须由 Java 统一计算传入，SQL 不得再用 NOW(3)（跨月分裂账本）。
+        // 账期必须由 Java 统一计算传入，SQL 不得再用 NOW(3)（跨月分裂账本）。
         for (var method : BudgetLedgerMapper.class.getDeclaredMethods()) {
             if (!method.getName().equals("accrue") && !method.getName().equals("accrueByTenant")) {
                 continue;

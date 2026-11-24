@@ -50,7 +50,7 @@ public class GatewayAuthFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         String path = request.getRequestURI();
 
-        // 内部引擎路由：先按控制面真实用到的「方法 + 路径」白名单收敛可达面（AF-3），
+        // 内部引擎路由：先按控制面真实用到的「方法 + 路径」白名单收敛可达面，
         // 再校验服务间令牌；两者任一不满足都回 404（不暴露路由存在性）。
         if (path.startsWith("/engine/")) {
             if (!EnginePathPolicy.isAllowed(request.getMethod(), path)) {

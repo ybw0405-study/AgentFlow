@@ -48,7 +48,7 @@ public class ConnectorRepository {
             // 脏 config_json 静默变空配置会把排查方向引向"没配"，至少留一条告警（C-13）。
             // 仍返回空对象以免一条脏数据让整个列表接口 500。
             // 绝不把原文打进日志：config_json 含 headers / auth.headerName，可能携带
-            // 静态 API key / token（AF-13）。只留 id + 异常类型 + 长度供排查。
+            // 静态 API key / token。只留 id + 异常类型 + 长度供排查。
             String raw = rs.getString("config_json");
             log.warn("invalid config_json for connector {}; treating as empty (type={}, len={})",
                     rs.getString("id"), e.getClass().getSimpleName(),

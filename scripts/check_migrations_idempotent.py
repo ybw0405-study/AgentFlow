@@ -1,4 +1,4 @@
-"""AF-10 幂等门禁：空库 + 已迁移库各重放一次。
+""" 幂等门禁：空库 + 已迁移库各重放一次。
 
 两阶段：
   1) 静态审计（零依赖，永远执行）：增量迁移里的 ADD COLUMN / ADD KEY /
@@ -107,12 +107,12 @@ class Executor:
     def _run(self, args: list[str], sql: str) -> None:
         result = subprocess.run(
             args, input=sql, text=True, capture_output=True, encoding="utf-8"
-        )
+       )
         if result.returncode:
             noisy = "\n".join(
                 line for line in (result.stderr or "").splitlines()
                 if "Using a password" not in line
-            )
+           )
             raise RuntimeError(f"SQL 执行失败 (rc={result.returncode}): {noisy.strip()}")
 
     def admin(self, sql: str) -> None:
@@ -126,7 +126,7 @@ class Executor:
         out = subprocess.run(
             self.argv + [f"--database={name}", "-N", "-B", "-e", sql],
             text=True, capture_output=True, encoding="utf-8",
-        )
+       )
         if out.returncode:
             raise RuntimeError(f"查询失败 (rc={out.returncode}): {out.stderr.strip()}")
         return out.stdout
@@ -136,7 +136,7 @@ class Executor:
             subprocess.run(
                 ["docker", "rm", "-f", self.container],
                 capture_output=True, check=False,
-            )
+           )
 
 
 def build_executor() -> Executor | None:
@@ -153,7 +153,7 @@ def build_executor() -> Executor | None:
             "mysql:8.4", "--default-time-zone=+08:00",
         ],
         text=True,
-    ).strip()
+   ).strip()
     argv = ["docker", "exec", "-i", cid, "mysql", "-uroot", f"-p{PASSWORD}"]
     executor = Executor(argv, container=cid)
     # 官方 mysql 镜像初始化时先起一个 --skip-grant-tables 的临时实例，
@@ -163,7 +163,7 @@ def build_executor() -> Executor | None:
         ready = subprocess.run(
             argv + ["-N", "-B", "-e", "SELECT 1"],
             capture_output=True, text=True,
-        )
+       )
         if ready.returncode == 0 and ready.stdout.strip() == "1":
             return executor
         time.sleep(2)
@@ -195,7 +195,7 @@ SELECT
         raise RuntimeError(
             f"schema 不变量不满足: tables={tables} idx_ae_type={ae_idx} "
             f"immutable_trigger={trg} wrong_collation={wrong}"
-        )
+       )
 
 
 def main() -> int:
@@ -210,11 +210,11 @@ def main() -> int:
 
     audit_errors = static_audit()
     if audit_errors:
-        print("AF-10 静态审计 FAIL:")
+        print(" 静态审计 FAIL:")
         for err in audit_errors:
             print("  - " + err)
         return 1
-    print(f"AF-10 静态审计 PASS：{len([p for p in migration_files() if is_increment(p)])} 份增量迁移均带幂等守卫")
+    print(f" 静态审计 PASS：{len([p for p in migration_files() if is_increment(p)])} 份增量迁移均带幂等守卫")
 
     files = migration_files()
     increments = [p for p in files if is_increment(p)]
@@ -222,13 +222,13 @@ def main() -> int:
     try:
         executor = build_executor()
     except RuntimeError as exc:
-        print(f"AF-10 真实重放无法启动 MySQL: {exc}")
+        print(f" 真实重放无法启动 MySQL: {exc}")
         if args.require_replay:
             return 1
-        print("AF-10 真实重放 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
+        print(" 真实重放 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
         return 0
     if executor is None:
-        print("AF-10 真实重放 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
+        print(" 真实重放 SKIP（本机无 docker 且未设 AF_MYSQL_CMD）")
         return 1 if args.require_replay else 0
 
     try:
@@ -240,17 +240,17 @@ def main() -> int:
             "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "
             f"CREATE DATABASE {MIGRATED_DB} "
             "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-        )
+       )
         replay(executor, FRESH_DB, files)  # 空库重放一次
-        print(f"AF-10 空库重放 PASS：{len(files)} 份迁移全部成功")
+        print(f" 空库重放 PASS：{len(files)} 份迁移全部成功")
         replay(executor, MIGRATED_DB, files)  # 先成为已迁移库
         replay(executor, MIGRATED_DB, increments)  # 已迁移库再重放一次
-        print(f"AF-10 已迁移库重放 PASS：{len(increments)} 份增量迁移二次执行 0 错误")
+        print(f" 已迁移库重放 PASS：{len(increments)} 份增量迁移二次执行 0 错误")
         verify_schema(executor, MIGRATED_DB)
-        print("AF-10 schema 不变量 PASS：表/索引/不可变触发器/统一 collation")
+        print(" schema 不变量 PASS：表/索引/不可变触发器/统一 collation")
         return 0
     except RuntimeError as exc:
-        print(f"AF-10 真实重放 FAIL: {exc}")
+        print(f" 真实重放 FAIL: {exc}")
         return 1
     finally:
         executor.cleanup()

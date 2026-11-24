@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
-/** AF-3：EngineGatewayClient 必须把 spaceId 下推到 /internal/events 的查询串。 */
+/** EngineGatewayClient 必须把 spaceId 下推到 /internal/events 的查询串。 */
 class EngineGatewayClientTest {
 
     @Test

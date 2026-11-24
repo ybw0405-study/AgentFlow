@@ -409,7 +409,7 @@ class _ExplodingLease:
 
     async def release(self) -> None:
         # Redis 全挂时 release 同样会抛（而不是静默 return None）：关停测试据此
-        # 验证「清理失败也不能让 _run 卡在 finally / _tasks 残留」（B4 / AF-7）。
+        # 验证「清理失败也不能让 _run 卡在 finally / _tasks 残留」（B4 /）。
         raise RedisConnectionError("redis down")
 
 
@@ -549,7 +549,7 @@ async def test_shutdown_stops_accepting_new_submissions(settings, fake_redis, me
     assert await mem_store.read_all(req.execution_id) == []
 
 
-# ---- 终态不可逆（AF-9）----
+# ---- 终态不可逆----
 
 
 class _ScriptedConn:
@@ -623,7 +623,7 @@ async def test_terminal_tracker_is_irreversible():
     assert len(conn.appended) == 2
 
 
-# ---- liveness / readiness 探针（AF-8）----
+# ---- liveness / readiness 探针----
 
 
 class _ProbeStore:
@@ -692,7 +692,7 @@ async def test_health_ready_ok_and_probes_need_no_token(settings):
         assert (await client.get("/internal/events")).status_code == 401
 
 
-# ---- 派发状态一致性（AF-1）----
+# ---- 派发状态一致性----
 
 
 class _AcceptingDispatcher:
