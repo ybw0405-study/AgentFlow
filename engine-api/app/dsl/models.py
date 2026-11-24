@@ -122,6 +122,7 @@ class RetrievalConfig(CamelModel):
     top_k: int = Field(5, ge=1, le=50)
     min_score: float = Field(0.0, ge=0, le=1)
     rerank: bool = False
+    retrieval_mode: Literal["lexical", "vector", "hybrid"] = "lexical"
 
 
 class ToolConfig(CamelModel):

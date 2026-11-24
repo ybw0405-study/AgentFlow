@@ -35,6 +35,21 @@ public class InternalKnowledgeController {
                                         Integer topK, Double minScore) {
     }
 
+    public record InternalChunksRequest(String tenantId, List<String> knowledgeBaseIds,
+                                        Integer limit) {
+    }
+
+    @PostMapping("/chunks")
+    public ApiResponse<List<KnowledgeService.ChunkDto>> chunks(
+            HttpServletRequest request, @RequestBody InternalChunksRequest body) {
+        requireInternalToken(request);
+        if (body.tenantId() == null || body.tenantId().isBlank()) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001, "tenantId is required");
+        }
+        return ApiResponse.ok(service.listChunksInternal(body.tenantId(),
+                body.knowledgeBaseIds(), body.limit() == null ? 2000 : body.limit()));
+    }
+
     @PostMapping("/search")
     public ApiResponse<KnowledgeService.SearchResult> search(
             HttpServletRequest request, @RequestBody InternalSearchRequest body) {

@@ -201,6 +201,26 @@
         },
         "type": "object"
       },
+      "ApiResponseListChunkDto": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ChunkDto"
+            },
+            "type": "array"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ApiResponseListDatasetRow": {
         "properties": {
           "code": {
@@ -585,6 +605,30 @@
           },
           "demoMode": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ChunkDto": {
+        "properties": {
+          "chunkId": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "documentId": {
+            "type": "string"
+          },
+          "documentTitle": {
+            "type": "string"
+          },
+          "kbId": {
+            "type": "string"
+          },
+          "ordinal": {
+            "format": "int32",
+            "type": "integer"
           }
         },
         "type": "object"
@@ -1126,6 +1170,24 @@
           "score": {
             "format": "double",
             "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "InternalChunksRequest": {
+        "properties": {
+          "knowledgeBaseIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "tenantId": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -3922,6 +3984,36 @@
         },
         "tags": [
           "health-controller"
+        ]
+      }
+    },
+    "/internal/knowledge/chunks": {
+      "post": {
+        "operationId": "chunks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InternalChunksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseListChunkDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "internal-knowledge-controller"
         ]
       }
     },

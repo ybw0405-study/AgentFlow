@@ -403,6 +403,23 @@ public class KnowledgeService {
                          int ordinal, String content, double score) {
     }
 
+    public record ChunkDto(String chunkId, String kbId, String documentId, String documentTitle,
+                           int ordinal, String content) {
+    }
+
+    /** 引擎懒索引用：切片清单（控制面仍是权威源，engine 按 content hash 增量嵌入）。 */
+    public List<ChunkDto> listChunksInternal(String tenantId, List<String> kbIds, int limit) {
+        List<String> owned = distinctOwnedBases(tenantId, kbIds);
+        if (owned.isEmpty()) {
+            return List.of();
+        }
+        int cap = Math.max(1, Math.min(limit, MAX_SCAN_CHUNKS));
+        return mapper.listChunksForSearch(tenantId, owned, cap).stream()
+                .map(row -> new ChunkDto(row.id(), row.kbId(), row.documentId(),
+                        row.documentTitle(), row.ordinal(), row.content()))
+                .toList();
+    }
+
     public record SearchResult(List<HitDto> results, String query, int matchedChunks,
                                int scannedChunks) {
     }

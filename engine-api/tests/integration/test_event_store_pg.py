@@ -44,7 +44,7 @@ if not _docker_available():
 def pg_dsn():
     from testcontainers.community.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16-alpine") as pg:
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
         url = pg.get_connection_url()
         yield url.replace("postgresql+psycopg2://", "postgresql://")
 

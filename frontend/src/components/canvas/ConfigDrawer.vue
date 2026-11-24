@@ -611,6 +611,22 @@ function editBody(): void {
         :value="cfg('queryTemplate', '')"
         @input="setCfg('queryTemplate', ($event.target as HTMLTextAreaElement).value)"
       />
+      <label class="af-label">检索模式</label>
+      <select
+        class="af-select"
+        :value="cfg('retrievalMode', 'lexical')"
+        @change="setCfg('retrievalMode', ($event.target as HTMLSelectElement).value)"
+      >
+        <option value="lexical">
+          lexical · 本地 BM25 词法
+        </option>
+        <option value="vector">
+          vector · pgvector 语义
+        </option>
+        <option value="hybrid">
+          hybrid · 词法+语义 RRF 融合
+        </option>
+      </select>
       <label class="af-label">topK</label>
       <input
         class="af-input mono"
@@ -620,7 +636,7 @@ function editBody(): void {
         :value="cfg('topK', 5)"
         @input="setNumberCfg('topK', ($event.target as HTMLInputElement).value)"
       >
-      <label class="af-label">minScore（0~1）</label>
+      <label class="af-label">minScore（0~1，仅词法路）</label>
       <input
         class="af-input mono"
         type="number"
@@ -634,7 +650,8 @@ function editBody(): void {
         class="af-faint"
         style="font-size: 11px; line-height: 1.6"
       >
-        评分是本地 BM25 相关度（中文按字与二元组），不调用外部 embedding 服务；调高 minScore 可以只保留强相关片段。
+        lexical 评分是本地 BM25 相关度（中文按字与二元组）；vector/hybrid 需进程配置
+        AF_EMBEDDING_*，首次查询按内容哈希懒建向量索引，hybrid 用 RRF 融合两路名次。
       </p>
     </template>
 

@@ -33,6 +33,9 @@ def build_executors(
     subworkflow_resolver: SubworkflowResolver | None = None,
     connector_gateway: tuple[str, str] | None = None,
     knowledge_gateway: tuple[str, str] | None = None,
+    embedding_provider=None,
+    vector_store=None,
+    index_cap: int = 2000,
 ) -> dict[str, NodeExecutor]:
     """connector_gateway=(gateway_base, internal_token) 时启用真实连接器与模型连接；
     knowledge_gateway 同源，启用文档检索节点。两者缺省时对应节点给出明确错误而非静默回落。
@@ -59,7 +62,7 @@ def build_executors(
         "start": StartExecutor(),
         "end": EndExecutor(),
         "llm": LlmExecutor(llm_providers, connector_llms),
-        "retrieval": RetrievalExecutor(knowledge),
+        "retrieval": RetrievalExecutor(knowledge, embedding_provider, vector_store, index_cap),
         "tool": ToolExecutor(connectors),
         "mcp": McpExecutor(connectors),
         "condition": ConditionExecutor(),
