@@ -152,15 +152,16 @@ jobs:
           # 构建期解析 python 基础镜像的真实 digest，绝不写入编造值。
           # inspect 依赖 runner 到 docker.io 的可达性；失败时回退 Dockerfile 内置的
           # 真实 digest（本机 inspect 解析入库的值），并保留 stderr 供诊断。
-          PYTHON_BASE_DIGEST="$(docker buildx imagetools inspect python:3.13-slim 2>inspect.err \
-            | awk '/^Digest:[[:space:]]/{print $2; exit}' || true)"
+          PYTHON_BASE_DIGEST=""
+          if inspect_out="$(docker buildx imagetools inspect python:3.13-slim 2>inspect.err)"; then
+            PYTHON_BASE_DIGEST="$(printf '%s\n' "$inspect_out" | awk '/^Digest:[[:space:]]/{print $2}')"
+          else
+            echo "warn: inspect 失败，回退 Dockerfile 内置真实 digest；inspect stderr：" >&2
+            cat inspect.err >&2
+          fi
           case "$PYTHON_BASE_DIGEST" in
             sha256:*) echo "python:3.13-slim 固定到 ${PYTHON_BASE_DIGEST}" ;;
-            *)
-              echo "warn: inspect 失败，回退 Dockerfile 内置真实 digest；inspect stderr：" >&2
-              cat inspect.err >&2 || true
-              PYTHON_BASE_DIGEST=""
-              ;;
+            *) echo "warn: 未解析到新 digest，使用 Dockerfile 默认真实 digest" >&2 ;;
           esac
           export PYTHON_BASE_DIGEST
           build_one() {
