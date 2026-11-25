@@ -646,6 +646,16 @@ function editBody(): void {
         :value="cfg('minScore', 0)"
         @input="setNumberCfg('minScore', ($event.target as HTMLInputElement).value)"
       >
+      <label
+        style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; margin-top: 10px"
+      >
+        <input
+          type="checkbox"
+          :checked="cfg('rerank', false)"
+          @change="setCfg('rerank', ($event.target as HTMLInputElement).checked)"
+        >
+        <span>rerank 精排（需配置 AF_RERANK_*，先放大召回再精排截断）</span>
+      </label>
       <p
         class="af-faint"
         style="font-size: 11px; line-height: 1.6"

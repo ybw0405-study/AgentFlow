@@ -76,17 +76,26 @@ class RetrievalExecutor:
         embedding=None,
         vector_store=None,
         index_cap: int = 2000,
+        reranker=None,
+        rerank_timeout_s: float = 5.0,
+        rerank_candidate_factor: int = 3,
     ) -> None:
         self._client = client
         self._embedding = embedding
         self._vector_store = vector_store
         self._index_cap = index_cap
+        self._reranker = reranker
+        self._rerank_timeout_s = rerank_timeout_s
+        self._rerank_candidate_factor = max(1, rerank_candidate_factor)
 
     async def aclose(self) -> None:
         closer = getattr(self._client, "aclose", None)
         if closer is not None:
             await closer()
         closer = getattr(self._embedding, "aclose", None)
+        if closer is not None:
+            await closer()
+        closer = getattr(self._reranker, "aclose", None)
         if closer is not None:
             await closer()
 
@@ -134,14 +143,23 @@ class RetrievalExecutor:
             )
         cfg = node.config
         mode = cfg.retrieval_mode
+        rerank = bool(cfg.rerank)
         if mode != "lexical" and (self._embedding is None or self._vector_store is None):
             raise PermanentNodeError(
                 "RETRIEVAL-VECTOR-NOT_CONFIGURED-001",
                 "vector/hybrid retrieval requires AF_EMBEDDING_BASE_URL and AF_EMBEDDING_API_KEY",
             )
+        if rerank and self._reranker is None:
+            raise PermanentNodeError(
+                "RERANK-NOT_CONFIGURED-001",
+                "rerank requires AF_RERANK_BASE_URL and AF_RERANK_API_KEY",
+            )
         query = render_template(cfg.query_template, ctx.template_context())
         call_id = make_call_id(ctx.execution_id, ctx.node_key, ctx.attempt)
         kb_ids = list(cfg.knowledge_base_ids)
+        # rerank 需要比输出更大的候选池：先按因子放大召回，精排后再截断到 top_k。
+        # 上限对齐控制面 BM25 的 topK 硬上限 50，避免放大后越过词法通道的扫描边界。
+        recall_top_k = min(cfg.top_k * self._rerank_candidate_factor, 50) if rerank else cfg.top_k
         await ctx.emit(
             EventType.COMMAND_ISSUED,
             {
@@ -150,6 +168,7 @@ class RetrievalExecutor:
                 "knowledgeBaseIds": kb_ids,
                 "queryDigest": digest_of(query),
                 "retrievalMode": mode,
+                "rerank": rerank,
                 "attempt": ctx.attempt,
             },
         )
@@ -161,7 +180,7 @@ class RetrievalExecutor:
                     tenant_id=ctx.space_id,
                     knowledge_base_ids=kb_ids,
                     query=query,
-                    top_k=cfg.top_k,
+                    top_k=recall_top_k,
                     min_score=cfg.min_score,
                     trace_id=ctx.trace_id,
                 )
@@ -181,24 +200,37 @@ class RetrievalExecutor:
                 index_stats = await self._ensure_index(ctx.space_id, kb_ids, chunks, ctx.trace_id)
                 query_vector = (await self._embedding.embed([query], timeout_s=10.0))[0]
                 results = await self._vector_store.search(
-                    ctx.space_id, kb_ids, self._embedding.model, query_vector, cfg.top_k
+                    ctx.space_id, kb_ids, self._embedding.model, query_vector, recall_top_k
                 )
                 if mode == "hybrid":
                     data = await self._client.search(
                         tenant_id=ctx.space_id,
                         knowledge_base_ids=kb_ids,
                         query=query,
-                        top_k=cfg.top_k,
+                        top_k=recall_top_k,
                         min_score=cfg.min_score,
                         trace_id=ctx.trace_id,
                     )
                     lexical = [r for r in data.get("results", []) if isinstance(r, dict)]
-                    results = rrf_fuse(lexical, results, cfg.top_k)
+                    results = rrf_fuse(lexical, results, recall_top_k)
                 data = {
                     "results": results,
                     "matchedChunks": len(results),
                     "scannedChunks": len(chunks),
                 }
+            if rerank:
+                # rerank 只决定名次、不改 score：先放大召回，精排后截断到 top_k，
+                # 让 rerank 能从更大范围捞回被向量/词法排序误杀的块。
+                documents = [str(r.get("content") or "") for r in results]
+                ranked = await self._reranker.rerank(query, documents, self._rerank_timeout_s)
+                seen = {index for index, _ in ranked}
+                order = [index for index, _ in ranked] + [
+                    index for index in range(len(documents)) if index not in seen
+                ]
+                results = [results[index] for index in order[: cfg.top_k]]
+                data["results"] = results
+                data["matchedChunks"] = len(results)
+                data["reranked"] = True
         except (TransientNodeError, PermanentNodeError) as exc:
             await ctx.emit(EventType.COMMAND_FAILED, {"callId": call_id, "errorCode": exc.code})
             raise
@@ -221,6 +253,7 @@ class RetrievalExecutor:
                 "resultCount": len(results),
                 "responseDigest": digest_of(data),
                 "retrievalMode": mode,
+                "rerank": rerank,
                 "indexStats": index_stats,
                 "latencyMs": int((time.monotonic() - started) * 1000),
             },

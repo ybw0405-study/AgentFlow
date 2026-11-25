@@ -116,6 +116,7 @@ export function newNodeConfig(
         queryTemplate: '{{ vars.question }}',
         topK: 5,
         minScore: 0,
+        rerank: false,
         retrievalMode: 'lexical',
       }
     case 'tool':

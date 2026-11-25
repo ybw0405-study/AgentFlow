@@ -34,7 +34,7 @@ from .nodes import build_executors
 from .observability.logging import setup_logging
 from .observability.trace import current_trace_id, extract_trace_id
 from .observability.tracing import setup_tracing, shutdown_tracing
-from .rag import KnowledgeVectorStore, OpenAIEmbeddingProvider
+from .rag import KnowledgeVectorStore, OpenAIEmbeddingProvider, OpenAIRerankProvider
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             embedding_provider=OpenAIEmbeddingProvider.from_settings(settings),
             vector_store=KnowledgeVectorStore(store.pool),
             index_cap=settings.retrieval_index_cap,
+            reranker=OpenAIRerankProvider.from_settings(settings),
+            rerank_timeout_s=settings.rerank_timeout_ms / 1000.0,
+            rerank_candidate_factor=settings.rerank_candidate_factor,
         )
         dispatcher = Dispatcher(settings, store, event_log, redis, executors, budget)
         app.state.settings = settings

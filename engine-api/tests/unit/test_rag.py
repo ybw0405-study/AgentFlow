@@ -8,6 +8,7 @@ import pytest
 from app.errors import PermanentNodeError, TransientNodeError
 from app.rag.embedding import OpenAIEmbeddingProvider
 from app.rag.fusion import rrf_fuse
+from app.rag.rerank import OpenAIRerankProvider
 
 
 def provider_with(handler) -> OpenAIEmbeddingProvider:
@@ -243,3 +244,101 @@ async def test_lexical_mode_unchanged_without_embedding() -> None:
     result = await executor.execute(_node("lexical"), _Ctx())
     assert result.output["retrievalMode"] == "lexical"
     assert [hit["chunkId"] for hit in result.output["results"]] == ["c9"]
+
+
+# ---------------------------------------------------------------------------
+# rerank：provider 解析、错误分类、未配置报错、重排截断
+# ---------------------------------------------------------------------------
+
+
+def _rerank_provider_with(handler) -> OpenAIRerankProvider:
+    from app.rag.rerank import OpenAIRerankProvider
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return OpenAIRerankProvider("http://127.0.0.1:1/v1", "k", "test-rerank", client=client)
+
+
+@pytest.mark.asyncio
+async def test_rerank_returns_items_sorted_by_score() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 1, "relevance_score": 0.9},
+                    {"index": 0, "relevance_score": 0.5},
+                ]
+            },
+        )
+
+    items = await _rerank_provider_with(handler).rerank("q", ["a", "b"], timeout_s=5)
+    assert [index for index, _ in items] == [1, 0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "kind"),
+    [
+        (401, PermanentNodeError),
+        (422, PermanentNodeError),
+        (429, TransientNodeError),
+        (503, TransientNodeError),
+    ],
+)
+async def test_rerank_error_classification(status: int, kind: type) -> None:
+    provider = _rerank_provider_with(lambda req: httpx.Response(status))
+    with pytest.raises(kind):
+        await provider.rerank("q", ["a"], timeout_s=5)
+
+
+class _FakeReranker:
+    model = "test-rerank"
+
+    def __init__(self, order: list[int]) -> None:
+        self._order = list(order)
+        self.calls = 0
+
+    async def rerank(self, query, documents, timeout_s):
+        self.calls += 1
+        return [(index, 0.0) for index in self._order]
+
+
+def _node_rerank(mode: str) -> RetrievalNode:
+    from app.dsl.models import RetrievalNode
+
+    return RetrievalNode(
+        type="retrieval",
+        key="r1",
+        config={
+            "knowledgeBaseIds": ["kb1"],
+            "queryTemplate": "问题",
+            "topK": 3,
+            "minScore": 0.0,
+            "retrievalMode": mode,
+            "rerank": True,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_rerank_reorders_then_truncates_to_top_k() -> None:
+    from app.nodes.retrieval import RetrievalExecutor
+
+    hits = [_chunk(f"c{i}", f"内容{i}") for i in range(4)]
+    client = _FakeClient([], hits=hits)
+    reranker = _FakeReranker(order=[3, 1, 0, 2])
+    executor = RetrievalExecutor(client, reranker=reranker, rerank_candidate_factor=2)
+    result = await executor.execute(_node_rerank("lexical"), _Ctx())
+    ids = [hit["chunkId"] for hit in result.output["results"]]
+    assert ids == ["c3", "c1", "c0"] # rerank 顺序取 top 3
+    assert reranker.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_rerank_without_provider_is_explicit_error() -> None:
+    from app.nodes.retrieval import RetrievalExecutor
+
+    executor = RetrievalExecutor(_FakeClient([]))
+    with pytest.raises(PermanentNodeError) as exc:
+        await executor.execute(_node_rerank("lexical"), _Ctx())
+    assert exc.value.code == "RERANK-NOT_CONFIGURED-001"

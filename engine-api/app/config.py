@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     embedding_timeout_ms: int = 10000
     # 单次请求懒索引的切片上限（超出明确拒绝，不静默截断）
     retrieval_index_cap: int = 2000
+    # rerank 精排（retrieval 节点 rerank=true 时启用）：OpenAI 兼容 /rerank 端点。
+    # 未配置时 rerank=true 明确报 RERANK-NOT_CONFIGURED-001，不静默回退到融合次序。
+    rerank_base_url: str = ""
+    rerank_api_key: str = ""
+    rerank_model: str = "bge-reranker-v2-m3"
+    rerank_timeout_ms: int = 5000
+    # rerank 前召回的候选放大因子：先取 top_k * factor 个候选再精排截断，
+    # 让 rerank 能从更大范围捞回被向量/词法排序误杀的块。
+    rerank_candidate_factor: int = 3
     mq_gate_topic: str = "af-gate-decision"
     mq_gate_group: str = "af-engine-gate-consumer"
     mq_poll_timeout_ms: int = 3_000
