@@ -92,9 +92,14 @@ COPY --from=frontend-build /src/frontend/dist /usr/share/nginx/html
 # SPA history fallback + /api 反代 + SSE 关缓冲；缺了 fallback 深链接刷新会 404。
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 USER root
-RUN chown -R 10001:10001 /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run /tmp
+RUN chown -R 10001:10001 /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run /tmp \
+ # 非 root 用户写不了基础镜像默认的 pid 路径；改配置文件而非 -g 参数——
+ # -g 里的 pid 指令会与 nginx.conf 已有的 pid 行冲突，报 "pid directive is duplicate"。
+ && sed -i 's|^pid[[:space:]].*nginx\.pid;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
+ # 非 root 下 user 指令无意义且产生 warning，注释掉
+ && sed -i 's/^user /#user /' /etc/nginx/nginx.conf
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
-ENTRYPOINT ["nginx", "-g", "daemon off; pid /tmp/nginx.pid;"]
+ENTRYPOINT ["nginx", "-g", "daemon off;"]
