@@ -159,16 +159,50 @@ class TriggerServiceTest {
     }
 
     @Test
-    void previewRejectsSubMinuteCron() {
+    void previewAcceptsSubMinuteCron() {
         when(definitions.findByIdAndTenant("d-1", "t-1")).thenReturn(definition());
 
         var tenant = new TenantInfo("t-1", "u-1", "EDITOR");
-        var error = assertThrows(BusinessException.class,
-                () -> service.previewCron(tenant, "d-1", "*/5 * * * * *", null, 3));
+        var preview = service.previewCron(tenant, "d-1", "*/5 * * * * *", null, 3);
 
-        // 秒级 cron 在分钟粒度的调度器上会被静默吞掉一半，宁可拒绝
-        assertTrue(error.getMessage().contains("granularity")
-                || error.getMessage().contains("seconds"), error.getMessage());
+        // 秒级 cron 直接接受，预览按秒渲染出档位（而不是截到分钟）
+        assertEquals("*/5 * * * * *", preview.cron());
+        assertEquals(3, preview.times().size());
+        assertTrue(preview.times().get(0).matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}"),
+                preview.times().get(0));
+    }
+
+    @Test
+    void subMinuteSlotsUseSecondPrecisionIdempotencyKeys() {
+        when(executions.triggerFromExternal(anyString(), anyString(), anyString(), isNull(),
+                anyString(), any(), anyString()))
+                .thenReturn(new ExecutionService.TriggerResult("e-1", "PENDING", false));
+        var row = schedule("tr-1", "*/10 * * * * *", null);
+        Instant slot = Instant.parse("2026-11-20T01:00:10Z");
+
+        service.fireSchedule(row, Instant.parse("2026-11-20T01:00:12Z"), slot);
+
+        // 秒级档位精确到秒：同一分钟内的 01:00:00 与 01:00:10 是两个不同的幂等键
+        verify(executions).triggerFromExternal(eq("t-1"), eq("system:schedule"),
+                eq("d-1"), isNull(), eq("sched-tr-1-2026-11-20T09:00:10"), any(),
+                eq("sched-tr-1"));
+    }
+
+    @Test
+    void subMinuteDetectionFollowsTheSecondsField() {
+        assertTrue(TriggerService.isSubMinute("*/5 * * * * *"));
+        assertTrue(TriggerService.isSubMinute("30 * * * * *"));
+        assertFalse(TriggerService.isSubMinute("0 * * * * *"));
+        assertFalse(TriggerService.isSubMinute("* * * * *"));
+        assertFalse(TriggerService.isSubMinute(null));
+    }
+
+    @Test
+    void slotKeyKeepsSecondPrecisionOnlyForSubMinuteCrons() {
+        Instant slot = Instant.parse("2026-11-20T01:00:07Z");
+
+        assertEquals("2026-11-20T09:00:07", TriggerService.slotOf("Asia/Shanghai", slot, true));
+        assertEquals("2026-11-20T09:00", TriggerService.slotOf("Asia/Shanghai", slot, false));
     }
 
     @Test

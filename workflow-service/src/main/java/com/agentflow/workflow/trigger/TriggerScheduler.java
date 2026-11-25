@@ -14,14 +14,18 @@ import org.springframework.stereotype.Component;
 /**
  * 定时触发的扫描器：默认每 30 秒看一次有没有到点的 cron。
  *
- * <p>分钟级精度（Spring CronExpression 最小粒度也是分钟）。多副本下有三层防线，从外到内：
+ * <p>支持分钟级与秒级 cron（秒位非 0 即秒级，见 {@link TriggerService#isSubMinute}）。
+ * 准点精度受扫描间隔约束：落在同一次扫描间隔内的多个秒档位会被一次性补回，而不是毫秒级
+ * 实时——需要更密准点时把 {@code agentflow.trigger.poll-interval-ms} 调小。多副本下有三层
+ * 防线，从外到内：
  *
  * <ol>
  * <li><b>扫描租约</b>：同一时刻只让一个副本扫表，省掉 N 份重复 SELECT 与重复日志。
  * 这是「尽力而为」的优化，不是正确性依赖——租约丢失时下面两层仍然成立。</li>
- * <li><b>分钟 claim</b>：每个触发器每分钟只有一个副本能拿到 Redis 键，其余直接跳过。</li>
- * <li><b>幂等键</b>：{@code sched-{triggerId}-{分钟}}，最终由
- * {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一分钟也只会有一条执行。</li>
+ * <li><b>claim</b>：每个触发器每次扫描只有一个副本能拿到 Redis 键（键精确到秒），
+ * 其余直接跳过。</li>
+ * <li><b>幂等键</b>：{@code sched-{triggerId}-{档位}}（秒级档位精确到秒），最终由
+ * {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一档位也只会有一条执行。</li>
  * </ol>
  *
  * <p>到点判断以「档位游标」为基准（{@code last_slot_at}；为空时退回 {@code last_fired_at}）：
