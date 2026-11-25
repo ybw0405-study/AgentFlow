@@ -72,7 +72,7 @@ async def test_inmemory_tail_is_scoped_and_fail_closed(mem_store):
     for eid in (a, b, orphan):
         await mem_store.append(eid, "NodeStarted", {"i": 1})
 
-    assert len(await mem_store.tail(0, 100)) == 3 # 不传 space_id：全局语义不变
+    assert len(await mem_store.tail(0, 100)) == 3  # 不传 space_id：全局语义不变
     assert [e.execution_id for e in await mem_store.tail(0, 100, space_id="space-a")] == [a]
     assert [e.execution_id for e in await mem_store.tail(0, 100, space_id="space-b")] == [b]
     assert await mem_store.tail(0, 100, space_id="space-z") == []
@@ -106,7 +106,7 @@ async def test_api_tail_events_forwards_space_id(settings, mem_store):
 
         blank = await client.get("/internal/events", params={"spaceId": " "}, headers=headers)
         assert blank.status_code == 200
-        assert len(blank.json()["events"]) == 2 # 空白 spaceId 视为未指定
+        assert len(blank.json()["events"]) == 2  # 空白 spaceId 视为未指定
 
 
 def test_af3_space_id_contract_across_services():

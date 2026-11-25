@@ -119,7 +119,7 @@ class EventStore:
                         created_at=rec["created_at"],
                     )
             except asyncpg.UniqueViolationError:
-                continue # 并发追加冲突：重读版本号重试（§8.2.4）
+                continue  # 并发追加冲突：重读版本号重试（§8.2.4）
         raise EventConcurrencyError(f"append conflict for execution {execution_id}")
 
     async def read_all(self, execution_id: uuid.UUID) -> list[Event]:

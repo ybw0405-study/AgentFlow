@@ -33,7 +33,7 @@ class ExecutionState:
     result: dict[str, Any] | None = None
     error_code: str | None = None
     events_since_checkpoint: int = 0
-    lease_lost: bool = False # 租约丢失标记：置位后禁止再写事件（§8.5）
+    lease_lost: bool = False  # 租约丢失标记：置位后禁止再写事件（§8.5）
     # ExecutionCreated 的落库时间。deadline 必须按「执行创建」而非「本次 worker 启动」
     # 计算，否则崩溃恢复会把总超时窗口重置，长跑流程可被无限续命。
     created_at: datetime | None = None

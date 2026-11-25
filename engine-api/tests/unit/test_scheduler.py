@@ -60,7 +60,7 @@ async def test_happy_path_topological_order_and_tokens(settings, fake_redis, mem
     # 节点 I/O 可查
     io = await mem_store.get_node_io(req.execution_id, "draft")
     assert io["in"]["payload"]["prompt"].startswith("请根据问题起草答案要点")
-    assert io["out"] is None or io["out"]["payload"] # OUT 经事件溢出才写；IN 必有
+    assert io["out"] is None or io["out"]["payload"]  # OUT 经事件溢出才写；IN 必有
 
 
 async def test_budget_hard_stop(settings, fake_redis, mem_store, demo_dsl):
@@ -77,7 +77,7 @@ async def test_budget_hard_stop(settings, fake_redis, mem_store, demo_dsl):
     last = events[-1].payload
     assert last["errorCode"] == "EXEC-BUDGET_EXHAUSTED"
     assert last["budgetStatus"] == "BUDGET_EXHAUSTED"
-    assert await budget.used(req.execution_id) <= 1 # tokenUsed ≤ budget 恒成立
+    assert await budget.used(req.execution_id) <= 1  # tokenUsed ≤ budget 恒成立
 
 
 async def test_concurrent_submit_same_execution_is_idempotent(
@@ -91,7 +91,7 @@ async def test_concurrent_submit_same_execution_is_idempotent(
     assert status == "SUCCEEDED"
     events = await mem_store.read_all(req.execution_id)
     created = [e for e in events if str(e.event_type) == "ExecutionCreated"]
-    assert len(created) == 1 # 只有一次 ExecutionCreated
+    assert len(created) == 1  # 只有一次 ExecutionCreated
 
 
 async def test_crash_recovery_completes_and_side_effects_exactly_once(
@@ -146,7 +146,7 @@ async def test_unauthorized_connector_fails_permanently(settings, fake_redis, me
     dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
     req = ExecuteRequest.model_validate(
         make_execute_request(demo_dsl, authorizedConnectorIds=[])
-    ) # 未授权 test.search
+    )  # 未授权 test.search
     await dispatcher.submit(req)
     status = await wait_terminal(mem_store, req.execution_id)
     assert status == "FAILED"
@@ -160,7 +160,7 @@ async def test_missing_required_variable_is_permanent(settings, fake_redis, mem_
     dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
     req = ExecuteRequest.model_validate(
         make_execute_request(demo_dsl, initialVariables={})
-    ) # 缺 required question
+    )  # 缺 required question
     await dispatcher.submit(req)
     status = await wait_terminal(mem_store, req.execution_id)
     assert status == "FAILED"

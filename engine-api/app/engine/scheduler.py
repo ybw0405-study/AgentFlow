@@ -218,7 +218,7 @@ class Scheduler:
                 for key in layer:
                     nr = state.nodes.get(key)
                     if nr is not None and nr.status in ("SUCCEEDED", "SKIPPED"):
-                        continue # 重放：已完成节点直接注入输出，不重新执行（§8.2.1）
+                        continue  # 重放：已完成节点直接注入输出，不重新执行（§8.2.1）
                     in_edges = dag.in_edges.get(key, [])
                     # 无入边（start）：直接就绪
                     if not in_edges:
@@ -232,7 +232,7 @@ class Scheduler:
                         for e in in_edges
                     )
                     if not all_settled:
-                        continue # 理论不发生：分层保证上游已处理；防御性等待
+                        continue  # 理论不发生：分层保证上游已处理；防御性等待
                     # 任一入边激活（来源成功且分支命中）→ 执行；否则整节点 SKIPPED
                     if any(_edge_active(e, state) for e in in_edges):
                         ready.append(key)
@@ -301,7 +301,7 @@ class Scheduler:
             return "SUCCEEDED"
         except LeaseLostError:
             logger.error("lease lost mid-run for %s; stopped writing events", execution_id)
-            return "LEASE_LOST" # 不落任何事件；接管方负责续跑
+            return "LEASE_LOST"  # 不落任何事件；接管方负责续跑
         except asyncio.CancelledError:
             # 续约循环发现取消标志后硬中断在途外呼（task.cancel()）：把取消转成
             # 与节点边界取消一致的 CANCELLED 终态，而不是让事件流悬在 OPEN 等恢复扫描。

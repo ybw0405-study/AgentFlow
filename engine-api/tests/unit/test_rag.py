@@ -182,10 +182,10 @@ async def test_vector_mode_indexes_lazily_and_reuses_cache() -> None:
     executor = RetrievalExecutor(client, embedding, store)
     result = await executor.execute(_node("vector"), _Ctx())
     assert result.output["retrievalMode"] == "vector"
-    assert len(embedding.calls) == 2 # 一批索引 + 一次查询
+    assert len(embedding.calls) == 2  # 一批索引 + 一次查询
     assert len(store.rows) == 2
     again = await executor.execute(_node("vector"), _Ctx())
-    assert len(embedding.calls) == 3 # 第二次只嵌查询，索引命中缓存
+    assert len(embedding.calls) == 3  # 第二次只嵌查询，索引命中缓存
     assert again.output["results"]
 
 
@@ -329,7 +329,7 @@ async def test_rerank_reorders_then_truncates_to_top_k() -> None:
     executor = RetrievalExecutor(client, reranker=reranker, rerank_candidate_factor=2)
     result = await executor.execute(_node_rerank("lexical"), _Ctx())
     ids = [hit["chunkId"] for hit in result.output["results"]]
-    assert ids == ["c3", "c1", "c0"] # rerank 顺序取 top 3
+    assert ids == ["c3", "c1", "c0"]  # rerank 顺序取 top 3
     assert reranker.calls == 1
 
 

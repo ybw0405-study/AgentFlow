@@ -166,7 +166,7 @@ class GateDecisionConsumer:
         try:
             future = asyncio.run_coroutine_threadsafe(self._handle(payload), self._loop)
             future.result(timeout=30)
-        except Exception as exc: # 消费线程不能因单条消息崩掉
+        except Exception as exc:  # 消费线程不能因单条消息崩掉
             self._stats["failed"] += 1
             self._stats["lastError"] = str(exc)
             log.warning("gate mq message handling failed keys=%s: %s", message.get("keys"), exc)

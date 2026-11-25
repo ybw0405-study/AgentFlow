@@ -62,7 +62,7 @@ class Dispatcher:
         self._tasks: dict[uuid.UUID, asyncio.Task] = {}
         self._sweep_task: asyncio.Task | None = None
         self._gate_task: asyncio.Task | None = None
-        self._stopping = False # 关停第一级：停止接收（submit / 扫描不再派发）
+        self._stopping = False  # 关停第一级：停止接收（submit / 扫描不再派发）
 
     async def submit(self, req: ExecuteRequest) -> dict[str, Any]:
         if self._stopping:
@@ -240,7 +240,7 @@ class Dispatcher:
                 renewed = False
             if not renewed:
                 logger.error("lease %s lost; executor stops writing events", lease.key)
-                state.lease_lost = True # 调度器在节点边界检查（§8.5）
+                state.lease_lost = True  # 调度器在节点边界检查（§8.5）
                 # 租约与预算共用 Redis：租约续不上通常意味着账本也一起丢了。
                 # 趁 state 还在手里按事件流重建，别等 60s 后的恢复扫描 —— 那段
                 # 窗口里下一个节点会按 0 基预算重新拿到全额（§5.6）。
@@ -254,7 +254,7 @@ class Dispatcher:
             try:
                 cancelled = await self._redis.get(f"af:cancel:{state.execution_id}")
             except Exception:
-                cancelled = None # 查询失败不误伤：节点边界的取消检查仍是兜底
+                cancelled = None  # 查询失败不误伤：节点边界的取消检查仍是兜底
             if cancelled:
                 # 取消不再等当前节点跑完才生效：硬中断在途外呼（120s 的 LLM 调用
                 # 也立刻停），调度器把 CancelledError 转成与节点边界取消一致的
@@ -280,7 +280,7 @@ class Dispatcher:
             }
         task = self._tasks.get(execution_id)
         if task is not None and not task.done():
-            return {"ok": True, "status": "CANCELLING"} # 执行器在节点边界收口
+            return {"ok": True, "status": "CANCELLING"}  # 执行器在节点边界收口
         events = await self._store.read_all(execution_id)
         if not events:
             return {"ok": False, "status": "NOT_FOUND"}
@@ -340,7 +340,7 @@ class Dispatcher:
                 )
         except Exception:
             logger.exception("failed to force terminal state for preview %s", execution_id)
-            return # 保留 spec：让下一轮恢复扫描重新收口，绝不留下无标记的 OPEN
+            return  # 保留 spec：让下一轮恢复扫描重新收口，绝不留下无标记的 OPEN
 
         for key in (f"af:lease:{execution_id}", f"af:cancel:{execution_id}"):
             try:
@@ -472,7 +472,7 @@ class Dispatcher:
             if await lease.acquire():
                 return True
             if i < attempts - 1:
-                await asyncio.sleep(delay_s) # 上一轮执行器可能刚释放租约
+                await asyncio.sleep(delay_s)  # 上一轮执行器可能刚释放租约
         return False
 
     async def sweep_gates(self) -> int:
@@ -556,7 +556,7 @@ class Dispatcher:
         执行与续约循环必须先全部结束，否则下一个事件写入会撞已关闭的连接池，
         租约还要等 30s TTL 才被接管（误导性 "worker crashed" 刷屏）。
         """
-        self._stopping = True # 第一级：submit / 扫描不再派发新任务
+        self._stopping = True  # 第一级：submit / 扫描不再派发新任务
 
         # 第二级：cancel 在途执行并等它们收口（带上限，绝不永久阻塞）
         running = [t for t in self._tasks.values() if not t.done()]

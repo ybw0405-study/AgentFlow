@@ -44,7 +44,7 @@ def checkpoint_payload(state: ExecutionState) -> dict[str, Any]:
         # 必须深拷贝：事件落库后 state.apply 会用同一份快照复原变量，
         # 若 payload 直接引用 state.variables，apply 的 clear() 会把快照清空，
         # 变量在写完 checkpoint 的瞬间整体丢失（下游节点看到空 vars）。
-        "variablesSnapshot": copy.deepcopy(state.variables), # 入网前已脱敏（§5.3）
+        "variablesSnapshot": copy.deepcopy(state.variables),  # 入网前已脱敏（§5.3）
         "tokenUsed": state.token_used,
         "stepsUsed": state.steps_used,
         "version": state.version,
@@ -89,7 +89,7 @@ class NodeRunner:
         """
         retry = node.retry or dsl.defaults.retry
         retryable = node.type in RETRYABLE_NODE_TYPES
-        if node.type in ("tool", "mcp") and not node.config.idempotent: # type: ignore[attr-defined]
+        if node.type in ("tool", "mcp") and not node.config.idempotent:  # type: ignore[attr-defined]
             retryable = False
         max_attempts = retry.max_attempts if retryable else 1
         timeout_ms = node.timeout_ms or dsl.defaults.timeout_ms
@@ -199,7 +199,7 @@ class NodeRunner:
                     error = TransientNodeError("NODE-TIMEOUT", f"node exceeded {timeout_ms}ms")
                 except EngineError as exc:
                     error = exc
-                except Exception as exc: # 未分类异常按永久失败处理，不盲目重试
+                except Exception as exc:  # 未分类异常按永久失败处理，不盲目重试
                     logger.exception("node %s crashed unexpectedly", node.key)
                     error = PermanentNodeError("NODE-INTERNAL-001", str(exc)[:300])
 
@@ -224,7 +224,7 @@ class NodeRunner:
                     )
                     return
 
-                if error is None: # 防御：error 与 result 不会同时为空
+                if error is None:  # 防御：error 与 result 不会同时为空
                     raise PermanentNodeError("NODE-INTERNAL-001", "missing node error context")
                 retry_left = error.transient and attempt < max_attempts
                 await emit(

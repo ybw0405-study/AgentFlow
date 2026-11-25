@@ -7,7 +7,7 @@ try:
     # 以 pyproject.toml 的版本为准；OpenAPI 的 info.version 也取它，
     # 否则会一直写着 FastAPI 的默认版本（0.1.0），与发布版本脱节。
     __version__ = _package_version("agentflow-engine")
-except PackageNotFoundError: # 源码直跑、未 pip install 时兜底
+except PackageNotFoundError:  # 源码直跑、未 pip install 时兜底
     __version__ = "0.0.0"
 
 __all__ = ["__version__"]

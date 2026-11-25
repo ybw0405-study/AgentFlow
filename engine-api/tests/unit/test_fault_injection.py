@@ -78,14 +78,14 @@ async def test_lease_lost_stops_writing_events(settings, fake_redis, mem_store):
     await dispatcher.submit(req)
 
     await asyncio.sleep(0.1)
-    await fake_redis.delete(f"af:lease:{req.execution_id}") # 模拟租约被另一 worker 抢占
+    await fake_redis.delete(f"af:lease:{req.execution_id}")  # 模拟租约被另一 worker 抢占
     await _await_task(dispatcher, req.execution_id)
 
     events = await mem_store.read_all(req.execution_id)
     types = _types(events)
     # 租约在节点边界丢失：进行中的 slow 节点允许落 NodeCompleted，但下游一律不再调度
     assert "ExecutionCompleted" not in types
-    assert "ExecutionFailed" not in types # 不写失败事件，等接管方续跑
+    assert "ExecutionFailed" not in types  # 不写失败事件，等接管方续跑
     assert all(e.node_key != "end" for e in events)
     assert events[-1].event_type == EventType.NODE_COMPLETED
     assert events[-1].node_key == "slow"
@@ -237,7 +237,7 @@ async def test_transient_error_exhausts_retries(settings, fake_redis, mem_store)
     events = await mem_store.read_all(req.execution_id)
     failed = [e for e in events if e.event_type == EventType.NODE_FAILED]
     assert failed and failed[-1].payload["attempt"] == 2
-    assert provider.calls == 2 # 严格受 maxAttempts 约束
+    assert provider.calls == 2  # 严格受 maxAttempts 约束
     assert events[-1].event_type == EventType.EXECUTION_FAILED
 
 
@@ -499,7 +499,7 @@ async def test_shutdown_cancels_and_awaits_sweepers(settings, fake_redis, mem_st
 
     async def in_flight():
         try:
-            await gate_event.wait() # 只有被 cancel 才结束
+            await gate_event.wait()  # 只有被 cancel 才结束
         finally:
             # 模拟 _run 的清理：release 抛异常也必须让任务收口并移除 _tasks
             try:
@@ -511,7 +511,7 @@ async def test_shutdown_cancels_and_awaits_sweepers(settings, fake_redis, mem_st
 
     task = asyncio.create_task(in_flight())
     dispatcher._tasks[eid] = task
-    await asyncio.sleep(0) # 让在途任务真正进入 await
+    await asyncio.sleep(0)  # 让在途任务真正进入 await
 
     # 三级收口：停止接收 → drain 在途 → 停后台。返回时在途任务必须已结束。
     await dispatcher.shutdown()
@@ -524,7 +524,7 @@ async def test_shutdown_cancels_and_awaits_sweepers(settings, fake_redis, mem_st
     assert dispatcher._sweep_task is None and dispatcher._gate_task is None
     assert task.done(), "在途执行任务必须已被 cancel 并收口"
     assert dispatcher._tasks == {}, "drain 后不得残留幽灵 _tasks 条目"
-    assert "cleanup-failed" in order # release 真的抛了，且没有拖垮收口
+    assert "cleanup-failed" in order  # release 真的抛了，且没有拖垮收口
     assert "task-finished" in order
     assert order.index("task-finished") < order.index("store-closed") < order.index("redis-closed")
 
@@ -614,7 +614,7 @@ async def test_terminal_tracker_is_irreversible():
 
     await store.append(eid, "ExecutionCompleted", {"result": {}})
     assert conn.tracker_status == "TERMINAL"
-    assert "CASE WHEN" in conn.tracker_sql[-1] # upsert 走终态优先
+    assert "CASE WHEN" in conn.tracker_sql[-1]  # upsert 走终态优先
 
     # 终态后迟到的非终态事件必须被拒绝：tracker 不回写、事件不落库
     with pytest.raises(EventTerminalError):
@@ -663,7 +663,7 @@ async def test_health_live_is_always_ok_even_when_dependencies_down(settings):
     app = _probe_app(settings, pg_up=False, redis_up=False)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.get("/internal/health/live")).status_code == 200
-        assert (await client.get("/internal/health")).status_code == 200 # 兼容别名
+        assert (await client.get("/internal/health")).status_code == 200  # 兼容别名
 
 
 @pytest.mark.asyncio
@@ -731,7 +731,7 @@ async def test_execute_returns_202_when_dispatch_accepted(settings):
             json=body,
             headers={"X-Internal-Token": settings.internal_token},
         )
-    assert resp.status_code == 202 # 正常派发仍是 202，契约不变
+    assert resp.status_code == 202  # 正常派发仍是 202，契约不变
     assert resp.json()["status"] == "PENDING"
 
 
@@ -747,5 +747,5 @@ async def test_execute_returns_409_when_engine_did_not_dispatch(settings):
             json=body,
             headers={"X-Internal-Token": settings.internal_token},
         )
-    assert resp.status_code == 409 # 「接受但未派发」绝不能回 202
+    assert resp.status_code == 409  # 「接受但未派发」绝不能回 202
     assert resp.json()["code"] == "EXEC-DISPATCH_REJECTED-001"

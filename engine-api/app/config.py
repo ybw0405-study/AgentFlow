@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     pg_dsn: str = "postgresql://agentflow:agentflow@127.0.0.1:5433/agentflow_events"
     redis_url: str = "redis://127.0.0.1:6379/0"
     # 出站回调控制面用的共享令牌（gateway / workflow-service / connector-service 认它）。
-    internal_token: str = "dev-internal-token" # noqa: S105 # 本地默认值；部署必须经 AF_INTERNAL_TOKEN 覆盖
+    internal_token: str = "dev-internal-token"  # noqa: S105 # 本地默认值；部署必须经 AF_INTERNAL_TOKEN 覆盖
     # 入站 /internal/** 专用凭据。网关转发时会**剥离客户端的 X-Internal-Token**
     # 并注入这个值；客户端即使持有控制面令牌也无法直连引擎的全局事件/执行接口。
     # 未显式配置时回退 AF_INTERNAL_TOKEN，保证本地 dev 与现有部署零改动；生产模式
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         default="dev-internal-token",
         validation_alias=AliasChoices("AF_ENGINE_INTERNAL_TOKEN", "AF_INTERNAL_TOKEN"),
     )
-    gateway_base_url: str = "http://127.0.0.1:8080" # 引擎回调控制面的唯一入口（§5.2）
+    gateway_base_url: str = "http://127.0.0.1:8080"  # 引擎回调控制面的唯一入口（§5.2）
     pg_migrations_path: str = "../db/postgres/migration"
 
     host: str = "0.0.0.0"
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         }
     )
 
-    gate_sweep_interval_s: int = 15 # human_gate 超时扫描间隔
+    gate_sweep_interval_s: int = 15  # human_gate 超时扫描间隔
 
     # 裁决 MQ 通道（引擎主动拉取 af-gate-decision）。AF_MQ_ENABLED 与 Java 侧同名，
     # 一个开关同时管生产与消费；mq_consume 是子开关，用于「只发不收」的灰度场景。
@@ -84,16 +84,16 @@ class Settings(BaseSettings):
     mq_gate_group: str = "af-engine-gate-consumer"
     mq_poll_timeout_ms: int = 3_000
     mq_pull_batch: int = 32
-    checkpoint_interval: int = 10 # 每 N 个事件写一次 CheckpointCreated
-    lease_ttl_ms: int = 30_000 # 执行租约 TTL
-    lease_renew_ms: int = 10_000 # 续约间隔
+    checkpoint_interval: int = 10  # 每 N 个事件写一次 CheckpointCreated
+    lease_ttl_ms: int = 30_000  # 执行租约 TTL
+    lease_renew_ms: int = 10_000  # 续约间隔
     # Redis TCP 半开防护：socket 级超时防止单次调用永久阻塞；
     # 关停 drain 上限防止某个在途任务卡死整个 lifespan 收尾。
     redis_socket_timeout_s: float = 2.0
     redis_socket_connect_timeout_s: float = 2.0
     shutdown_drain_timeout_s: float = 15.0
-    health_probe_timeout_s: float = 1.0 # readiness 单次依赖探测超时
-    event_payload_max_bytes: int = 256 * 1024 # 溢出转 node_io
+    health_probe_timeout_s: float = 1.0  # readiness 单次依赖探测超时
+    event_payload_max_bytes: int = 256 * 1024  # 溢出转 node_io
     default_max_parallelism: int = 4
     event_tail_max_limit: int = 500
 
@@ -101,13 +101,13 @@ class Settings(BaseSettings):
     # 端点/密钥只从这里注入，绝不来自 DSL 或用户入参（SSRF / 凭据注入防线）。
     llm_base_url: str = ""
     llm_api_key: str = ""
-    llm_model: str = "gpt-4o-mini" # 默认模型名；真实调用需注入 AF_LLM_BASE_URL / AF_LLM_API_KEY
+    llm_model: str = "gpt-4o-mini"  # 默认模型名；真实调用需注入 AF_LLM_BASE_URL / AF_LLM_API_KEY
     llm_timeout_s: float = 60.0
     llm_max_response_chars: int = 100_000
-    llm_json_response_format: bool = True # 上游不支持 response_format 时置 false
-    llm_send_seed: bool = False # 部分厂商支持 seed，用于重放确定性；不支持时须关闭
-    llm_allow_insecure_http: bool = False # 生产默认禁止明文 http 外送密钥
-    llm_stream: bool = False # LLM 节点逐 token 流式（OutputDelta 展示事件）；opt-in，默认关闭
+    llm_json_response_format: bool = True  # 上游不支持 response_format 时置 false
+    llm_send_seed: bool = False  # 部分厂商支持 seed，用于重放确定性；不支持时须关闭
+    llm_allow_insecure_http: bool = False  # 生产默认禁止明文 http 外送密钥
+    llm_stream: bool = False  # LLM 节点逐 token 流式（OutputDelta 展示事件）；opt-in，默认关闭
 
     # LangFuse 追踪导出：复用 DocQA 自托管实例（compose profile langfuse），按 project 隔离。
     # 默认关闭：不安装任何 OTel 组件，执行管道与关闭前逐字节一致。

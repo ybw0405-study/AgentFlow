@@ -225,7 +225,7 @@ class LlmExecutor:
             if grant is not None and ctx.budget is not None:
                 await ctx.budget.settle(ctx.execution_id, grant, 0)
             raise
-        except Exception as exc: # provider 未分类异常按瞬时处理（网络/5xx 类）
+        except Exception as exc:  # provider 未分类异常按瞬时处理（网络/5xx 类）
             await self._command_failed(ctx, call_id, "LLM-UPSTREAM-001")
             if grant is not None and ctx.budget is not None:
                 await ctx.budget.settle(ctx.execution_id, grant, 0)

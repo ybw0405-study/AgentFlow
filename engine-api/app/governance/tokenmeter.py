@@ -6,11 +6,11 @@ from __future__ import annotations
 def _is_cjk(ch: str) -> bool:
     code = ord(ch)
     return (
-        0x3400 <= code <= 0x4DBF # CJK 扩展 A
-        or 0x4E00 <= code <= 0x9FFF # 基本汉字
-        or 0xF900 <= code <= 0xFAFF # 兼容汉字
-        or 0x3000 <= code <= 0x303F # CJK 标点
-        or 0xFF00 <= code <= 0xFFEF # 全角字符
+        0x3400 <= code <= 0x4DBF  # CJK 扩展 A
+        or 0x4E00 <= code <= 0x9FFF  # 基本汉字
+        or 0xF900 <= code <= 0xFAFF  # 兼容汉字
+        or 0x3000 <= code <= 0x303F  # CJK 标点
+        or 0xFF00 <= code <= 0xFFEF  # 全角字符
     )
 
 

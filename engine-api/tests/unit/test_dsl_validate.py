@@ -33,7 +33,7 @@ def test_checksum_is_stable(settings, demo_dsl):
 
 def test_cycle_detected(settings, demo_dsl):
     dsl = copy.deepcopy(demo_dsl)
-    dsl["edges"].append({"from": "final", "to": "draft"}) # draft→final→draft
+    dsl["edges"].append({"from": "final", "to": "draft"})  # draft→final→draft
     result = validate_dsl(dsl, settings)
     assert not result.ok
     assert DSL_CYCLE in _codes(result)
@@ -43,7 +43,7 @@ def test_cycle_detected(settings, demo_dsl):
 
 def test_duplicate_node_key(settings, demo_dsl):
     dsl = copy.deepcopy(demo_dsl)
-    dsl["nodes"].append(copy.deepcopy(dsl["nodes"][1])) # 再来一个 draft
+    dsl["nodes"].append(copy.deepcopy(dsl["nodes"][1]))  # 再来一个 draft
     result = validate_dsl(dsl, settings)
     assert DSL_VALIDATION in _codes(result)
     assert any("duplicate nodeKey" in e.message for e in result.errors)
@@ -104,7 +104,7 @@ def test_phase_gate_rejects_node_outside_allowlist(settings, demo_dsl):
 
 def test_branch_edge_from_non_branch_node(settings, demo_dsl):
     dsl = copy.deepcopy(demo_dsl)
-    dsl["edges"][2]["branch"] = "yes" # draft(llm) → final 带 branch
+    dsl["edges"][2]["branch"] = "yes"  # draft(llm) → final 带 branch
     result = validate_dsl(dsl, settings)
     assert DSL_BRANCH in _codes(result)
 
@@ -248,7 +248,7 @@ def test_loop_body_rejects_downstream_node_reference(settings):
                 "config": {"resultMapping": {"v": "{{ nodes.body_up.output.x }}"}},
             },
         ]
-    ) # 没有 body_up → body_end 的边：引用非上游
+    )  # 没有 body_up → body_end 的边：引用非上游
     result = validate_dsl(dsl, settings)
     assert not result.ok
     assert any("body_up" in e.message for e in result.errors)

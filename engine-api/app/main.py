@@ -50,7 +50,7 @@ _ERROR_STATUS = {
     "PREVIEW-GRAPH-001": 422,
     "PREVIEW-STRUCTURE-001": 422,
     "EXEC-GATE_BUSY-001": 409,
-    "EXEC-DISPATCH_REJECTED-001": 409, # 接受但未派发 ≠ 202 成功
+    "EXEC-DISPATCH_REJECTED-001": 409,  # 接受但未派发 ≠ 202 成功
 }
 
 
@@ -106,10 +106,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.store = store
         app.state.event_log = event_log
         app.state.dispatcher = dispatcher
-        app.state.llm_provider = real_llm # /internal/llm/models 读模型清单
-        await dispatcher.recover_on_startup() # 崩溃恢复扫描
-        dispatcher.start_sweep() # 周期兜底
-        dispatcher.start_gate_sweeper() # human_gate 超时自动裁决
+        app.state.llm_provider = real_llm  # /internal/llm/models 读模型清单
+        await dispatcher.recover_on_startup()  # 崩溃恢复扫描
+        dispatcher.start_sweep()  # 周期兜底
+        dispatcher.start_gate_sweeper()  # human_gate 超时自动裁决
         # 裁决的 MQ 通道：与控制面 HTTP 回调并行，用于引擎「被隔离/控制面重启中」时仍能续跑
         gate_consumer: GateDecisionConsumer | None = None
         if settings.mq_enabled and settings.mq_consume:

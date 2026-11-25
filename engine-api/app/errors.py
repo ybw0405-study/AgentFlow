@@ -10,7 +10,7 @@ class EngineError(Exception):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
-        self.transient = transient # 瞬时错误才可重试（§8.4）
+        self.transient = transient  # 瞬时错误才可重试（§8.4）
 
 
 class PermanentNodeError(EngineError):
