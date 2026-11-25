@@ -47,6 +47,17 @@ Get-Content (Join-Path $root 'scripts/seed-demo.sql') -Raw -Encoding UTF8 |
   docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow 2>$null
 Write-Host '    grants + seed applied (duplicate key 可忽略)'
 
+# 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
+# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引用真实模型的
+# 节点会返回 LLM-NOT_CONFIGURED-001，需显式注入 AF_LLM_*。
+# 必须放在 -Containers 分支之前：compose 只在 up 时插值 AF_LLM_*，return 之后再派生
+# 会让全容器模式的引擎容器拿到空配置（宿主机模式则继承了本进程环境）。
+if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
+  if ($null -eq $env:AF_LLM_BASE_URL) { $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1' }
+  $env:AF_LLM_API_KEY = $env:DEEPSEEK_API_KEY
+  if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-flash' }
+}
+
 # P0-4：全容器模式——jar 由 Dockerfile 的 java-build stage 构建，topic 由 mq-init 预建，
 # 不依赖本机 JDK/Maven/Java，也不需要下面的宿主机 jar 构建与服务启动。
 if ($Containers) {
@@ -102,15 +113,6 @@ if ($null -eq $env:AF_ROCKETMQ_NAMESRV) { $env:AF_ROCKETMQ_NAMESRV = '127.0.0.1:
 # 本地开发默认开启 LLM 逐 token 流式（打字机效果）；引擎侧仍保守默认 false（opt-in），
 # 生产部署不经此脚本、行为不变。显式设 AF_LLM_STREAM=false 可关闭。
 if ($null -eq $env:AF_LLM_STREAM) { $env:AF_LLM_STREAM = 'true' }
-
-# 真实模型（可选）。显式设置 AF_LLM_* 时直接使用；未设置而其厂商密钥已在环境里时按该厂商派生，
-# 免得每次手工导出。密钥只留在进程环境，不写入仓库与磁盘；两者都没有时引用真实模型的
-# 节点会返回 LLM-NOT_CONFIGURED-001，需显式注入 AF_LLM_*。
-if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
-    if ($null -eq $env:AF_LLM_BASE_URL) { $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1' }
-    $env:AF_LLM_API_KEY = $env:DEEPSEEK_API_KEY
-    if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-chat' }
-}
 
 Write-Host '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'
 # autoCreateTopicEnable 只在「第一次发送」时建 topic；消费端在消息到来前查路由会拿到 17。

@@ -49,7 +49,7 @@ export AF_LLM_STREAM="${AF_LLM_STREAM:-true}"
 if [ -z "${AF_LLM_API_KEY:-}" ] && [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   export AF_LLM_BASE_URL="${AF_LLM_BASE_URL:-https://api.deepseek.com/v1}"
   export AF_LLM_API_KEY="$DEEPSEEK_API_KEY"
-  export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-chat}"
+  export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-flash}"
 fi
 
 # 全容器模式下 topic 由 compose 的 mq-init 服务预建，宿主机无需重复（P0-4 修复）
