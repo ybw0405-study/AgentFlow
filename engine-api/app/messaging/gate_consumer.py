@@ -52,6 +52,7 @@ class GateDecisionConsumer:
         group: str,
         poll_timeout_ms: int = 3_000,
         batch: int = 32,
+        broker_host: str | None = None,
         reconnect_delay_s: float = 2.0,
         idle_interval_s: float = 0.2,
         busy_retries: int = 3,
@@ -66,7 +67,12 @@ class GateDecisionConsumer:
         self._busy_retries = max(0, busy_retries)
         self._busy_retry_delay_s = max(0.0, busy_retry_delay_s)
         self._consumer = PullConsumer(
-            namesrv, topic, group, poll_timeout_ms=poll_timeout_ms, batch=batch
+            namesrv,
+            topic,
+            group,
+            poll_timeout_ms=poll_timeout_ms,
+            batch=batch,
+            broker_host=broker_host,
         )
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()

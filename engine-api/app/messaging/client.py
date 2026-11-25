@@ -29,6 +29,25 @@ class RemotingError(RuntimeError):
     """协议层或网络层错误；调用方据此重连。"""
 
 
+def rewrite_broker_host(addr: str, host: str | None) -> str:
+    """把 broker 地址里的 host 换成 `host`，端口保持不变。
+
+    RocketMQ broker 向 namesrv 注册的是 `brokerIP1:listenPort`。本地宿主机部署时
+    brokerIP1=127.0.0.1，宿主端口映射可达；但在 all-in-container 模式下，engine 是
+    独立容器，拿到的 `127.0.0.1:10911` 指向它自己，永远连不上。此时用容器网络内的
+    服务名（如 `rocketmq-broker`）覆盖 host，端口 10911 不变——broker 与 engine 在
+    同一 compose 网络，服务名可解析，且不需要把 broker 端口暴露到局域网。
+
+    `host` 为空/None 时逐字节原样返回，保证非容器部署的行为不变。
+    """
+    if not host or not addr:
+        return addr
+    _, sep, port = addr.partition(":")
+    if not sep:
+        return addr
+    return f"{host}:{port}"
+
+
 class RemotingConnection:
     """一条到 namesrv / broker 的 TCP 连接（一问一答，同步）。"""
 
@@ -78,13 +97,21 @@ class PullConsumer:
     """按队列轮询一个 topic。`poll()` 返回本轮拉到的消息（可能为空）。"""
 
     def __init__(
-        self, namesrv: str, topic: str, group: str, *, poll_timeout_ms: int = 3_000, batch: int = 32
+        self,
+        namesrv: str,
+        topic: str,
+        group: str,
+        *,
+        poll_timeout_ms: int = 3_000,
+        batch: int = 32,
+        broker_host: str | None = None,
     ) -> None:
         self.namesrv = namesrv
         self.topic = topic
         self.group = group
         self.poll_timeout_s = max(poll_timeout_ms, 500) / 1000.0
         self.batch = max(batch, 1)
+        self.broker_host = broker_host or None
         self._namesrv_conn: RemotingConnection | None = None
         self._broker_conn: RemotingConnection | None = None
         self._broker_addr: str | None = None
@@ -109,6 +136,8 @@ class PullConsumer:
             addr, queues = remoting.parse_route(body)
             if not addr:
                 raise RemotingError(f"no broker route for topic {self.topic}")
+            # 容器部署下 namesrv 广播的 host 可能是回环地址；按需重写为内网服务名。
+            addr = rewrite_broker_host(addr, self.broker_host)
             # 拉取是短轮询，正常情况下立刻返回；超时只用于兜住 broker 卡死
             self._broker_conn = RemotingConnection(addr, timeout=max(3.0, self.poll_timeout_s))
             self._broker_addr = addr

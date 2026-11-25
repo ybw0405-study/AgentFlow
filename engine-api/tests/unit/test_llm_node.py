@@ -296,3 +296,32 @@ async def test_no_deltas_emits_no_output_delta_events() -> None:
     event_names = [t for t, _ in emitted]
     assert str(EventType.OUTPUT_DELTA) not in event_names
     assert str(EventType.COMMAND_COMPLETED) in event_names
+
+
+async def test_cancelled_provider_settles_reserved_budget() -> None:
+    """P1-2 回归：provider 被取消（CancelledError）时预占必须回冲。
+
+    CancelledError 继承 BaseException，不被 except Exception 捕获；若不显式处理，
+    grant 泄漏、:inflight +1，同执行后续节点会被虚减余额提前触发预算硬停止。
+    """
+    import asyncio
+
+    class _CancellingProvider:
+        name = "openai-compatible"
+
+        async def complete(self, **_: Any) -> CommandResult:
+            raise asyncio.CancelledError()
+
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    ctx = _ctx(emitted)
+    budget = _RecordingBudget()
+    ctx.budget = budget
+    ctx.policy = Policy(token_budget=1000)
+
+    executor = LlmExecutor({"openai-compatible": _CancellingProvider()})
+    with pytest.raises(asyncio.CancelledError):
+        await executor.execute(_node("deepseek-chat"), ctx)
+
+    # 关键：取消路径也回冲了预占（grant, 0）
+    assert len(budget.settled) == 1
+    assert budget.settled[0][1] == 0

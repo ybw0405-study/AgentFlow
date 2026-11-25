@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -83,6 +84,10 @@ def build_chat_payload(
         "max_tokens": max_tokens,
         "stream": stream,
     }
+    # 让兼容端点在 SSE 末帧返回真实 usage，供成本中心精确计量（P1-4 修复）。
+    # 部分端点不接受该字段，默认关闭、由 AF_LLM_STREAM_INCLUDE_USAGE 显式开启。
+    if stream and os.getenv("AF_LLM_STREAM_INCLUDE_USAGE", "").lower() in {"1", "true", "yes"}:
+        payload["stream_options"] = {"include_usage": True}
     if output_mode == "json" and json_response_format:
         payload["response_format"] = {"type": "json_object"}
     if seed_value is not None:
@@ -446,6 +451,7 @@ class OpenAICompatibleProvider:
 
                 parts: list[str] = []
                 deltas: list[str] = []
+                upstream_usage: dict[str, Any] | None = None
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -457,6 +463,9 @@ class OpenAICompatibleProvider:
                     except ValueError:
                         # 上游偶发空行/心跳；跳过不中断整段流。
                         continue
+                    # 末帧可能携带 usage（需请求侧 include_usage=true）；与非流式口径对齐（P1-4 修复）。
+                    if isinstance(event.get("usage"), dict):
+                        upstream_usage = event["usage"]
                     delta = self._extract_delta(event)
                     if delta:
                         parts.append(delta)
@@ -484,9 +493,11 @@ class OpenAICompatibleProvider:
                 return self._failure("LLM-RESPONSE-001", False, started, f"invalid json: {exc}")
 
         fallback_prompt_tokens = estimate_tokens(prompt + (system or ""))
-        # 流式响应通常不携带 usage（除非 include_usage），completion 侧退回本地估算。
-        completion_tokens = estimate_tokens(text)
-        total_tokens = fallback_prompt_tokens + completion_tokens
+        # 优先用上游 SSE 末帧的 usage（与非流式 _complete 同口径），无则回退估算（P1-4 修复）。
+        usage_raw = upstream_usage or {}
+        prompt_tokens = int_or(usage_raw.get("prompt_tokens"), fallback_prompt_tokens)
+        completion_tokens = int_or(usage_raw.get("completion_tokens"), estimate_tokens(text))
+        total_tokens = int_or(usage_raw.get("total_tokens"), prompt_tokens + completion_tokens)
 
         return CommandResult(
             ok=True,
@@ -495,7 +506,7 @@ class OpenAICompatibleProvider:
             latency_ms=self._ms(started),
             extra={
                 "usage": {
-                    "prompt": fallback_prompt_tokens,
+                    "prompt": prompt_tokens,
                     "completion": completion_tokens,
                     "total": total_tokens,
                 },

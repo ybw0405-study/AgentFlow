@@ -117,6 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 group=settings.mq_gate_group,
                 poll_timeout_ms=settings.mq_poll_timeout_ms,
                 batch=settings.mq_pull_batch,
+                broker_host=settings.mq_broker_host,
             )
             gate_consumer.start()
         app.state.gate_consumer = gate_consumer
