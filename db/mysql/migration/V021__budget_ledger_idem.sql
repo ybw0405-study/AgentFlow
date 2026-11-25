@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS budget_ledger_seen (
   execution_id VARCHAR(64) NOT NULL,
   created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (event_seq)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

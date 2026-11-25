@@ -463,7 +463,7 @@ class OpenAICompatibleProvider:
                     except ValueError:
                         # 上游偶发空行/心跳；跳过不中断整段流。
                         continue
-                    # 末帧可能携带 usage（需请求侧 include_usage=true）；与非流式口径对齐（P1-4 修复）。
+                    # 末帧可能携带 usage（请求侧需 include_usage=true），与非流式口径对齐。
                     if isinstance(event.get("usage"), dict):
                         upstream_usage = event["usage"]
                     delta = self._extract_delta(event)
