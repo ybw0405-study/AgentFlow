@@ -336,7 +336,7 @@ public class ConnectorService {
     private ConnectorRow requireOwned(TenantInfo tenant, String id) {
         ConnectorRow row = requireVisible(tenant, id);
         if (!row.tenantId().equals(tenant.tenantId())) {
-            throw notFound();   // 祖先共享的连接器只读，不暴露可写性
+            throw notFound(); // 祖先共享的连接器只读，不暴露可写性
         }
         return row;
     }
@@ -444,7 +444,7 @@ public class ConnectorService {
     /**
      * 签发 OAuth state：签名串携带 connector|tenant|userId|expires|nonce，
      * 并在 Redis 登记 nonce（SETNX + TTL）。nonce 绑定发起用户，回调时原子消费，
-     * 做到一次性 + 防重放 + 防跨用户冒用（P1-1 修复）。
+     * 做到一次性 + 防重放 + 防跨用户冒用。
      */
     private String issueState(String connectorId, String tenantId, String userId) {
         String nonce = UUID.randomUUID().toString();

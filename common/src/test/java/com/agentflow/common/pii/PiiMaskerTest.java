@@ -13,7 +13,7 @@ class PiiMaskerTest {
     @Test
     void phoneMasked() {
         var r = PiiMasker.mask("我的电话是13812345678，请联系");
-        assertEquals("我的电话是[PHONE],请联系", r.masked());  // NFKC：全角逗号→半角
+        assertEquals("我的电话是[PHONE],请联系", r.masked()); // NFKC：全角逗号→半角
         assertEquals(List.of("PHONE"), r.categories());
         assertEquals(1, r.count());
     }

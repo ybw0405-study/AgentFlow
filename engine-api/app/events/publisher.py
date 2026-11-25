@@ -1,4 +1,4 @@
-"""事件实时推送：Redis pub/sub 频道 af:exec-events（at-most-once，D2）。
+"""事件实时推送：Redis pub/sub 频道 af:exec-events（at-most-once）。
 
 订阅方断线后通过 /internal/events?afterSeq= 追平，因此发布失败只降级不致命。
 """

@@ -58,7 +58,7 @@ class TenantFilterTest {
                 seenRole.set(TenantContext.require().role()));
         assertEquals("EDITOR", seenRole.get());
         assertEquals(200, response.getStatus());
-        assertTrue(TenantContext.get() == null);  // 过滤器退出后必须清理
+        assertTrue(TenantContext.get() == null); // 过滤器退出后必须清理
     }
 
     @Test
@@ -74,7 +74,7 @@ class TenantFilterTest {
         var response = new MockHttpServletResponse();
         filter.doFilter(request("space-1"), response, (req, res) ->
                 seen.set(TenantContext.require()));
-        assertEquals("ADMIN", seen.get().role());          // OWNER 在子空间降级为 ADMIN
+        assertEquals("ADMIN", seen.get().role()); // OWNER 在子空间降级为 ADMIN
         assertEquals("org-1", seen.get().inheritedFrom());
         assertTrue(seen.get().inherited());
     }

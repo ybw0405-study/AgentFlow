@@ -2,7 +2,7 @@
 
 纪律（§6.3）：写事件 → 应用状态 → 对外可见；禁止先改状态再补事件。
 并发控制（§8.2.4）：aggregate_version 乐观并发，冲突重读重试 ≤3 次。
-溢出（D5）：NodeCompleted payload 超 256KB 时完整内容落 node_io，事件仅存引用+digest。
+溢出：NodeCompleted payload 超 256KB 时完整内容落 node_io，事件仅存引用+digest。
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class EventStore:
         etype = EventType(event_type)
         raw = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         if len(raw) > self._max_bytes and node_key is not None:
-            # 溢出：完整内容落 node_io(OUT)，事件存引用（D5）
+            # 溢出：完整内容落 node_io(OUT)，事件存引用
             digest = hashlib.sha256(raw).hexdigest()
             node_io_spill = payload
             payload = {"_overflow": True, "digest": digest, "size": len(raw)}
@@ -102,9 +102,9 @@ class EventStore:
                         " VALUES ($1, $2, $3)"
                         " ON CONFLICT (execution_id) DO UPDATE"
                         " SET status = CASE WHEN execution_tracker.status = 'TERMINAL'"
-                        "        THEN 'TERMINAL' ELSE EXCLUDED.status END,"
-                        "     last_seq = EXCLUDED.last_seq,"
-                        "     updated_at = now()",
+                        " THEN 'TERMINAL' ELSE EXCLUDED.status END,"
+                        " last_seq = EXCLUDED.last_seq,"
+                        " updated_at = now()",
                         execution_id,
                         "TERMINAL" if terminal else "OPEN",
                         rec["seq"],
@@ -127,7 +127,7 @@ class EventStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT seq, execution_id, event_type, node_key, payload, aggregate_version,"
-                "       created_at"
+                " created_at"
                 " FROM execution_event WHERE execution_id = $1 ORDER BY aggregate_version",
                 execution_id,
             )
@@ -146,19 +146,19 @@ class EventStore:
         if space_id is None:
             sql = (
                 "SELECT seq, execution_id, event_type, node_key, payload,"
-                "       aggregate_version, created_at"
+                " aggregate_version, created_at"
                 " FROM execution_event WHERE seq > $1 ORDER BY seq LIMIT $2"
             )
             args: tuple = (after_seq, limit)
         else:
             sql = (
                 "SELECT e.seq, e.execution_id, e.event_type, e.node_key, e.payload,"
-                "       e.aggregate_version, e.created_at"
+                " e.aggregate_version, e.created_at"
                 " FROM execution_event e"
                 " WHERE e.seq > $1"
-                "   AND EXISTS (SELECT 1 FROM execution_spec s"
-                "               WHERE s.execution_id = e.execution_id"
-                "                 AND s.spec->>'spaceId' = $2)"
+                " AND EXISTS (SELECT 1 FROM execution_spec s"
+                " WHERE s.execution_id = e.execution_id"
+                " AND s.spec->>'spaceId' = $2)"
                 " ORDER BY e.seq LIMIT $3"
             )
             args = (after_seq, space_id, limit)
@@ -173,7 +173,7 @@ class EventStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT seq, execution_id, event_type, node_key, payload,"
-                "       aggregate_version, created_at"
+                " aggregate_version, created_at"
                 " FROM execution_event WHERE execution_id = $1 AND seq > $2"
                 " ORDER BY seq LIMIT $3",
                 execution_id,
@@ -183,7 +183,7 @@ class EventStore:
         return [self._row_to_event(r) for r in rows]
 
     async def open_executions(self, limit: int = 200) -> list[uuid.UUID]:
-        """恢复扫描（D4）：所有未达终态的执行。
+        """恢复扫描：所有未达终态的执行。
 
         带上限：一次故障可能遗留上万条 OPEN，全量拉回内存既慢又会挤掉正常调度；
         按最近更新时间取前 N 条，剩余部分由下一轮扫描继续。
@@ -210,17 +210,17 @@ class EventStore:
                 "SELECT s.execution_id, s.node_key, s.payload"
                 " FROM execution_event s"
                 " WHERE s.event_type = 'GateSuspended'"
-                "   AND NOT EXISTS ("
-                "     SELECT 1 FROM execution_event r"
-                "     WHERE r.execution_id = s.execution_id"
-                "       AND r.event_type = 'GateResolved'"
-                "       AND r.node_key = s.node_key"
-                "       AND r.aggregate_version > s.aggregate_version)"
-                "   AND NOT EXISTS ("
-                "     SELECT 1 FROM execution_event t"
-                "     WHERE t.execution_id = s.execution_id"
-                "       AND t.event_type IN ('ExecutionCompleted','ExecutionFailed',"
-                "                            'ExecutionTimedOut','ExecutionCancelled'))"
+                " AND NOT EXISTS ("
+                " SELECT 1 FROM execution_event r"
+                " WHERE r.execution_id = s.execution_id"
+                " AND r.event_type = 'GateResolved'"
+                " AND r.node_key = s.node_key"
+                " AND r.aggregate_version > s.aggregate_version)"
+                " AND NOT EXISTS ("
+                " SELECT 1 FROM execution_event t"
+                " WHERE t.execution_id = s.execution_id"
+                " AND t.event_type IN ('ExecutionCompleted','ExecutionFailed',"
+                " 'ExecutionTimedOut','ExecutionCancelled'))"
                 " ORDER BY s.seq LIMIT $1",
                 limit,
             )

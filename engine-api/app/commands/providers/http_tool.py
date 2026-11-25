@@ -97,7 +97,7 @@ class HttpToolConnector:
         try:
             payload = resp.json()
         except ValueError:
-            # 200 但响应体不是合法 JSON：上游协议异常，按瞬时处理允许重试（C-10）
+            # 200 但响应体不是合法 JSON：上游协议异常，按瞬时处理允许重试
             return CommandResult(
                 ok=False,
                 error_code="CONN-BAD-JSON",

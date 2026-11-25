@@ -19,12 +19,12 @@ public interface GateResolveOutboxMapper {
 
     @Insert("INSERT INTO gate_resolve_outbox"
             + " (id, execution_id, node_key, decision, resolved_by, comment, status,"
-            + "  attempts, next_attempt_at)"
+            + " attempts, next_attempt_at)"
             + " VALUES (#{id}, #{executionId}, #{nodeKey}, #{decision}, #{resolvedBy},"
-            + "  #{comment}, 'PENDING', 0, NOW(3))"
+            + " #{comment}, 'PENDING', 0, NOW(3))"
             + " ON DUPLICATE KEY UPDATE decision = VALUES(decision),"
-            + "  resolved_by = VALUES(resolved_by), comment = VALUES(comment),"
-            + "  status = 'PENDING', next_attempt_at = NOW(3)")
+            + " resolved_by = VALUES(resolved_by), comment = VALUES(comment),"
+            + " status = 'PENDING', next_attempt_at = NOW(3)")
     int enqueue(OutboxRow row);
 
     @Select("SELECT id, execution_id AS executionId, node_key AS nodeKey, decision,"

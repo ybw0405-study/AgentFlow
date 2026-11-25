@@ -36,6 +36,9 @@ def build_executors(
     embedding_provider=None,
     vector_store=None,
     index_cap: int = 2000,
+    reranker=None,
+    rerank_timeout_s: float = 5.0,
+    rerank_candidate_factor: int = 3,
 ) -> dict[str, NodeExecutor]:
     """connector_gateway=(gateway_base, internal_token) 时启用真实连接器与模型连接；
     knowledge_gateway 同源，启用文档检索节点。两者缺省时对应节点给出明确错误而非静默回落。
@@ -62,7 +65,15 @@ def build_executors(
         "start": StartExecutor(),
         "end": EndExecutor(),
         "llm": LlmExecutor(llm_providers, connector_llms),
-        "retrieval": RetrievalExecutor(knowledge, embedding_provider, vector_store, index_cap),
+        "retrieval": RetrievalExecutor(
+            knowledge,
+            embedding_provider,
+            vector_store,
+            index_cap,
+            reranker,
+            rerank_timeout_s,
+            rerank_candidate_factor,
+        ),
         "tool": ToolExecutor(connectors),
         "mcp": McpExecutor(connectors),
         "condition": ConditionExecutor(),

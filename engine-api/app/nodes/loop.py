@@ -1,4 +1,4 @@
-"""loop 节点：按 items_expression 迭代执行 body 子图（§8.3 / US-03）。
+"""loop 节点：按 items_expression 迭代执行 body 子图（§8.3）。
 
 - 每轮产生独立 nodeKey（loopKey#index），迭代变量注入子图上下文；
 - 超限抛 LoopLimitExceededError（失败，已完成的迭代结果保留在事件流）；

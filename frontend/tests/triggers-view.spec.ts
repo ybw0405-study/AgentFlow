@@ -199,7 +199,7 @@ describe('触发页', () => {
   })
 
   it('list 不回密钥明文时只提示已设置，create 后一次性显示明文', async () => {
-    // 后端 SEC-3：list 只给 hasSecret，不给 secret 明文
+    // 后端约定：list 只给 hasSecret，不给 secret 明文
     mocks.list.mockResolvedValue([{ ...WEBHOOK, secret: null }])
     const wrapper = await mountView()
     expect(wrapper.text()).toContain('密钥已设置')

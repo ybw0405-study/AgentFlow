@@ -623,7 +623,7 @@ function useBuiltinModel(): void {
     patchNodeConfig(id, {
       connectionId: undefined,
       provider: 'openai-compatible',
-      model: modelCatalog.value.defaultModel || 'deepseek-chat',
+      model: modelCatalog.value.defaultModel || 'deepseek-flash',
     })
     notice.value = '已改用进程默认端点（AF_LLM_*），调用走服务端配置的真实模型'
   }

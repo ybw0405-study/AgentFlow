@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * P0-2 回归：refresh token 重用检测必须在抛异常前，把「吊销全族」委托给独立事务 Bean。
+ * refresh token 重用检测必须在抛异常前，把「吊销全族」委托给独立事务 Bean。
  *
  * <p>用 Mockito 验证委托关系——只要 rotate() 调用的是 revocationService（REQUIRES_NEW Bean）
  * 而非直接调 mapper.revokeFamily，吊销就不会被本方法事务回滚。真实事务语义由

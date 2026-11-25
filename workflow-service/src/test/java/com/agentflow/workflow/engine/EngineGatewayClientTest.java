@@ -21,7 +21,7 @@ class EngineGatewayClientTest {
         assertEquals("/events?after_seq={a}&limit={l}",
                 EngineGatewayClient.eventsUri(null));
         assertEquals("/events?after_seq={a}&limit={l}",
-                EngineGatewayClient.eventsUri("   "));
+                EngineGatewayClient.eventsUri(" "));
     }
 
     @Test

@@ -35,8 +35,8 @@ public interface WorkflowVersionMapper {
     int maxVersionNo(@Param("definitionId") String definitionId);
 
     /**
-     * 仅更新发布元数据，且只写一次：dsl/checksum 与 immutable 由触发器与不可变约定双重保护
-     * （US-01）。COALESCE 保证重复发布同一版本不会重写 published_at/published_by，
+     * 仅更新发布元数据，且只写一次：dsl/checksum 与 immutable 由触发器与不可变约定双重保护。
+     * COALESCE 保证重复发布同一版本不会重写 published_at/published_by，
      * 既保留首次发布历史，也不会撞 V019 的不可变触发器。
      */
     @Update("UPDATE workflow_version SET published_at = COALESCE(published_at, NOW(3)),"

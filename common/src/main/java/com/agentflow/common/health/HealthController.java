@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>语义区分（符合容器探针惯例）：
  * <ul>
- *   <li>{@code UP} + 200：进程存活且声明的依赖均可用；</li>
- *   <li>{@code DEGRADED} + 503：进程存活但至少一个依赖不可用，不应接收流量。</li>
+ * <li>{@code UP} + 200：进程存活且声明的依赖均可用；</li>
+ * <li>{@code DEGRADED} + 503：进程存活但至少一个依赖不可用，不应接收流量。</li>
  * </ul>
  *
  * <p>生产环境不返回依赖明细，避免把内部拓扑（库地址、驱动错误）暴露给未认证调用方；

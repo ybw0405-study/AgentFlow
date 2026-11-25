@@ -66,7 +66,7 @@ def test_webhook_triggers_real_execution(client, editor_token, admin_token):
     hook = _create_webhook(client, editor_token, wf_id)
     assert hook["token"] and hook["secret"] and hook["enabled"] is True
 
-    # SEC-3：create 一次性回明文，list 只回 hasSecret，不再回传密钥本体
+    # create 一次性回明文，list 只回 hasSecret，不再回传密钥本体
     listed = client.get(f"/api/v1/workflows/{wf_id}/triggers",
                         headers=headers(editor_token, SPACE_A))
     assert listed.status_code == 200, listed.text
@@ -101,7 +101,7 @@ def test_webhook_verifies_signature_when_present(client, editor_token, admin_tok
 
     ts = str(int(time.time()))
     digest = hmac.new(hook["secret"].encode(), f"{ts}.{body}".encode(), hashlib.sha256).hexdigest()
-    # 签名覆盖时间戳：剥离 X-AF-Timestamp 后同一签名必然验签失败（P1-8）。
+    # 签名覆盖时间戳：剥离 X-AF-Timestamp 后同一签名必然验签失败。
     no_ts = client.post(url, content=body, headers={
         "X-AF-Signature": f"sha256={digest}",
         "Content-Type": "application/json",
@@ -171,14 +171,22 @@ def test_invalid_cron_is_rejected(client, editor_token, admin_token):
     assert "cron" in resp.json()["detail"], resp.text
 
 
-def test_sub_minute_cron_is_rejected(client, editor_token, admin_token):
-    """秒级 cron 在分钟粒度的调度器上会被吞掉一半，所以直接拒绝而不是假装支持。"""
+def test_sub_minute_cron_is_accepted(client, editor_token, admin_token):
+    """秒级 cron 直接接受，预览按秒渲染档位；幂等键/claim 精确到秒，不吞同分钟内的档位。"""
     wf_id = _published_workflow(client, editor_token, admin_token)
     resp = client.post(f"/api/v1/workflows/{wf_id}/triggers",
                        json={"type": "SCHEDULE", "cron": "*/5 * * * * *"},
                        headers=headers(editor_token, SPACE_A))
-    assert resp.status_code == 409, resp.text
-    assert "seconds field must be 0" in resp.json()["detail"], resp.text
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["cron"] == "*/5 * * * * *", resp.text
+
+    preview = client.post(f"/api/v1/workflows/{wf_id}/triggers/cron-preview",
+                          json={"cron": "*/5 * * * * *", "count": 3},
+                          headers=headers(editor_token, SPACE_A))
+    assert preview.status_code == 200, preview.text
+    times = preview.json()["data"]["times"]
+    # 秒级 cron 的预览带秒，而不是截到分钟
+    assert all(":" in t.split(" ")[1] and len(t.split(" ")[1].split(":")) == 3 for t in times), times
 
 
 def test_cron_preview_shows_next_runs_without_creating_anything(client, editor_token,

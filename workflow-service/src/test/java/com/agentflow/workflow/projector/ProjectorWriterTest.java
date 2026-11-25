@@ -127,7 +127,7 @@ class ProjectorWriterTest {
 
         assertEquals(9L, next);
         verify(cursors).upsert(eq(9L));
-        verify(nodes, times(2)).upsert(any());   // NodeStarted + NodeCompleted 各一行
+        verify(nodes, times(2)).upsert(any()); // NodeStarted + NodeCompleted 各一行
     }
 
     @Test
@@ -144,7 +144,7 @@ class ProjectorWriterTest {
 
     @Test
     void nodeWithoutOutputModelLeavesModelEmpty() {
-        // 非 LLM 节点、或输出溢出（D5）时 payload 里没有 output.model：留空而不是编一个
+        // 非 LLM 节点、或输出溢出时 payload 里没有 output.model：留空而不是编一个
         writer.writeBatch(List.of(event(5, "NodeCompleted", Map.of(
                 "attempt", 1, "tokenUsed", 4, "outputDigest", "d"))));
 
@@ -221,7 +221,7 @@ class ProjectorWriterTest {
 
     @Test
     void duplicateEventSeqDoesNotAccrueTwice() {
-        // P1-3 回归：同一事件 seq 被两个副本/重放投影时，INSERT IGNORE 返回 0，不重复计费
+        // 同一事件 seq 被两个副本/重放投影时，INSERT IGNORE 返回 0，不重复计费
         when(cursors.findLastSeq()).thenReturn(0L);
         when(budgetSeen.claim(eq(1L), eq("exec-1"))).thenReturn(1, 0); // 首次成功，第二次重复
 

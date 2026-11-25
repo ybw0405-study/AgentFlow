@@ -43,7 +43,7 @@ final class TenantLimitResolver {
 
     /**
      * @param tenants 全部租户（用来建 parent 链与取名字）
-     * @param ledger  本账期的账本行（按 tenantId 索引）；没有行的租户用量记 0、限额记为无上限
+     * @param ledger 本账期的账本行（按 tenantId 索引）；没有行的租户用量记 0、限额记为无上限
      */
     static List<ResolvedTenant> resolve(List<TenantMapper.TenantRow> tenants,
                                         Map<String, BudgetLedgerRow> ledger) {

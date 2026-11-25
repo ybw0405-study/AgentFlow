@@ -22,9 +22,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>三个问题，三种口径：
  * <ul>
- *   <li>「这个租户这个月用了多少、还剩多少」——账本（budget_ledger），账期口径；</li>
- *   <li>「额度是被执行吃掉的还是被调试吃掉的」——试跑明细（preview_usage）切出来；</li>
- *   <li>「贵的模型被谁在用」——节点上的 model 与试跑明细，跨租户聚合。</li>
+ * <li>「这个租户这个月用了多少、还剩多少」——账本（budget_ledger），账期口径；</li>
+ * <li>「额度是被执行吃掉的还是被调试吃掉的」——试跑明细（preview_usage）切出来；</li>
+ * <li>「贵的模型被谁在用」——节点上的 model 与试跑明细，跨租户聚合。</li>
  * </ul>
  *
  * <p>整页统一使用账期口径（{@code period}），不再混入全时段数字：同一个页面上两种时间口径，

@@ -25,6 +25,7 @@ const newDesc = ref('')
 const docTitle = ref('')
 const docContent = ref('')
 const docSource = ref('TEXT')
+const selectedFile = ref<File | null>(null)
 const query = ref('')
 const hits = ref<KnowledgeHitDto[]>([])
 const searchMeta = ref<{ matched: number; scanned: number } | null>(null)
@@ -115,15 +116,46 @@ function onFile(event: Event): void {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    docContent.value = String(reader.result ?? '')
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  const isBinary = ['pdf', 'docx', 'pptx', 'xlsx'].includes(ext ?? '')
+  if (isBinary) {
+    selectedFile.value = file
+    docContent.value = ''
     if (!docTitle.value) docTitle.value = file.name
-    docSource.value = 'FILE'
-    notice.value = `已读取 ${file.name}，点「导入文档」写入知识库`
+    notice.value = `已选择 ${file.name}，点「上传文档」解析导入`
+  } else {
+    selectedFile.value = null
+    const reader = new FileReader()
+    reader.onload = () => {
+      docContent.value = String(reader.result ?? '')
+      if (!docTitle.value) docTitle.value = file.name
+      docSource.value = 'FILE'
+      notice.value = `已读取 ${file.name}，点「导入文档」写入知识库`
+    }
+    reader.readAsText(file, 'UTF-8')
   }
-  reader.readAsText(file, 'UTF-8')
   input.value = ''
+}
+
+async function uploadFile(): Promise<void> {
+  if (!selectedId.value || !selectedFile.value) return
+  busy.value = true
+  error.value = null
+  try {
+    const doc = await knowledgeApi.uploadDocument(
+      selectedId.value,
+      selectedFile.value,
+      docTitle.value.trim() || undefined,
+    )
+    selectedFile.value = null
+    docTitle.value = ''
+    notice.value = `已导入「${doc.title}」，切成 ${doc.chunkCount} 个片段，现在可以试检索了`
+    await Promise.all([loadBases(), loadDocuments()])
+  } catch (e) {
+    error.value = errorText(e)
+  } finally {
+    busy.value = false
+  }
 }
 
 async function removeDocument(id: string): Promise<void> {
@@ -188,7 +220,7 @@ async function createWorkflow(): Promise<void> {
         position: { x: 580, y: 180 },
         config: {
           provider: 'openai-compatible',
-          model: 'deepseek-chat',
+          model: 'deepseek-flash',
           promptTemplate:
             '请只依据以下文档片段回答，并注明出处。\n文档：{{ nodes.retrieve.output.text }}\n问题：{{ vars.question }}',
           maxTokens: 1024,
@@ -354,10 +386,10 @@ onMounted(loadBases)
               class="af-btn af-btn--sm"
               style="cursor: pointer; white-space: nowrap"
             >
-              选择 .txt / .md
+              选择文件
               <input
                 type="file"
-                accept=".txt,.md,.markdown,.csv,text/plain"
+                accept=".txt,.md,.markdown,.csv,.pdf,.docx,.pptx,.xlsx,text/plain"
                 style="display: none"
                 @change="onFile"
               >
@@ -367,7 +399,7 @@ onMounted(loadBases)
             v-model="docContent"
             class="af-textarea"
             rows="7"
-            placeholder="在这里粘贴文档正文，或先点右侧选择文件；导入时会按段落自动切片"
+            placeholder="在这里粘贴文档正文，或点右侧选择文件（txt/md 直接读取，PDF/Office 走上传解析）；导入时会按段落自动切片"
           />
           <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px">
             <span
@@ -375,6 +407,14 @@ onMounted(loadBases)
               style="font-size: 11px"
             >当前 {{ docContent.length }} 字符 · 上限 200000</span>
             <div class="af-spacer" />
+            <button
+              v-if="selectedFile"
+              class="af-btn af-btn--sm af-btn--primary"
+              :disabled="busy"
+              @click="uploadFile"
+            >
+              上传文档
+            </button>
             <button
               class="af-btn af-btn--sm af-btn--primary"
               :disabled="busy || !docContent.trim()"

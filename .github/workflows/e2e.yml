@@ -50,14 +50,14 @@ jobs:
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
-          java-version: '17'  # 与 .java-version / pom.xml <java.version> 一致
+          java-version: '17' # 与 .java-version / pom.xml <java.version> 一致
           cache: maven
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version-file: .python-version  # 单一来源
+          python-version-file: .python-version # 单一来源
           cache: pip
-          cache-dependency-path: engine-api/requirements.lock.txt  # 绑定真实锁文件
+          cache-dependency-path: engine-api/requirements.lock.txt # 绑定真实锁文件
 
       - name: 基础设施（MySQL / PG / Redis / RocketMQ）
         run: |

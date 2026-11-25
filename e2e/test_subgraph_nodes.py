@@ -173,7 +173,7 @@ def test_condition_branch_routes_into_loop(client, editor_token, admin_token):
     assert nodes["has_items"] == "SUCCEEDED"
     assert nodes["loop_1"] == "SUCCEEDED"
     assert nodes["answer"] == "SUCCEEDED"
-    assert nodes["empty_end"] == "SKIPPED"  # 另一条分支不得执行
+    assert nodes["empty_end"] == "SKIPPED" # 另一条分支不得执行
     # 每轮迭代的节点 key 形如 loop_1#0#body_mid
     assert nodes["loop_1#0#body_mid"] == "SUCCEEDED"
     assert nodes["loop_1#1#body_end"] == "SUCCEEDED"

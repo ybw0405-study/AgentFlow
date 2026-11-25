@@ -1,4 +1,4 @@
-"""E2E-3：跨租户访问一律 404，不泄露资源存在性（US-02）；VIEWER 触发 403（US-02）。"""
+"""E2E：跨租户访问一律 404，不泄露资源存在性；VIEWER 触发 403。"""
 
 from __future__ import annotations
 

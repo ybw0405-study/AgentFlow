@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""批次 4 / 性能压测脚本骨架 — 重点：AgentFlow 月度额度跨月窗口。
+"""性能压测脚本骨架 — 重点：AgentFlow 月度额度跨月窗口。
 
 背景（方案）：`BudgetLedgerMapper.java` 用 `DATE_FORMAT(NOW(3),'%Y-%m')`
 算账期（MySQL 侧、UTC 月），`ExecutionService.java` 用
@@ -19,7 +19,7 @@
 
 观测 / 断言：
   * 单个 (tenant, period) 账本恰好 1 行，不劈月；
-  * Java period 与 SQL 写入 period 完全一致（I5）；
+  * Java period 与 SQL 写入 period 完全一致；
   * 并发扣减总量不超过月度额度（无超发、无少算）；
   * 跨月窗口内重复请求不双计、不重复计费；
   * p99 延迟与错误率符合 SLO。
@@ -32,7 +32,7 @@
     MySQL 客户端，账本查询为 TODO 占位（按 FAIL 计，接线后重跑）。
 
 运行：
-  python drill_loadtest_monthly_quota.py                         # dry-run（默认）
+  python drill_loadtest_monthly_quota.py # dry-run（默认）
   python drill_loadtest_monthly_quota.py --execute \
       --base-url http://127.0.0.1:8080 --dsn mysql://... --quota 1000 \
       --concurrency 50 --report out.json
@@ -57,7 +57,7 @@ CASES = [
 
 ASSERTIONS = [
     "A1 单个 (tenant, period) 账本恰好 1 行（不劈月）",
-    "A2 Java PeriodClock 计算的 period == SQL 写入的 period（I5）",
+    "A2 Java PeriodClock 计算的 period == SQL 写入的 period",
     "A3 并发扣减总量 <= 月度额度（无超发）",
     "A4 用量不少算（请求数 == 账本 used 增量）",
     "A5 跨月窗口内幂等键生效，无重复计费",
@@ -94,32 +94,32 @@ def one_request(url: str, body: dict, headers: dict, timeout: float) -> tuple[bo
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
             return (200 <= resp.status < 300), (time.perf_counter() - t0) * 1000
-    except Exception:  # noqa: BLE001
+    except Exception: # noqa: BLE001
         return False, (time.perf_counter() - t0) * 1000
 
 
 def run(args: argparse.Namespace) -> int:
     r = LoadResult(execute=args.execute)
     print("=" * 72)
-    print("批次4 月度额度跨月窗口压测骨架 (AgentFlow) | execute =", args.execute)
+    print("月度额度跨月窗口压测骨架 (AgentFlow) | execute =", args.execute)
     print("跨月用例矩阵：")
     for name, clock, jp, sp, note in CASES:
-        print(f"  {name}: clock={clock}  java_period={jp}  sql_period={sp}  # {note}")
+        print(f" {name}: clock={clock} java_period={jp} sql_period={sp} # {note}")
     print("断言:")
     for a in ASSERTIONS:
-        print("  -", a)
+        print(" -", a)
     print("=" * 72)
     if not args.execute:
         for name, clock, jp, sp, _ in CASES:
             r.rows.append({"case": name, "clock": clock, "dry_run": True,
                            "would_assert": f"java_period == sql_period == {jp} 且 used <= {args.quota}"})
-            print(f"  [dry-run] {name}: 登记跨月用例，未发请求、未连库")
+            print(f" [dry-run] {name}: 登记跨月用例，未发请求、未连库")
         r.dump(args.report)
         print("\n骨架自检完成；本机未做真实压测，无实测数值。加 --execute 才会真实打流。")
         return 0
 
     headers = {"Content-Type": "application/json", "X-Internal-Token": args.internal_token}
-    path = "/api/executions/charge"  # TODO: 按真实额度扣减端点校准
+    path = "/api/executions/charge" # TODO: 按真实额度扣减端点校准
     for name, clock, jp, sp, _ in CASES:
         print(f"\n---- 用例 {name} @ {clock} ----")
         body = {"tenantId": args.tenant, "amount": 1, "clockOverride": clock, "idempotencyKey": f"b4-{name}"}
@@ -134,8 +134,8 @@ def run(args: argparse.Namespace) -> int:
                 if not ok:
                     errors += 1
         # TODO: 真实实现需查 MySQL budget_ledger：
-        #   SELECT period, count(*), sum(used) FROM budget_ledger WHERE tenant_id=%s GROUP BY period
-        #   断言恰好 1 行、period == jp、sum(used) <= quota、无重复计费。
+        # SELECT period, count(*), sum(used) FROM budget_ledger WHERE tenant_id=%s GROUP BY period
+        # 断言恰好 1 行、period == jp、sum(used) <= quota、无重复计费。
         row = {
             "case": name, "clock": clock, "expected_java_period": jp, "expected_sql_period": sp,
             "requests": len(lat), "error_rate": round(errors / (len(lat) or 1), 4),
@@ -150,7 +150,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="AgentFlow 批次4 月度额度跨月窗口压测骨架（默认 dry-run）")
+    p = argparse.ArgumentParser(description="AgentFlow 月度额度跨月窗口压测骨架（默认 dry-run）")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--base-url", default="http://127.0.0.1:8080")
     p.add_argument("--dsn", default="")

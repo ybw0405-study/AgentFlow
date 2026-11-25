@@ -15,9 +15,9 @@ SCRIPTS = Path(__file__).resolve().parent
 ROOT = SCRIPTS.parent
 sys.path.insert(0, str(SCRIPTS))
 
-import check_cross_table_consistency as consistency  # noqa: E402
-import check_migration_table_options as table_opts  # noqa: E402
-import check_migrations_idempotent as idem  # noqa: E402
+import check_cross_table_consistency as consistency # noqa: E402
+import check_migration_table_options as table_opts # noqa: E402
+import check_migrations_idempotent as idem # noqa: E402
 
 
 # ---- CREATE TABLE 选项守卫 ----
@@ -38,9 +38,9 @@ CREATE TABLE t (
 @pytest.mark.parametrize(
     "bad",
     [
-        "CREATE TABLE t (id CHAR(36));",  # 三项全缺
-        "CREATE TABLE t (id CHAR(36)) ENGINE=InnoDB;",  # 缺 CHARSET/COLLATE
-        "CREATE TABLE t (id CHAR(36)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",  # 缺 COLLATE
+        "CREATE TABLE t (id CHAR(36));", # 三项全缺
+        "CREATE TABLE t (id CHAR(36)) ENGINE=InnoDB;", # 缺 CHARSET/COLLATE
+        "CREATE TABLE t (id CHAR(36)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", # 缺 COLLATE
     ],
 )
 def test_table_options_rejects_missing_options(bad):

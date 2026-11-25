@@ -1,9 +1,9 @@
 """CLI 入口（engine-api 目录下运行）：
 
-python -m app.eval                     # 跑离线场景并打印报告
-python -m app.eval --check-baseline    # 与入库基线比对，漂移退出 1（CI 门禁）
-python -m app.eval --update-baseline   # 语义有意变更后刷新基线，随 PR 提交
-python -m app.eval --live --report eval-live-report.json   # nightly 真模型冒烟 + judge
+python -m app.eval # 跑离线场景并打印报告
+python -m app.eval --check-baseline # 与入库基线比对，漂移退出 1（CI 门禁）
+python -m app.eval --update-baseline # 语义有意变更后刷新基线，随 PR 提交
+python -m app.eval --live --report eval-live-report.json # nightly 真模型冒烟 + judge
 """
 
 from __future__ import annotations
@@ -70,19 +70,19 @@ def main(argv: list[str] | None = None) -> int:
             print("基线漂移：", file=sys.stderr)
             if version_mismatch:
                 print(
-                    f"  - version: 基线 {baseline.get('version')} != 当前 {report['version']}",
+                    f" - version: 基线 {baseline.get('version')} != 当前 {report['version']}",
                     file=sys.stderr,
                 )
             for name in drifted:
-                print(f"  - {name}", file=sys.stderr)
+                print(f" - {name}", file=sys.stderr)
                 expected = baseline.get("scenarios", {}).get(name)
                 actual = report["scenarios"].get(name)
                 print(
-                    "    基线 " + json.dumps(expected, ensure_ascii=False, sort_keys=True),
+                    " 基线 " + json.dumps(expected, ensure_ascii=False, sort_keys=True),
                     file=sys.stderr,
                 )
                 print(
-                    "    当前 " + json.dumps(actual, ensure_ascii=False, sort_keys=True),
+                    " 当前 " + json.dumps(actual, ensure_ascii=False, sort_keys=True),
                     file=sys.stderr,
                 )
             return 1

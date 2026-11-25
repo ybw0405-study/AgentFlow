@@ -34,7 +34,7 @@ from .nodes import build_executors
 from .observability.logging import setup_logging
 from .observability.trace import current_trace_id, extract_trace_id
 from .observability.tracing import setup_tracing, shutdown_tracing
-from .rag import KnowledgeVectorStore, OpenAIEmbeddingProvider
+from .rag import KnowledgeVectorStore, OpenAIEmbeddingProvider, OpenAIRerankProvider
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             embedding_provider=OpenAIEmbeddingProvider.from_settings(settings),
             vector_store=KnowledgeVectorStore(store.pool),
             index_cap=settings.retrieval_index_cap,
+            reranker=OpenAIRerankProvider.from_settings(settings),
+            rerank_timeout_s=settings.rerank_timeout_ms / 1000.0,
+            rerank_candidate_factor=settings.rerank_candidate_factor,
         )
         dispatcher = Dispatcher(settings, store, event_log, redis, executors, budget)
         app.state.settings = settings
@@ -104,7 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.event_log = event_log
         app.state.dispatcher = dispatcher
         app.state.llm_provider = real_llm  # /internal/llm/models 读模型清单
-        await dispatcher.recover_on_startup()  # D4：崩溃恢复扫描
+        await dispatcher.recover_on_startup()  # 崩溃恢复扫描
         dispatcher.start_sweep()  # 周期兜底
         dispatcher.start_gate_sweeper()  # human_gate 超时自动裁决
         # 裁决的 MQ 通道：与控制面 HTTP 回调并行，用于引擎「被隔离/控制面重启中」时仍能续跑

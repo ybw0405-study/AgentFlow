@@ -1,6 +1,6 @@
-"""E2E-1（P0 验收主链路）：创建 → 草稿 → 冻结 → 发布 → 执行 → 逐节点输出 + token。
+"""E2E（验收主链路）：创建 → 草稿 → 冻结 → 发布 → 执行 → 逐节点输出 + token。
 
-含 PII 变量入参：节点 I/O 中必须只见 [PHONE] 不见原文（US-05 双层脱敏）。
+含 PII 变量入参：节点 I/O 中必须只见 [PHONE] 不见原文（双层脱敏）。
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def test_full_lifecycle(client, editor_token, admin_token):
 
     resp = client.post(f"/api/v1/workflows/{wf_id}/publish",
                        json={"versionId": version_id},
-                       headers=headers(admin_token, SPACE_A))  # 发布须 ADMIN
+                       headers=headers(admin_token, SPACE_A)) # 发布须 ADMIN
     assert resp.status_code == 200, resp.text
 
     # 4. 触发（变量含手机号，验证双层脱敏）

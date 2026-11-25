@@ -49,4 +49,4 @@ def test_me_lists_inherited_spaces_for_space_switcher(client):
     assert resp.status_code == 200, resp.text
     spaces = {m["tenantId"]: m["role"] for m in resp.json()["data"]["memberships"]}
     assert SPACE_A in spaces and SPACE_B in spaces
-    assert spaces[SPACE_A] == "ADMIN"      # 继承时 OWNER→ADMIN，显式 ADMIN 保持
+    assert spaces[SPACE_A] == "ADMIN" # 继承时 OWNER→ADMIN，显式 ADMIN 保持

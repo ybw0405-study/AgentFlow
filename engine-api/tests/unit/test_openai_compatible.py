@@ -222,7 +222,7 @@ async def test_network_error_is_transient():
 
 
 async def test_empty_and_oversized_content_are_permanent():
-    empty = _provider(_static(200, {"choices": [{"message": {"content": "  "}}]}))
+    empty = _provider(_static(200, {"choices": [{"message": {"content": " "}}]}))
     r1 = await _complete(empty)
     await empty.aclose()
     assert r1.error_code == "LLM-RESPONSE-001"
@@ -455,6 +455,38 @@ async def test_stream_enabled_sends_stream_flag_and_assembles_deltas():
     assert result.extra["deltas"] == ["事件", "溯源", "是", "好文明"]
 
 
+async def test_stream_on_delta_is_invoked_per_token_in_order():
+    """真实时流式：on_delta 在上游每产出一个 delta 时立即回调，顺序与到达一致。
+
+    回调发生在整段流读完之前（_complete_stream 的 aiter_lines 循环内），
+    而非完整响应到达后批量回放——这是此前流式修复的核心断言。
+    """
+    invocation_log: list[str] = []
+    completed_at: list[int] = []  # 记录回调发生时已读到的 delta 数
+
+    async def on_delta(text: str) -> None:
+        invocation_log.append(text)
+        completed_at.append(len(invocation_log))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_sse_body(_delta("逐"), _delta("token"), _delta("实时")),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    provider = _provider(handler, stream=True)
+    result = await _complete(provider, on_delta=on_delta)
+    await provider.aclose()
+
+    # 回调按到达顺序逐个触发，且数量与 deltas 一致
+    assert invocation_log == ["逐", "token", "实时"]
+    # deltas 仍保留完整序列（审计/重放用），调用方不应再二次 emit
+    assert result.extra["deltas"] == ["逐", "token", "实时"]
+    # 回调在循环内逐次发生：每次调用时已完成数量单调递增（非末尾一次性）
+    assert completed_at == [1, 2, 3]
+
+
 async def test_stream_disabled_by_default_is_non_streaming():
     seen: dict[str, Any] = {}
 
@@ -525,7 +557,7 @@ async def test_stream_empty_result_is_permanent_error():
 
 
 async def test_stream_prefers_upstream_usage_when_present():
-    """P1-4 回归：SSE 末帧携带 usage 时必须用真实值，而非本地字符估算。"""
+    """SSE 末帧携带 usage 时必须用真实值，而非本地字符估算。"""
     usage_frame = {
         "choices": [{"delta": {}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},

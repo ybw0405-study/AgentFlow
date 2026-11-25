@@ -1,4 +1,4 @@
-"""E2E-2：DSL 有环 → 422 DSL-CYCLE-001（US-03 环检测）。"""
+"""E2E：DSL 有环 → 422 DSL-CYCLE-001（环检测）。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def test_cycle_rejected_with_422(client, editor_token):
     wf_id = resp.json()["data"]["id"]
 
     dsl = copy.deepcopy(DEMO_DSL)
-    dsl["edges"].append({"from": "final", "to": "draft"})  # draft→final→draft
+    dsl["edges"].append({"from": "final", "to": "draft"}) # draft→final→draft
 
     resp = client.put(f"/api/v1/workflows/{wf_id}/draft", json=dsl, headers=hdrs)
     assert resp.status_code == 422, resp.text

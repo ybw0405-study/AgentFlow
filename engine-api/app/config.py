@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     pg_dsn: str = "postgresql://agentflow:agentflow@127.0.0.1:5433/agentflow_events"
     redis_url: str = "redis://127.0.0.1:6379/0"
     # 出站回调控制面用的共享令牌（gateway / workflow-service / connector-service 认它）。
-    internal_token: str = "dev-internal-token"  # noqa: S105  # 本地默认值；部署必须经 AF_INTERNAL_TOKEN 覆盖
+    internal_token: str = "dev-internal-token"  # noqa: S105 # 本地默认值；部署必须经 AF_INTERNAL_TOKEN 覆盖
     # 入站 /internal/** 专用凭据。网关转发时会**剥离客户端的 X-Internal-Token**
     # 并注入这个值；客户端即使持有控制面令牌也无法直连引擎的全局事件/执行接口。
     # 未显式配置时回退 AF_INTERNAL_TOKEN，保证本地 dev 与现有部署零改动；生产模式
@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     embedding_timeout_ms: int = 10000
     # 单次请求懒索引的切片上限（超出明确拒绝，不静默截断）
     retrieval_index_cap: int = 2000
+    # rerank 精排（retrieval 节点 rerank=true 时启用）：OpenAI 兼容 /rerank 端点。
+    # 未配置时 rerank=true 明确报 RERANK-NOT_CONFIGURED-001，不静默回退到融合次序。
+    rerank_base_url: str = ""
+    rerank_api_key: str = ""
+    rerank_model: str = "bge-reranker-v2-m3"
+    rerank_timeout_ms: int = 5000
+    # rerank 前召回的候选放大因子：先取 top_k * factor 个候选再精排截断，
+    # 让 rerank 能从更大范围捞回被向量/词法排序误杀的块。
+    rerank_candidate_factor: int = 3
     mq_gate_topic: str = "af-gate-decision"
     mq_gate_group: str = "af-engine-gate-consumer"
     mq_poll_timeout_ms: int = 3_000
@@ -79,12 +88,12 @@ class Settings(BaseSettings):
     lease_ttl_ms: int = 30_000  # 执行租约 TTL
     lease_renew_ms: int = 10_000  # 续约间隔
     # Redis TCP 半开防护：socket 级超时防止单次调用永久阻塞；
-    # 关停 drain 上限防止某个在途任务卡死整个 lifespan 收尾（B4）。
+    # 关停 drain 上限防止某个在途任务卡死整个 lifespan 收尾。
     redis_socket_timeout_s: float = 2.0
     redis_socket_connect_timeout_s: float = 2.0
     shutdown_drain_timeout_s: float = 15.0
     health_probe_timeout_s: float = 1.0  # readiness 单次依赖探测超时
-    event_payload_max_bytes: int = 256 * 1024  # 溢出转 node_io（D5）
+    event_payload_max_bytes: int = 256 * 1024  # 溢出转 node_io
     default_max_parallelism: int = 4
     event_tail_max_limit: int = 500
 

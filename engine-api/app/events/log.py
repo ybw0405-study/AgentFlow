@@ -30,7 +30,7 @@ class EventLog:
     ) -> Event:
         event = await self._store.append(execution_id, event_type, payload, node_key=node_key)
         if apply is not None:
-            # 溢出（D5）时 store 落库的是 {"_overflow": ...} 引用、完整内容转存
+            # 溢出时 store 落库的是 {"_overflow": ...} 引用、完整内容转存
             # node_io(OUT)。内存聚合必须按原始 payload 折叠，否则 NODE_COMPLETED
             # 的 output 变 None，下游 {{ nodes.xxx.output }} 当场断链。对外发布仍
             # 用落库事件形态（引用），订阅方按 _overflow 自行取 node_io。

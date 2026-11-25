@@ -42,9 +42,11 @@ public class KnowledgeService {
     private static final double SCORE_SCALE = 3.0;
 
     private final KnowledgeMapper mapper;
+    private final DocumentParser parser;
 
-    public KnowledgeService(KnowledgeMapper mapper) {
+    public KnowledgeService(KnowledgeMapper mapper, DocumentParser parser) {
         this.mapper = mapper;
+        this.parser = parser;
     }
 
     // ---------- 知识库 ----------
@@ -88,6 +90,26 @@ public class KnowledgeService {
         if (text.isEmpty()) {
             throw invalid("文档内容不能为空");
         }
+        String safeSource = source == null || source.isBlank() ? "TEXT" : source.trim();
+        return insertDocument(tenant, kbId, title, safeSource, text);
+    }
+
+    /** 文件导入：解析 PDF/Office 提取正文后走与文本导入同一套切片 + 落库。 */
+    @Transactional
+    public DocumentDto addDocumentFromFile(TenantInfo tenant, String kbId, String title,
+                                           String filename, byte[] bytes) {
+        requireEditor(tenant);
+        requireBase(tenant.tenantId(), kbId);
+        DocumentParser.ParsedDocument parsed = parser.parse(filename, bytes);
+        String text = normalise(parsed.text());
+        if (text.isBlank()) {
+            throw invalid("未从文件提取到文本：扫描件/图片型 PDF 请先 OCR 转文本再导入");
+        }
+        return insertDocument(tenant, kbId, title, parsed.source(), text);
+    }
+
+    private DocumentDto insertDocument(TenantInfo tenant, String kbId, String title,
+                                       String source, String text) {
         if (text.length() > MAX_DOCUMENT_CHARS) {
             throw invalid("文档超过 " + MAX_DOCUMENT_CHARS + " 字符，请拆分后再导入");
         }
@@ -97,16 +119,15 @@ public class KnowledgeService {
         }
         String docId = UUID.randomUUID().toString();
         String safeTitle = title == null || title.isBlank() ? "未命名文档" : title.trim();
-        String safeSource = source == null || source.isBlank() ? "TEXT" : source.trim();
         mapper.insertDocument(new KnowledgeMapper.DocumentRow(docId, tenant.tenantId(), kbId,
-                safeTitle, safeSource, text.length(), chunks.size(), tenant.userId(), null));
+                safeTitle, source, text.length(), chunks.size(), tenant.userId(), null));
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             mapper.insertChunk(new KnowledgeMapper.ChunkRow(UUID.randomUUID().toString(),
                     tenant.tenantId(), kbId, docId, i, safeTitle, chunk,
                     tokenize(chunk).size()));
         }
-        return new DocumentDto(docId, kbId, safeTitle, safeSource, text.length(),
+        return new DocumentDto(docId, kbId, safeTitle, source, text.length(),
                 chunks.size(), null);
     }
 

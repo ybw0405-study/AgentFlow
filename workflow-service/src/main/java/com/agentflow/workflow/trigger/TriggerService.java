@@ -67,8 +67,10 @@ public class TriggerService {
     private static final int MAX_CATCHUP_SLOTS = 20;
     /** 超过 1 分钟就算补偿跑，落审计时带上延迟秒数。 */
     private static final long LATE_THRESHOLD_SECONDS = 60;
-    private static final DateTimeFormatter SLOT_FORMAT =
+    private static final DateTimeFormatter MINUTE_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter SECOND_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final WorkflowTriggerMapper triggers;
     private final WorkflowDefinitionMapper definitions;
@@ -77,7 +79,7 @@ public class TriggerService {
     private final StringRedisTemplate redis;
     private final ObjectMapper json = new ObjectMapper();
     private final SecureRandom random = new SecureRandom();
-    /** 触发器默认时区（ARCH-6）：生产由配置注入，单测 new 时保持历史默认值兼容。 */
+    /** 触发器默认时区：生产由配置注入，单测 new 时保持历史默认值兼容。 */
     @Value("${agentflow.trigger.default-timezone:Asia/Shanghai}")
     private String defaultTimezone = "Asia/Shanghai";
 
@@ -104,7 +106,7 @@ public class TriggerService {
      */
     /**
      * 触发器视图。{@code secret} 仅在 create/rotate 的一次性响应里回明文，其余端点为 null；
-     * {@code hasSecret} 告诉前端「密钥已设置，需轮换才能再次查看」（SEC-3）。
+     * {@code hasSecret} 告诉前端「密钥已设置，需轮换才能再次查看」。
      */
     public record TriggerView(String id, String type, String token, String secret,
                               boolean hasSecret, String cron,
@@ -274,7 +276,7 @@ public class TriggerService {
     public FireResult fireSchedule(WorkflowTriggerMapper.Row row, Instant now, Instant slot,
                                    int skipped) {
         Objects.requireNonNull(slot, "slot");
-        String slotStamp = minuteOf(row.timezone(), slot);
+        String slotStamp = slotOf(row.timezone(), slot, isSubMinute(row.cronExpr()));
         long lateSeconds = Math.max(0, Duration.between(slot, now).getSeconds());
         var result = executions.triggerFromExternal(row.tenantId(), "system:schedule",
                 row.definitionId(), row.versionId(),
@@ -305,7 +307,7 @@ public class TriggerService {
     public void skipMissed(WorkflowTriggerMapper.Row row, Instant now, SlotPlan plan) {
         Instant latest = plan.consumeTo();
         Objects.requireNonNull(latest, "consumeTo");
-        String slotStamp = minuteOf(row.timezone(), latest);
+        String slotStamp = slotOf(row.timezone(), latest, isSubMinute(row.cronExpr()));
         triggers.markSkipped(row.id(), Timestamp.from(latest));
         audit.publish(AuditMessage.of(row.tenantId(), null, "system:schedule", "TRIGGER_SKIPPED",
                 Map.of("triggerId", row.id(), "type", "SCHEDULE",
@@ -381,13 +383,45 @@ public class TriggerService {
     }
 
     /**
-     * 抢占本分钟的触发权：多副本同时扫描时只有一个真正派发。
+     * 幂等键里的「档位串」：秒级 cron 精确到秒，分钟级 cron 仍截到分钟。
      *
-     * <p>这不是正确性的唯一保障——幂等键（触发器 + 分钟）才是；它只是省掉重复派发与重复
-     * 审计。Redis 不可用时 fail-open（返回 true），漏跑的代价远大于多试一次。
+     * <p>分钟级 cron 的档位本来就在整分上，截到分钟与截到秒结果一致（整分的
+     * {@code LocalDateTime.toString()} 不带秒）；秒级 cron 必须带秒，否则同一分钟内的多个
+     * 档位会撞出同一个幂等键，账面只剩一条执行。两个副本在不同秒扫到同一档位时，档位串
+     * 相同，仍指向同一条执行。
+     */
+    static String slotOf(String timezone, Instant slot, boolean subMinute) {
+        ZonedDateTime zdt = ZonedDateTime.ofInstant(slot, ZoneId.of(timezone));
+        return subMinute ? zdt.truncatedTo(ChronoUnit.SECONDS).toLocalDateTime().toString()
+                : minuteOf(timezone, slot);
+    }
+
+    /**
+     * cron 是否秒级触发：6 段且秒位非 {@code 0}。
+     *
+     * <p>5 段写法归一到秒位 {@code 0}，视为分钟级；6 段里秒位是 {@code 0} 也仍是分钟级。
+     * 秒位只要是「每 5 秒一档」「第 30 秒」这类 0 之外的写法，都按秒级处理——
+     * 幂等键与 claim 精确到秒，不会把同分钟内的不同档位吞掉。
+     */
+    static boolean isSubMinute(String cronExpr) {
+        if (cronExpr == null || cronExpr.isBlank()) {
+            return false;
+        }
+        String[] parts = cronExpr.trim().split("\\s+");
+        return parts.length == 6 && !"0".equals(parts[0]);
+    }
+
+    /**
+     * 抢占本次扫描的触发权：多副本同时扫描时只有一个真正派发。
+     *
+     * <p>键精确到秒而不是分钟：分钟级 claim 会让秒级 cron 在同一分钟内被第一个副本
+     * claim 后、接下来 2 分钟（{@link #CLAIM_TTL}）整条触发器都不再派发，秒档位被静默吞掉。
+     * 秒级键下这只是「尽力而为」的优化——正确性仍由幂等键（触发器 + 档位）保证，两个副本
+     * 跨秒扫到同一档位时，后者走幂等回放而不是再跑一遍。Redis 不可用时 fail-open（返回 true），
+     * 漏跑的代价远大于多试一次。
      */
     public boolean claimFire(String triggerId, Instant now) {
-        String key = "af:sched:claim:" + triggerId + ":" + (now.getEpochSecond() / 60);
+        String key = "af:sched:claim:" + triggerId + ":" + now.getEpochSecond();
         try {
             return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key, "1", CLAIM_TTL));
         } catch (Exception e) {
@@ -495,12 +529,14 @@ public class TriggerService {
             return times;
         }
         ZonedDateTime cursor = from.atZone(zone);
+        boolean subMinute = isSubMinute(cron);
+        DateTimeFormatter format = subMinute ? SECOND_FORMAT : MINUTE_FORMAT;
         for (int i = 0; i < count; i++) {
             ZonedDateTime next = expression.next(cursor);
             if (next == null) {
                 break;
             }
-            times.add(SLOT_FORMAT.format(next));
+            times.add(format.format(next));
             cursor = next;
         }
         return times;
@@ -550,7 +586,7 @@ public class TriggerService {
             return;
         }
         // 带签名必须带时间戳，且时间戳参与 HMAC：否则抓包后去掉 X-AF-Timestamp
-        // 即可绕过 300s 防重放窗口，同一签名永久有效（P1-8）。
+        // 即可绕过 300s 防重放窗口，同一签名永久有效。
         if (timestampHeader == null || timestampHeader.isBlank()) {
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001,
                     "X-AF-Timestamp is required when a signature is provided");
@@ -595,8 +631,10 @@ public class TriggerService {
     /**
      * 接受 5 段（分 时 日 月 周）与 6 段（含秒）两种写法，统一按 6 段解析。
      *
-     * <p>秒位必须固定为 {@code 0}：调度器每 30 秒扫一轮、claim 与幂等键都到分钟，秒级 cron
-     * 里的第二个档位会被静默吞掉一层——与其「配了但只跑一半」，不如在这里直接拒绝。
+     * <p>秒位非 0 即秒级触发：幂等键与 claim 都精确到秒（见 {@link #slotOf} 与
+     * {@link #claimFire}）。准点精度仍受扫描间隔（{@code agentflow.trigger.poll-interval-ms}）
+     * 约束——落在同一次扫描间隔内的多个秒档位会被一次性补回，而不是毫秒级实时；
+     * 需要更密准点时把扫描间隔调小即可，与「分钟粒度的有界补偿」是同一套机制。
      */
     private static String requireCron(String cron) {
         if (cron == null || cron.isBlank()) {
@@ -605,12 +643,6 @@ public class TriggerService {
         String normalized = cron.trim().replaceAll("\\s+", " ");
         if (normalized.split(" ").length == 5) {
             normalized = "0 " + normalized;
-        }
-        String seconds = normalized.split(" ")[0];
-        if (!"0".equals(seconds)) {
-            throw new BusinessException(ErrorCode.WF_STATE_001,
-                    "trigger granularity is one minute: cron seconds field must be 0, got "
-                            + seconds);
         }
         try {
             parseCron(normalized);
@@ -659,15 +691,17 @@ public class TriggerService {
                 readJsonObject(row.variablesJson()),
                 row.versionId(),
                 row.lastFiredAt() == null ? null : row.lastFiredAt().toInstant().toString(),
-                row.lastSlotAt() == null ? null : slotText(row.timezone(), row.lastSlotAt()),
+                row.lastSlotAt() == null ? null
+                        : slotText(row.timezone(), row.lastSlotAt(), isSubMinute(row.cronExpr())),
                 row.lastOutcome(),
                 next.isEmpty() ? null : next.get(0), next,
                 row.createdAt() == null ? null : row.createdAt().toInstant().toString());
     }
 
     /** 档位按触发器时区渲染：它本来就是墙钟，换算成浏览器时区反而看不懂。 */
-    private static String slotText(String timezone, Timestamp slot) {
-        return SLOT_FORMAT.format(slot.toInstant().atZone(ZoneId.of(timezone)));
+    private static String slotText(String timezone, Timestamp slot, boolean subMinute) {
+        return (subMinute ? SECOND_FORMAT : MINUTE_FORMAT)
+                .format(slot.toInstant().atZone(ZoneId.of(timezone)));
     }
 
     private String writeJson(Map<String, Object> value) {

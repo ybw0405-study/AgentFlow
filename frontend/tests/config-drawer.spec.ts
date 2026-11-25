@@ -197,7 +197,9 @@ describe('节点配置抽屉', () => {
     expect(wrapper.text()).toContain('售后手册')
     expect(wrapper.text()).toContain('真实检索')
     const boxes = wrapper.findAll('input[type="checkbox"]')
-    expect(boxes).toHaveLength(2)
+    // 2 个知识库 + 1 个 rerank 精排开关（rerank 排在知识库列表之后）
+    expect(boxes).toHaveLength(3)
+    expect((boxes[2].element as HTMLInputElement).checked).toBe(false)
     expect((boxes[0].element as HTMLInputElement).checked).toBe(true)
     await boxes[1].setValue(true)
     const emitted = wrapper.emitted('update')?.at(-1)?.[0] as { config: Record<string, unknown> }

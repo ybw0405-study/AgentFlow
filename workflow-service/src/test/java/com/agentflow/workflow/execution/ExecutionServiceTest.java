@@ -44,7 +44,7 @@ class ExecutionServiceTest {
         versions = Mockito.mock(WorkflowVersionMapper.class);
         engine = Mockito.mock(EngineGatewayClient.class);
         audit = Mockito.mock(AuditPublisher.class);
-        CanaryService canary = Mockito.mock(CanaryService.class);  // route() 默认 null → 走 current
+        CanaryService canary = Mockito.mock(CanaryService.class); // route() 默认 null → 走 current
         usage = Mockito.mock(UsageService.class);
         // 用真实的 claimer 接同一组 mock mapper：既保留 insert/countActive 的断言，
         // 又实际覆盖短事务领取逻辑（lock → 重查幂等 → count → insert）。
@@ -76,7 +76,7 @@ class ExecutionServiceTest {
 
     @Test
     void idempotentReplayReturnsExistingWithoutDispatch() {
-        givenDefinitionAndVersion();  // 定义存在是前置校验
+        givenDefinitionAndVersion(); // 定义存在是前置校验
         when(executions.findByIdempotency("space-1", "idem-12345678"))
                 .thenReturn(new WorkflowExecutionMapper.ExecutionRow(
                         7L, "exec-existing", "d1", "v1", "space-1", "user-1", "RUNNING",
@@ -233,7 +233,7 @@ class ExecutionServiceTest {
     @Test
     void claimerReplaysSameKeyInsertedWhileWaitingForLock() {
         // 等锁期间同幂等键已被插入：claimer 锁内重查幂等命中，不得重复 insert/派发。
-        givenDefinitionAndVersion();  // maxConcurrent=0
+        givenDefinitionAndVersion(); // maxConcurrent=0
         var existing = new WorkflowExecutionMapper.ExecutionRow(
                 7L, "exec-other", "d1", "v1", "space-1", "user-1", "PENDING",
                 "idem-12345678", "t", 8000, 30, null, 0, 0, null, null, null, null);

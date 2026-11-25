@@ -1,4 +1,4 @@
-"""派发器：单执行单活跃执行器（租约）+ 崩溃恢复扫描（D4）。
+"""派发器：单执行单活跃执行器（租约）+ 崩溃恢复扫描。
 
 恢复链路：execution_spec 表使引擎自足（不读业务库）；启动扫描 +
 周期扫描双保险；租约 TTL 到期后接管；重放不重复执行已完成节点。
@@ -35,7 +35,7 @@ from .state import ExecutionState
 
 logger = logging.getLogger(__name__)
 
-# 关停 / 故障清理（B4）：finally 里的续约循环与租约释放必须带超时，
+# 关停 / 故障清理：finally 里的续约循环与租约释放必须带超时，
 # Redis TCP 半开时它们既不抛也不返回，无条件 await 会让 _run 永久卡在收尾。
 _CLEANUP_AWAIT_TIMEOUT_S = 3.0
 
@@ -67,7 +67,7 @@ class Dispatcher:
     async def submit(self, req: ExecuteRequest) -> dict[str, Any]:
         if self._stopping:
             # 关停中不再接收新派发：不建任务、不落事件，避免收尾窗口里又冒出
-            # 一个会撞上已关闭连接池的执行（B4 第一级）。
+            # 一个会撞上已关闭连接池的执行（第一级）。
             return {
                 "executionId": str(req.execution_id),
                 "status": "SHUTTING_DOWN",
@@ -205,7 +205,7 @@ class Dispatcher:
             if status != "LEASE_LOST":
                 EXECUTION_TOTAL.labels(status=status.lower()).inc()
         except Exception:
-            # 不吞异常也不落事件：事件库保持 OPEN，恢复扫描会接管（D4）
+            # 不吞异常也不落事件：事件库保持 OPEN，恢复扫描会接管
             logger.exception("execution %s worker crashed", req.execution_id)
         finally:
             renew_stop.set()
@@ -251,6 +251,22 @@ class Dispatcher:
                 except Exception as exc:
                     logger.warning("budget rebuild on lease loss failed: %s", exc)
                 return
+            try:
+                cancelled = await self._redis.get(f"af:cancel:{state.execution_id}")
+            except Exception:
+                cancelled = None  # 查询失败不误伤：节点边界的取消检查仍是兜底
+            if cancelled:
+                # 取消不再等当前节点跑完才生效：硬中断在途外呼（120s 的 LLM 调用
+                # 也立刻停），调度器把 CancelledError 转成与节点边界取消一致的
+                # CANCELLED 终态（scheduler.run 捕获后落 EXECUTION_CANCELLED）。
+                task = self._tasks.get(state.execution_id)
+                if task is not None and not task.done():
+                    logger.info(
+                        "cancel flag seen in renew loop for %s; interrupting in-flight node",
+                        state.execution_id,
+                    )
+                    task.cancel()
+                return
 
     async def cancel(self, execution_id: uuid.UUID) -> dict[str, Any]:
         try:
@@ -289,7 +305,7 @@ class Dispatcher:
         return {"ok": True, "status": "CANCELLING"}
 
     async def recover_on_startup(self) -> None:
-        """D4：扫描未达终态的执行并接管续跑。"""
+        """扫描未达终态的执行并接管续跑。"""
         try:
             open_ids = await self._store.open_executions()
         except Exception:
@@ -534,7 +550,7 @@ class Dispatcher:
         self._sweep_task = asyncio.create_task(loop())
 
     async def shutdown(self) -> None:
-        """三级收口（B4 / 不变量 I6）：停止接收 → drain 在途 → 停后台 → 调用方关连接池。
+        """三级收口：停止接收 → drain 在途 → 停后台 → 调用方关连接池。
 
         main 的 lifespan 在 store.close()/redis.aclose() 之前调用它；_tasks 里的
         执行与续约循环必须先全部结束，否则下一个事件写入会撞已关闭的连接池，

@@ -104,7 +104,7 @@ async def test_api_tail_events_forwards_space_id(settings, mem_store):
         global_page = await client.get("/internal/events", headers=headers)
         assert len(global_page.json()["events"]) == 2
 
-        blank = await client.get("/internal/events", params={"spaceId": "   "}, headers=headers)
+        blank = await client.get("/internal/events", params={"spaceId": " "}, headers=headers)
         assert blank.status_code == 200
         assert len(blank.json()["events"]) == 2  # 空白 spaceId 视为未指定
 

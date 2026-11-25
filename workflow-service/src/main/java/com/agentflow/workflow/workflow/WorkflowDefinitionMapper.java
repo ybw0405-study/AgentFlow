@@ -77,7 +77,7 @@ public interface WorkflowDefinitionMapper {
 
     @Update("UPDATE workflow_definition"
             + " SET draft_dsl = #{draftDsl}, draft_checksum = #{checksum},"
-            + "     draft_updated_at = NOW(3)"
+            + " draft_updated_at = NOW(3)"
             + " WHERE id = #{id} AND tenant_id = #{tenantId} AND deleted_at IS NULL")
     int updateDraft(@Param("id") String id, @Param("tenantId") String tenantId,
                     @Param("draftDsl") String draftDsl, @Param("checksum") String checksum);

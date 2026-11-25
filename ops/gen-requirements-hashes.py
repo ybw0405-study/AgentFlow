@@ -2,8 +2,8 @@
 """为 engine-api/requirements.lock.txt 补真实 --hash（G15，可复现脚本）。
 
 用法（仓库根目录）：
-    python ops/gen-requirements-hashes.py            # 重新生成带 hash 的锁文件
-    python ops/gen-requirements-hashes.py --check   # 只校验现有锁文件，不写回
+    python ops/gen-requirements-hashes.py # 重新生成带 hash 的锁文件
+    python ops/gen-requirements-hashes.py --check # 只校验现有锁文件，不写回
 
 哈希来源：https://pypi.org/pypi/<name>/<version>/json 的 urls[].digests.sha256，
 覆盖该版本在 PyPI 上的**全部**发行文件（各平台 wheel + sdist），
@@ -32,7 +32,7 @@ PIN_RE = re.compile(r"^([A-Za-z0-9_.\-]+)\s*==\s*([^\s;]+)\s*(;.*)?$")
 HEADER = """# AgentFlow engine-api 依赖锁文件（G15：精确版本 + 真实 --hash）
 # 由 ops/gen-requirements-hashes.py 生成；hash 取自 PyPI JSON API，
 # 覆盖对应版本的全部发行文件。请勿手工编辑；重新生成：
-#     python ops/gen-requirements-hashes.py
+# python ops/gen-requirements-hashes.py
 # CI 用 `pip install --require-hashes -r requirements.lock.txt` 离线可复现安装，
 # 项目本体再以 `pip install --no-deps -e .` 单独安装（--require-hashes 不接受 -e）。
 # 校验：python ops/gen-requirements-hashes.py --check
@@ -80,7 +80,7 @@ def render(pins: list[tuple[str, str, str]]) -> str:
         lines.append(f"{name}=={version}{suffix} \\")
         for index, digest in enumerate(hashes):
             tail = " \\" if index < len(hashes) - 1 else ""
-            lines.append(f"    --hash=sha256:{digest}{tail}")
+            lines.append(f" --hash=sha256:{digest}{tail}")
     return "\n".join(lines) + "\n"
 
 

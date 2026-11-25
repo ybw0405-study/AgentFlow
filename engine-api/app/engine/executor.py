@@ -93,6 +93,24 @@ class NodeRunner:
             retryable = False
         max_attempts = retry.max_attempts if retryable else 1
         timeout_ms = node.timeout_ms or dsl.defaults.timeout_ms
+        # 崩溃恢复重放时从事件折叠恢复 attempt 计数：上一个 attempt 已开始但未
+        # 到终态，重放从 attempt+1 继续，保证 (node, attempt) 生命周期不重号。
+        # 首次执行时无折叠记录（attempt=0），从 1 开始。恢复尝试若已越过
+        # max_attempts，允许恰好一次额外尝试以保证收敛（attempt 仍唯一，
+        # 失败时 retry_left 为 False 直接落终态），并对越界记告警。
+        previous = state.nodes.get(node.key)
+        resumed = previous is not None and previous.attempt > 0
+        start_attempt = previous.attempt + 1 if resumed else 1
+        if start_attempt > max_attempts:
+            logger.warning(
+                "node %s execution=%s resumed past retry budget (attempt=%s > %s); "
+                "allowing one recovery try",
+                node.key,
+                execution_id,
+                start_attempt,
+                max_attempts,
+            )
+        last_attempt = max(max_attempts, start_attempt)
 
         async def emit(event_type: str, payload: dict[str, Any], *, node_key: str | None = None):
             ev = await self._event_log.append(
@@ -111,7 +129,11 @@ class NodeRunner:
 
         await emit(
             EventType.NODE_SCHEDULED,
-            {"nodeType": node.type, "attempt": 1, "dependsOn": dag.dependencies_of(node.key)},
+            {
+                "nodeType": node.type,
+                "attempt": start_attempt,
+                "dependsOn": dag.dependencies_of(node.key),
+            },
         )
 
         with node_span(
@@ -124,7 +146,7 @@ class NodeRunner:
                 **({"model": node.config.model} if node.type == "llm" else {}),
             },
         ) as span:
-            for attempt in range(1, max_attempts + 1):
+            for attempt in range(start_attempt, last_attempt + 1):
                 ctx = NodeContext(
                     execution_id=execution_id,
                     node_key=node.key,

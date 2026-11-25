@@ -2,8 +2,8 @@
 
 运行前置：scripts/start-dev.* 已起全栈，或 CI 里已把四个服务拉起来（端口见 SERVICES）。
 用法：
-    python scripts/dump-openapi-java.py            # 刷新基线
-    python scripts/dump-openapi-java.py --check   # 只比对，不一致就 exit 1（CI 用）
+    python scripts/dump-openapi-java.py # 刷新基线
+    python scripts/dump-openapi-java.py --check # 只比对，不一致就 exit 1（CI 用）
 
 为什么需要规范化：springdoc 直接吐出的 spec 里 `servers` 是「按本次请求 Host 生成的
 部署地址」（127.0.0.1:8084 之类），不是 API 契约，换个端口或域名就会让基线整片变红；
@@ -98,7 +98,7 @@ def main() -> int:
         with path.open("r", encoding="utf-8", newline="\n") as handle:
             committed = handle.read()
         if committed == generated:
-            print(f"ok  {path.relative_to(ROOT)}")
+            print(f"ok {path.relative_to(ROOT)}")
             continue
         diff = difflib.unified_diff(
             committed.splitlines(),

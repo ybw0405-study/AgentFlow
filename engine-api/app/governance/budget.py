@@ -1,4 +1,4 @@
-"""预算账本（Redis）：预算硬停止机制 D11。
+"""预算账本（Redis）：预算硬停止机制。
 
 - 发出 Command 前 reserve：remaining<=0 → -1（预算耗尽，禁止发出）；
   否则 grant=min(requested, remaining) 并把该 Command 的 maxTokens 钳到 grant。
@@ -52,7 +52,14 @@ class BudgetLedger:
         return bool(await self._r.exists(self._key(execution_id)))
 
     async def reserve(self, execution_id: uuid.UUID | str, budget: int, requested: int) -> int:
-        """返回实际预占额度；-1 表示预算耗尽。成功预占同时登记一笔在途。"""
+        """返回实际预占额度；-1 表示预算耗尽。成功预占同时登记一笔在途。
+
+        WATCH 冲突重试耗尽后不再按耗尽处理：同执行并行分支多时高冲突是常态，
+        把正常预占打成预算耗尽（假阳性硬停）比短暂的非原子窗口更伤。降级路径
+        用原子 INCRBY 直接加额度（检查-递减竞态窗口只会导致尽力钳制下的轻微
+        超预占，settle 追扣与 reconcile 对账会收敛），与 README「不承诺数学恒定
+        上界」的口径一致。
+        """
         key = self._key(execution_id)
         inflight = self._inflight_key(execution_id)
         async with self._r.pipeline() as pipe:
@@ -74,7 +81,28 @@ class BudgetLedger:
                     return grant
                 except WatchError:
                     continue
-        return -1  # 冲突过多时按耗尽处理（保守方向，宁停不超）
+        # WATCH 冲突兜底：原子 INCRBY 不会丢预占，最坏情况超出剩余额度一部分，
+        # 由 settle 追扣/对账收敛；此处绝不返回 -1（那会把正常执行打成硬停）。
+        try:
+            used = int(await self._r.get(key) or 0)
+            grant = min(requested, max(0, budget - used))
+            if grant <= 0:
+                return -1
+            async with self._r.pipeline() as pipe:
+                pipe.incrby(key, grant)
+                pipe.expire(key, BUDGET_KEY_TTL_SECONDS)
+                pipe.incr(inflight)
+                pipe.expire(inflight, INFLIGHT_TTL_SECONDS)
+                await pipe.execute()
+            logger.warning(
+                "budget reserve degraded to non-atomic incrby execution=%s grant=%s",
+                execution_id,
+                grant,
+            )
+            return grant
+        except Exception as exc:
+            logger.error("budget reserve fallback failed execution=%s: %s", execution_id, exc)
+            return -1
 
     async def settle(self, execution_id: uuid.UUID | str, grant: int, actual: int) -> None:
         """结算一笔预占：回冲未用额度，并注销对应的在途登记。
@@ -95,7 +123,7 @@ class BudgetLedger:
                         pipe.decrby(key, refund)
                     elif refund < 0:
                         # 上游实际用量超过预占时追扣：静默放过会让键系统性低估，
-                        # 后续节点继续按虚高余额预占，tokenUsed <= tokenBudget 失守（CON-1）。
+                        # 后续节点继续按虚高余额预占，tokenUsed <= tokenBudget 失守。
                         pipe.incrby(key, -refund)
                     if pending > 0:
                         pipe.decr(inflight)

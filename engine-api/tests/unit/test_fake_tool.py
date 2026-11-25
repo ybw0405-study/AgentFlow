@@ -1,4 +1,4 @@
-"""离线测试连接器：callId 幂等（恰好一次的实现机制，US-04 副作用一次）。"""
+"""离线测试连接器：callId 幂等（恰好一次的实现机制）。"""
 
 from __future__ import annotations
 

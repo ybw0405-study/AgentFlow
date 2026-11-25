@@ -393,7 +393,7 @@ async def test_execution_deadline_times_out(settings, fake_redis, mem_store):
     assert all(e.node_key != "end" for e in events)
 
 
-# ---- Redis 故障路径（P1-6 / P1-7 / C-9 / ARCH-3）----
+# ---- Redis 故障路径----
 
 
 class _ExplodingLease:
@@ -409,7 +409,7 @@ class _ExplodingLease:
 
     async def release(self) -> None:
         # Redis 全挂时 release 同样会抛（而不是静默 return None）：关停测试据此
-        # 验证「清理失败也不能让 _run 卡在 finally / _tasks 残留」（B4）。
+        # 验证「清理失败也不能让 _run 卡在 finally / _tasks 残留」。
         raise RedisConnectionError("redis down")
 
 
@@ -435,7 +435,7 @@ async def test_stop_conditions_redis_error_is_lease_lost(settings, fake_redis, m
 
 @pytest.mark.asyncio
 async def test_redis_unavailable_run_stops_silently(settings, fake_redis, mem_store):
-    """Redis 不可达时按 LeaseLost 静默停止，绝不落 ExecutionFailed 终态（P1-7）。"""
+    """Redis 不可达时按 LeaseLost 静默停止，绝不落 ExecutionFailed 终态。"""
     dispatcher, _, _ = make_stack(settings, fake_redis, mem_store)
     dsl = _dsl(
         [
@@ -482,7 +482,7 @@ async def test_cancel_redis_failure_returns_dependency_error(settings, fake_redi
 
 @pytest.mark.asyncio
 async def test_shutdown_cancels_and_awaits_sweepers(settings, fake_redis, mem_store):
-    """B4：关停必须 drain 真实在跑的 _tasks，之后才允许关闭 store/redis。
+    """关停必须 drain 真实在跑的 _tasks，之后才允许关闭 store/redis。
 
     以前的测试全程 _tasks 为空，恰好绕过了「只停扫描任务、不停执行任务」的缺陷。
     这里注入一个受控的在途任务，并让它的清理阶段踩到「Redis 全挂时 release 也抛」

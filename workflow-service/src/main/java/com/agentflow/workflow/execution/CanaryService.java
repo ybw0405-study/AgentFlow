@@ -70,7 +70,7 @@ public class CanaryService {
     }
 
     /** 灰度分流：未配置或无 versionId 时返回 null（调用方回退 current）；
-     *  返回分流决策（实际版本 id + 是否 canary + percent），供审计。 */
+     * 返回分流决策（实际版本 id + 是否 canary + percent），供审计。 */
     public Decision route(String definitionId, String currentVersionId) {
         Config cfg = read(definitionId);
         if (cfg == null || cfg.percent() == 0) {

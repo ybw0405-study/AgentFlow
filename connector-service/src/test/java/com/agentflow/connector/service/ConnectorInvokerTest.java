@@ -169,7 +169,7 @@ class ConnectorInvokerTest {
 
         assertThat(first.ok()).isTrue();
         assertThat(second.data()).containsEntry("_replayed", true);
-        assertThat(seenApiKey.get()).isNull();   // 没有第二次出网
+        assertThat(seenApiKey.get()).isNull(); // 没有第二次出网
     }
 
     @Test
@@ -197,7 +197,7 @@ class ConnectorInvokerTest {
 
     @Test
     void connectorOutsideCallerTenantChainIsNotFound() throws Exception {
-        // 纵深防御（AF-P2-4）：即使没有 controller 的 visibleEnabled 前置校验，
+        // 纵深防御：即使没有 controller 的 visibleEnabled 前置校验，
         // 直接构造的 InvokeCommand 也不能凭裸 id 调用别的租户的连接器。
         when(repo.findById("conn-1")).thenReturn(Optional.of(connector("NONE", "/ok")));
         var result = invoker.invoke(new ConnectorInvoker.InvokeCommand("space-b", "conn-1",

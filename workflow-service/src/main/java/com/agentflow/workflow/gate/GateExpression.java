@@ -12,9 +12,9 @@ import java.util.Set;
  *
  * <p>支持的语法子集：
  * <pre>
- *   user.id == "u-1" and user.rank >= 2
- *   user.id in ["u-1", "u-2"] or user.platformAdmin
- *   not (space.id == "t-space-b")
+ * user.id == "u-1" and user.rank >= 2
+ * user.id in ["u-1", "u-2"] or user.platformAdmin
+ * not (space.id == "t-space-b")
  * </pre>
  *
  * <p>可用属性：{@code user.id / user.role / user.rank / user.platformAdmin}、
@@ -366,7 +366,7 @@ public final class GateExpression {
                 case IDENT -> {
                     next();
                     // 关键字大小写不敏感（true / TRUE 都认）；user / space 与属性名区分大小写，
-                    // 与发布期 ast 白名单、画布体检保持同一口径。
+                    // 与发布期 ast 白名单、画布即时校验保持同一口径。
                     String raw = token.text();
                     switch (raw.toLowerCase(Locale.ROOT)) {
                         case "true" -> {

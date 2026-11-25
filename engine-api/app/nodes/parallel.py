@@ -1,4 +1,4 @@
-"""parallel 节点：并发执行多个 branch 子图（§8.3 / US-03）。
+"""parallel 节点：并发执行多个 branch 子图（§8.3）。
 
 - join=all：等待全部分支成功，合并输出（分支名 → 输出）；
 - join=first_success：按完成顺序取首个成功分支，其余取消（已发出的 Command 按

@@ -29,12 +29,12 @@ final class BoundedBodyReader {
     /**
      * 读取至多 {@code maxBytes} 字节。
      *
-     * @param in       上游响应流，由调用方负责关闭
+     * @param in 上游响应流，由调用方负责关闭
      * @param maxBytes 允许的最大字节数
-     * @param budget   整段读取的时间上限，小于 1s 时按 1s 计
+     * @param budget 整段读取的时间上限，小于 1s 时按 1s 计
      * @return 响应体；超出 {@code maxBytes} 时返回 {@code null}
      * @throws HttpTimeoutException 读取时间超出 {@code budget}
-     * @throws IOException          上游连接异常
+     * @throws IOException 上游连接异常
      */
     static byte[] read(InputStream in, int maxBytes, Duration budget) throws IOException {
         CompletableFuture<byte[]> reading = CompletableFuture.supplyAsync(() -> {

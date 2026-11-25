@@ -121,8 +121,8 @@ class Scheduler:
             raise LeaseLostError(str(execution_id))
         # Redis 故障与查询结果必须分开处理：查询拿到明确结果（租约不在我手上 /
         # 有取消标记）才走对应语义；连接不可达时无法确认租约，按「租约疑似丢失」
-        # 静默停止让恢复扫描接管（与续约循环的 P1-6 语义一致），绝不传播成普通
-        # 异常把活执行落成 ExecutionFailed 终态（P1-7）。
+        # 静默停止让恢复扫描接管（与续约循环的静默停止语义一致），绝不传播成普通
+        # 异常把活执行落成 ExecutionFailed 终态。
         try:
             held = await lease.held_by_me()
         except Exception as exc:
@@ -271,7 +271,7 @@ class Scheduler:
                 failures = [r for r in results if isinstance(r, BaseException)]
                 if failures:
                     # gather(return_exceptions=True) 只抛第一个会丢掉其它分支的诊断，
-                    # 先把全部异常记进日志再抛首个（C-8）。
+                    # 先把全部异常记进日志再抛首个。
                     for exc in failures:
                         logger.error("parallel branch failed execution=%s: %r", execution_id, exc)
                     raise failures[0]
@@ -302,6 +302,24 @@ class Scheduler:
         except LeaseLostError:
             logger.error("lease lost mid-run for %s; stopped writing events", execution_id)
             return "LEASE_LOST"  # 不落任何事件；接管方负责续跑
+        except asyncio.CancelledError:
+            # 续约循环发现取消标志后硬中断在途外呼（task.cancel()）：把取消转成
+            # 与节点边界取消一致的 CANCELLED 终态，而不是让事件流悬在 OPEN 等恢复扫描。
+            # 非 取消-意图 的外部取消（shutdown 等）原样上抛，保持既有清理语义。
+            try:
+                cancelled = await self._redis.get(f"af:cancel:{execution_id}")
+            except Exception:
+                cancelled = None
+            if cancelled:
+                await self._emit(
+                    execution_id,
+                    state,
+                    None,
+                    EventType.EXECUTION_CANCELLED,
+                    {"reason": "cancelled while node in flight"},
+                )
+                return "CANCELLED"
+            raise
         except ExecutionCancelledError as exc:
             await self._emit(
                 execution_id, state, None, EventType.EXECUTION_CANCELLED, {"reason": exc.message}

@@ -13,8 +13,8 @@ public interface NodeExecutionMapper {
     /** 投影器 upsert：唯一键 (execution_id, node_key, attempt)。 */
     @Insert("INSERT INTO node_execution"
             + " (id, execution_id, node_key, display_order, status, attempt, input_digest,"
-            + "  output_digest, token_used, latency_ms, model, retry_count, error_code,"
-            + "  error_message, started_at, finished_at)"
+            + " output_digest, token_used, latency_ms, model, retry_count, error_code,"
+            + " error_message, started_at, finished_at)"
             + " VALUES (#{id}, #{executionId}, #{nodeKey}, #{displayOrder}, #{status},"
             + " #{attempt}, #{inputDigest}, #{outputDigest}, #{tokenUsed}, #{latencyMs},"
             + " #{model}, #{retryCount}, #{errorCode}, #{errorMessage}, #{startedAt},"

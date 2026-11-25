@@ -25,8 +25,8 @@ import org.springframework.stereotype.Component;
  * <p>引擎是事件真相源、控制面只是投影。引擎未发终态事件时（崩溃、派发中断），投影会永远
  * 停在 PENDING/RUNNING。本类以引擎状态为准做两件事：
  * <ol>
- *   <li>引擎已终态而投影滞后 → 补齐投影，记 EXECUTION_RECONCILED；</li>
- *   <li>引擎不认识该执行且已过 deadline/派发宽限 → 落终态，记 EXECUTION_REAPED。</li>
+ * <li>引擎已终态而投影滞后 → 补齐投影，记 EXECUTION_RECONCILED；</li>
+ * <li>引擎不认识该执行且已过 deadline/派发宽限 → 落终态，记 EXECUTION_REAPED。</li>
  * </ol>
  *
  * <p>安全措施：只在 deadline 后动手（避开正常收尾）、落终态前先查引擎（避免投影延迟被

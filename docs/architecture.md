@@ -19,7 +19,7 @@
 | D8 | 灰度发布：`workflow_definition.traffic_json = [{versionId, weight}]`，触发时按 `hash(idempotencyKey)` 确定性分桶选版本；NULL = 100% current | 同一幂等键永远路由同一版本，天然防重 |
 | D9 | retrieval 节点走 `RetrievalProvider` 抽象；P0 提供 mock provider（离线固定语料），P2 接 pgvector / DocQA RAG 服务 | §4 栈未列 pgvector，P0 须可离线演示 |
 | D10 | 表达式引擎用 simpleeval 白名单（禁下划线属性、禁 import、禁 lambda）；模板用 Jinja2 `SandboxedEnvironment`；CI 用 Ruff S 规则 + grep 禁 `eval`/`exec` | §9 安全约束 |
-| D11 | 预算硬停止实现：发出任何 Command 前，引擎用 Redis 原子 `INCRBY` 预占 `min(node.maxTokens, 剩余预算)`，并把该 Command 的 `maxTokens` 钳到剩余额度；完成后按实际结算回冲预占 | 保证 `tokenUsed ≤ tokenBudget` 恒成立（US-05） |
+| D11 | 预算硬停止实现：发出任何 Command 前，引擎用 Redis 原子 `INCRBY` 预占 `min(node.maxTokens, 剩余预算)`，并把该 Command 的 `maxTokens` 钳到剩余额度；完成后按实际结算回冲预占 | 保证 `tokenUsed ≤ tokenBudget` 恒成立 |
 
 ---
 
@@ -62,7 +62,7 @@ flowchart TB
     GW --> WF
     GW --> CONN
     GW --> AUD
-    WF -->|/engine/** 唯一入口 D1| GW
+    WF -->|/engine/** 唯一入口| GW
     GW --> ENG
     ENG -->|ToolCommand P2 起| GW
     ENG --> PG
@@ -73,7 +73,7 @@ flowchart TB
     WF --> MYSQL
     AUD --> MYSQL
     CONN --> MYSQL
-    WF -->|轮询事件投影 D2| GW
+    WF -->|轮询事件投影| GW
     REDIS -->|pub/sub| WF
     MQ --> AUD
     CONN --> TOOL
@@ -85,7 +85,7 @@ flowchart TB
 |---|---|---|
 | agent-gateway | 8080 | 唯一对外入口；`/api/v1/**` 业务路由，`/engine/**` 内部路由（仅服务间） |
 | workflow-service | 8084 | 工作流/版本/执行索引/审批/事件投影/SSE Hub |
-| connector-service | 8085 | P2 加入；P0–P1 由 engine 内置 mock 连接器替代（D3） |
+| connector-service | 8085 | P2 加入；P0–P1 由 engine 内置 mock 连接器替代 |
 | audit-service | 8086 | RocketMQ 消费者 + `/admin/audit` 查询 |
 | engine-api | 8000 | 仅内网；拒绝无 `X-Internal-Token` 请求 |
 | 前端 dev | 5174 | Vite dev server（IPv4 `127.0.0.1`，`strictPort`），代理到 8080；避开常被其他项目占用的 5173 |
@@ -440,7 +440,7 @@ CREATE TABLE execution_event (
   execution_id      UUID        NOT NULL,
   event_type        TEXT        NOT NULL,                -- 见 §5.2 事件目录
   node_key          TEXT        NULL,
-  payload           JSONB       NOT NULL,                -- 口径见 D5
+  payload           JSONB       NOT NULL,                -- 口径见决策表 D5（溢出落 node_io）
   aggregate_version INT         NOT NULL,                -- 每 execution 严格递增
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -577,10 +577,10 @@ stateDiagram-v2
 | CheckpointCreated | 执行 | completedNodes[], variablesSnapshot(脱敏), tokenUsed, stepsUsed | 核心（每 10 事件） |
 | NodeScheduled | 节点 | nodeKey, nodeType, attempt, dependsOn[] | 核心 |
 | NodeStarted | 节点 | nodeKey, attempt, inputDigest | 核心 |
-| NodeCompleted | 节点 | nodeKey, attempt, **output（完整·已脱敏，D5）**, outputDigest, tokenUsed, latencyMs | 核心 |
+| NodeCompleted | 节点 | nodeKey, attempt, **output（完整·已脱敏）**, outputDigest, tokenUsed, latencyMs | 核心 |
 | NodeFailed | 节点 | nodeKey, attempt, errorCode, class(PERMANENT/TRANSIENT), retryable, latencyMs | 核心 |
 | NodeRetryScheduled `ex` | 节点 | nodeKey, nextAttempt, delayMs, cause | §8.4 重试 |
-| NodeSkipped `ex` | 节点 | nodeKey, reason(BRANCH_NOT_TAKEN/UPSTREAM_SKIPPED), byNodeKey | US-03 SKIPPED 必须可见 |
+| NodeSkipped `ex` | 节点 | nodeKey, reason(BRANCH_NOT_TAKEN/UPSTREAM_SKIPPED), byNodeKey | SKIPPED 必须可见 |
 | NodeSuspended `ex` | 节点 | nodeKey, reason | 状态机完备性 |
 | GateSuspended | 节点 | nodeKey, approversRule, timeoutAt, defaultBranch | 核心（P3） |
 | GateResolved | 节点 | nodeKey, decision(APPROVED/REJECTED/TIMEOUT), resolvedBy | 核心（P3） |
@@ -610,9 +610,9 @@ stateDiagram-v2
 
 ### 5.5 租约
 
-`af:lease:{executionId}` = `SET NX PX=30000`，value=workerId+leaseId；每 10s 续约；**每次事件追加前**校验租约仍归属自己（GET 比对）；租约丢失 → 停止写事件并退出。正确性兜底是 `aggregate_version` 乐观锁（US-04 租约冲突场景）。
+`af:lease:{executionId}` = `SET NX PX=30000`，value=workerId+leaseId；每 10s 续约；**每次事件追加前**校验租约仍归属自己（GET 比对）；租约丢失 → 停止写事件并退出。正确性兜底是 `aggregate_version` 乐观锁（租约冲突场景）。
 
-### 5.6 预算硬停止（D11 细化）
+### 5.6 预算硬停止
 
 发出 Command 前：`remaining = tokenBudget - tokenUsed`；`remaining ≤ 0` → `ExecutionFailed{errorCode: EXEC-BUDGET_EXHAUSTED}`，不再发任何 Command；否则该 Command 的 `maxTokens := min(node.maxTokens, remaining)`，Redis 预占；完成时按实际 `tokenUsed` 结算回冲。MySQL `budget_ledger` 由 projector 异步对账。
 
@@ -1166,7 +1166,7 @@ AgentFlow/
 │   └── tests/              # auth-store / sse / flow-convert / dsl-validate / design-redlines
 ├── e2e/
 │   ├── conftest.py                   # 登录与租户/用户 fixture、等待终态
-│   ├── test_p0_happy_path.py         # 创建→草稿→发布→执行→事件树
+│   ├── test_happy_path.py            # 创建→草稿→发布→执行→事件树
 │   ├── test_dsl_cycle_422.py
 │   ├── test_cross_tenant_404.py
 │   ├── test_idempotent_trigger.py    # 同键并发 → 1 执行
@@ -1202,7 +1202,7 @@ AgentFlow/
 | 阶段 | 本文档支撑条目 |
 |---|---|
 | P0 | 模块骨架（common/gateway/workflow-service/audit-service）、V001–V004、start/llm/tool/end 节点、拓扑同步执行、事件追加、SSE、mock provider、3 条 E2E |
-| P1 | 事件溯源全量（§5.3）、租约（§5.5）、Checkpoint、恢复扫描（D4）、condition/loop/parallel/transform/subworkflow、灰度（D8）、故障注入测试 |
+| P1 | 事件溯源全量（§5.3）、租约（§5.5）、Checkpoint、恢复扫描、condition/loop/parallel/transform/subworkflow、灰度、故障注入测试 |
 | P2 | 三级租户继承、connector-service + V005、凭据加密、成本中心、预算硬停止对账（§5.6） |
 | P3 | human_gate + V006、审批裁决回调（HTTP 直达 + outbox 重投）、评测集、A/B 对比 |
 
@@ -1225,7 +1225,7 @@ AgentFlow/
 2. **成功响应信封**：外部 API 成功响应统一 `ApiResponse{code:"OK", msg, data, traceId}`（复用 DocQA 惯例）；错误一律 ProblemDetail。§7 的响应体示例均视为 `data` 字段内容。
 3. **RocketMQ 主题名**：`af-audit-event`（RocketMQ 主题不允许 `.`）。正文他处的 `af.audit.events` 以此为准。
 4. **审计只追加的第三重保证**：除 DB 授权外，V004 迁移内置 BEFORE UPDATE/DELETE 触发器（`AUD-APPENDONLY-001`）；audit-service 的 ArchUnit 测试禁止 repo 包依赖 MyBatis `@Update`/`@Delete`。
-5. **PG 新增 `execution_spec` 表**（V001）：派发请求快照（含不可变 DSL），使引擎崩溃恢复自足（D4），不读业务库。
+5. **PG 新增 `execution_spec` 表**（V001）：派发请求快照（含不可变 DSL），使引擎崩溃恢复自足，不读业务库。
 6. **`workflow_definition` 增加 `seq BIGINT AUTO_INCREMENT UNIQUE`**：游标分页（cursor = base64(seq)）。
 7. **`app_user` 增加 `platform_role ENUM('USER','ADMIN')`**：平台级 /admin/** 判定；租户角色仍在 `tenant_member`。
 8. **`refresh_token` 用 `status ENUM('ACTIVE','USED','REVOKED')`** 替代 revoked_at（重用检测语义），与 DocQA 轮换族一致。
@@ -1348,7 +1348,7 @@ transactional outbox：
 |---|---|---|
 | 引擎（Python） | `app/dsl/validate.py` 用 `ast.parse` + 白名单递归，拒函数调用/下标/未知属性 | 发布期（`DSL-GATE-EXPR` 类错误） |
 | 控制面（Java） | `gate/GateExpression`：手写词法+递归下降，`validate` / `evaluate` 两入口 | 运行期展开审批人 |
-| 画布（TS） | `dsl/approver-expr.ts`：`approverExpressionError()` 即时体检 | 编辑期 |
+| 画布（TS） | `dsl/approver-expr.ts`：`approverExpressionError()` 即时校验 | 编辑期 |
 
 文法：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`；
 比较 `== != < <= > >=`；成员 `in` / `not in`；布尔 `and` / `or` / `not`（支持括号）；
@@ -1606,6 +1606,13 @@ MyBatis 构造器映射失败，知识库列表在实机返回 500；`KnowledgeS
 守住这处回归。`scripts/gen-seed.py` 同时写入 `kb-demo` 与三份售后文档切片，
 种子里的两条示例升级为 v4 并引用该知识库，起服后无需手工导入即可检索到真实内容。
 
+纯文本导入之外，`POST /api/v1/knowledge/bases/{id}/documents/upload`（multipart）承接
+PDF/Office 二进制上传：`DocumentParser` 用 PDFBox 3.x（`Loader.loadPDF` + `PDFTextStripper`）
+提 PDF、POI 5.5.x（`XWPFWordExtractor` / `XMLSlideShow` / `XSSFWorkbook` + `DataFormatter`）
+提 Word/PPT/Excel，正文提取后走与文本导入同一条 `normalise → insertDocument` 链路切片入库，
+保证切片算法与去重口径对两条入口一致。不支持类型与解析失败都明确报 `COM_VALIDATION_001`，
+不把损坏文件伪装成空文档。
+
 ### 20.2 BM25 与信任边界
 
 `KnowledgeService.searchForTenant` 在应用层做 BM25（k1=1.5, b=0.75），分数经
@@ -1637,8 +1644,15 @@ MyBatis 构造器映射失败，知识库列表在实机返回 500；`KnowledgeS
 节点明确报 `RETRIEVAL-NOT_CONFIGURED-001`，不静默回落到示例文本。
 `Settings.supported_node_types` 正式加入 `retrieval`，DSL 校验不再拒绝。
 
+可选精排（rerank）复用 DocQA 的 OpenAI 兼容 `/rerank` 形态，但落在引擎侧
+`OpenAIRerankProvider`（`AF_RERANK_*` 注入）：错误分类与 embedding 同口径
+（401/403/400/404/422 永久，429/5xx/超时瞬时），节点勾选 `rerank` 时先按
+`rerank_candidate_factor`（默认 3）放大召回、精排后截断到 topK。rerank 只决定名次、
+不改命中分数（与检索端 `RerankedItem` 设计一致），未配置时 `rerank=true` 明确报
+`RERANK-NOT_CONFIGURED-001`，不静默回退到融合次序。
+
 前端：`KnowledgeView.vue` 建库/导入/试检索/一键生成工作流；`ConfigDrawer.vue`
-为 retrieval 提供知识库多选、`queryTemplate` / `topK` / `minScore`；
+为 retrieval 提供知识库多选、`queryTemplate` / `topK` / `minScore` / `rerank`；
 `validate.ts` 要求至少选一个知识库；`NodePalette` / `node-card` / `flow-convert`
 同步补齐类型描述、卡片字段与新建默认配置。
 
@@ -1723,7 +1737,7 @@ DSL 增加 `defaults.llm`（`connectionId` + `model`），画布新建 llm 节�
 |---|---|---|---|
 | `token` | 路径里的入口 id | 不使用 | 24 字节 Base64URL，唯一索引；轮换即换 token |
 | `secret` | HMAC 密钥 | 不使用 | 32 字节 hex，只在创建/轮换时回显给创建者 |
-| `cron_expr` | 不使用 | 5/6 段 cron | 5 段前补 `0` 秒，秒位必须为 `0`，`CronExpression.parse` 校验 |
+| `cron_expr` | 不使用 | 5/6 段 cron | 5 段前补 `0` 秒；6 段秒位非 `0` 即秒级触发，`CronExpression.parse` 校验 |
 | `variables_json` | 固定入参 | 固定入参 | 请求体中的同名字段覆盖它 |
 | `last_fired_at` | 不使用 | 上次真正跑起来的时刻 | 与 `last_slot_at` 之差就是补偿延迟 |
 | `last_slot_at` | 不使用 | 上次执行代表的档位（`V012`） | 判点从它往后推，幂等键也由它生成 |
@@ -1826,7 +1840,7 @@ WHERE e.id = #{executionId} ON DUPLICATE KEY UPDATE ...
 | 层 | 键 | 作用 | 失效后果 |
 |---|---|---|---|
 | 扫描租约 | `af:sched:leader`（60s TTL，持有者续期） | 同一时刻只有一个副本扫表 | 多个副本扫表（多几次 SELECT 与日志） |
-| 分钟 claim | `af:sched:claim:{id}:{分钟}`（120s TTL） | 同一分钟只有一个副本派发 | 多一次派发尝试 |
+| claim | `af:sched:claim:{id}:{秒}`（120s TTL） | 本次扫描只有一个副本派发 | 多一次派发尝试 |
 | 幂等键 | `sched-{id}-{档位}` + `workflow_execution` 唯一约束 | **正确性**：这一档只有一条执行 | 不可能——冲突走 `DuplicateKeyException` 回放已有执行 |
 
 三条都 fail-open：Redis 抛异常时租约与 claim 返回「可以继续」。方向是刻意选的——漏跑一次
@@ -1836,7 +1850,8 @@ cron（业务方看不见、也不会自动补）比多扫一轮表严重得多�
 就会把自己挡在门外。`GET` 与 `SETNX` 之间的窗口允许两个副本都认为自己拿到租约——这只影响
 谁扫表，不影响正确性，因此没有为此引入 Lua 或 Redlock。
 
-触发粒度仍是分钟（秒位不为 0 的 cron 直接拒绝，见 §24），这与上面的 claim / 幂等键口径一致。
+cron 支持秒级（秒位非 0，见 §24.3）：秒级触发把 claim 键精确到秒、幂等键精确到秒档位，
+同一分钟内的多个秒档位不再互相吞掉；分钟级 cron 的 claim / 幂等键口径不变。
 
 ## 23. 模型能力标注的第二条来源（2026-11-20）
 
@@ -1938,16 +1953,29 @@ id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**—
 写清楚，比悄悄补 180 条更容易解释。但「只补一次」也不是所有任务想要的——见 §27：这条被改成
 按触发器可选的三种策略，默认仍是这里的「只补最近一档」。
 
-### 24.3 秒位必须为 0
+### 24.3 秒级触发
 
-`requireCron` 现在拒绝秒位不为 `0` 的 cron（`*/5 * * * * *`）。这不是偷懒：claim 键到分钟、
-幂等键到分钟、扫描每 30 秒一轮，秒级 cron 里同一分钟的第二个档位注定被吞掉。与其「配了但只
-跑一半」，不如在写入时就报 `WF-STATE-001`，把限制摆在明面上。
+`requireCron` 接受 5 段（分钟）与 6 段（含秒）两种写法，秒位非 0 即秒级触发。要支持秒级，
+光放开解析还不够——三处「分钟精度」必须一起改，否则秒级 cron 的第二个档位会被静默吞掉：
+
+1. **幂等键**：`slotOf` 按 `isSubMinute(cron)` 决定截到秒还是分钟。分钟级档位本来就在整分上，
+   截到秒与截到分钟结果一致；秒级档位必须带秒，否则 `*/10 * * * * *` 的同一分钟里 6 个档位
+   会撞出同一个键，账面只剩一条执行。
+2. **claim 键**：从 `{分钟}` 改成 `{秒}`。分钟级 claim 会让第一个副本 claim 成功后、接下来
+   2 分钟（`CLAIM_TTL`）整条触发器都不再派发，秒级档位直接饿死。
+3. **展示**：预览与 `lastSlotAt` 对秒级 cron 用 `yyyy-MM-dd HH:mm:ss`，否则用户看不到档位
+   到底落在哪一秒。
+
+准点精度仍受扫描间隔约束：默认 30s 一轮，`*/5 * * * * *` 的实际效果是「每 30 秒一次性补回
+6 个档位」，而不是每 5 秒准点。需要更密准点就把 `agentflow.trigger.poll-interval-ms` 调小，
+补跑的「有界补偿」语义不变。这是有意的边界：秒级触发解决的是「分钟粒度不够用」，
+不是承诺毫秒级实时。
 
 ### 24.4 可预期性：预览与展示
 
 - `POST /api/v1/workflows/{id}/triggers/cron-preview`：只解析不落库，回 `{cron, timezone, times[]}`。
-  5 段写法回填为 6 段规范形式，时间按**触发器时区**格式化（`yyyy-MM-dd HH:mm`）。
+  5 段写法回填为 6 段规范形式，时间按**触发器时区**格式化（分钟级 `yyyy-MM-dd HH:mm`，
+  秒级 `yyyy-MM-dd HH:mm:ss`）。
 - `TriggerView` 多三个字段：`lastSlotAt`（档位）、`nextFireAt` / `nextFireTimes`（接下来三次）。
 - 触发页输入 cron 时 350ms 防抖调预览：写错当场看到原因；保存后的触发器显示「上次触发
   <浏览器时区>（09:00 档 · Asia/Shanghai）」与「下次 2026-11-21 09:00（Asia/Shanghai）」。
@@ -1959,10 +1987,11 @@ id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**—
 ### 24.5 验收
 
 - Java：`TriggerServiceTest`（同档同键、档位与墙钟分开记账、未到点返回 null、新触发器只命中
-  当前档、停机补最近一档、24 小时窗口、每 15 分钟 cron 的取档、时区渲染、秒级 cron 拒绝、
-  预览归一与条数钳制）、`TriggerSchedulerTest`（档位透传、claim 独占、租约与 fail-open）。
+  当前档、停机补最近一档、24 小时窗口、每 15 分钟 cron 的取档、时区渲染、秒级 cron 接受与
+  秒精度幂等键、预览归一与条数钳制）、`TriggerSchedulerTest`（档位透传、claim 独占、租约与
+  fail-open）。
 - 前端：`triggers-view.spec.ts`（预览展示、预览失败就地报错、档位与下次触发）。
-- E2E：`e2e/test_triggers.py`（秒级 cron 409、预览不落触发器、跨租户 404、定时触发后
+- E2E：`e2e/test_triggers.py`（预览不落触发器、跨租户 404、定时触发后
   `lastSlotAt` / `nextFireAt` 有值；用例结束显式停用，避免「每分钟」的测试触发器一直烧 token）。
 
 ## 25. 用量按模型分解与额度条分段（2026-11-20）
@@ -1992,7 +2021,7 @@ id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**—
 
 ### 25.2 「不知道」要能表达
 
-三个来源会让模型为空：非 LLM 节点、输出超过 256KB 被溢出成引用（D5，payload 里只剩摘要）、
+三个来源会让模型为空：非 LLM 节点、输出超过 256KB 被溢出成引用（payload 里只剩摘要）、
 V013 之前的历史执行。这些行统一进空串桶，前端渲染「未标注 · 非 LLM 或输出未带模型」。
 
 不按「工作流的默认模型」回填：默认模型只是没写 `config.model` 时的兜底，节点完全可以覆盖它，
@@ -2116,7 +2145,7 @@ JSON 与进度条上，前端还得反推这个魔数是什么意思。这与 `U
 `skipped` 不是装饰：它进审计（`TRIGGER_FIRED.skipped` / `TRIGGER_SKIPPED.missed`），
 用户问「为什么只跑了一次」时，答案就在这个数字里，不用去猜当时停机了多久。
 
-`CATCH_UP_ALL` 一次派发多档，共用同一分钟的 claim：一个副本拿到 claim 后连续派发整批，
+`CATCH_UP_ALL` 一次派发多档，共用同一次扫描的 claim：一个副本拿到 claim 后连续派发整批，
 其他副本被挡在外面；每档各自记账（`markFired`），所以中途崩溃时下一轮从断点继续，已经跑过的
 档位靠幂等键 `sched-{id}-{档位}` 回放而不是重跑。
 
@@ -2275,7 +2304,7 @@ webhook；「最多几个同时在跑」是流水线的属性。放到触发器�
 **为什么调度器「推迟」而交互式入口「拒绝」。** 两者要的东西不同：
 - 手动 / webhook 的调用方在等一个结果，必须立刻知道「现在不行」，所以 `429 WF-CONCURRENCY-001`；
 - 调度器没有调用方在等，它要的是「最终补完」。所以逐档检查余量，跑满就停，**游标不动**，
-  下一轮从断点继续（最多晚一分钟，因为 claim 按分钟）。若把这也做成拒绝，那一档就被永久
+  下一轮从断点继续（最多晚一个扫描间隔）。若把这也做成拒绝，那一档就被永久
   消费掉了——`CATCH_UP_ALL` 会退化成「补到几个算几个」且没有审计。
 
 **为什么是软限。** 判定是「先 `COUNT` 再 `INSERT`」，两者之间没有锁。同一触发器的并发被

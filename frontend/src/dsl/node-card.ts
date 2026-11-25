@@ -6,11 +6,11 @@ import {
 } from './contract-enums'
 
 /** CT-1：取值统一来自 contract-enums.ts；这里保留再导出兼容既有 import 路径，
- *  contract-enums.spec.ts 会拿 models.py 做快照比对，防止枚举漂移。 */
+ * contract-enums.spec.ts 会拿 models.py 做快照比对，防止枚举漂移。 */
 export { PARALLEL_JOIN_POLICIES, SUBWORKFLOW_VERSION_POLICIES } from './contract-enums'
 
 /** 节点卡片的呈现规则集中在这里：编排画布与执行态画布共用同一套口径。
- *  颜色一律返回设计令牌，不出现原始色值（design-redlines 守卫）。 */
+ * 颜色一律返回设计令牌，不出现原始色值（design-redlines 守卫）。 */
 
 export type NodeCategory = 'exec' | 'control' | 'boundary'
 

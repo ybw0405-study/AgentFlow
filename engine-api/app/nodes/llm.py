@@ -1,9 +1,9 @@
 """llm 节点：模板渲染 → PII 第二层 → 预算预占 → LLMCommand。
 
 纪律：
-- PII 第二层（US-05）：渲染后的 prompt 再过一遍 pii-v2 mask；命中只记类别与数量，
+- PII 第二层：渲染后的 prompt 再过一遍 pii-v2 mask；命中只记类别与数量，
   若二次脱敏后仍检出 PII（不应发生）则 PII-BLOCKED-001 永久失败。
-- 预算硬停止（D11）：reserve 失败即 BudgetExhaustedError，Command 绝不发出；
+- 预算硬停止：reserve 失败即 BudgetExhaustedError，Command 绝不发出；
   发出的 Command maxTokens 被钳到预占额度，保证 tokenUsed ≤ budget。
 - 崩溃恢复：callId 确定性派生；外部模型调用是非确定性的，重放需防重复计费，
   重发安全。
@@ -70,7 +70,7 @@ class LlmExecutor:
 
     def _provider_for(self, cfg: Any, authorized: frozenset[str]) -> LLMProvider:
         if cfg.connection_id:
-            # 与 tool 节点同口径（SEC-4）：connectionId 必须在本执行授权集合内，
+            # 与 tool 节点同口径：connectionId 必须在本执行授权集合内，
             # 否则跨空间引用连接器完全依赖 connector-service 内部校验，双路径强度不一致。
             if cfg.connection_id not in authorized:
                 raise PermanentNodeError(
@@ -140,7 +140,7 @@ class LlmExecutor:
                 ctx.node_key,
             )
 
-        # 预算预占（D11）：预留 = promptTokens + maxTokens，生成上限钳到剩余额度
+        # 预算预占：预留 = promptTokens + maxTokens，生成上限钳到剩余额度
         grant: int | None = None
         prompt_tokens = estimate_tokens(prompt + (system or ""))
         if ctx.policy.token_budget is not None and ctx.budget is not None:
@@ -198,6 +198,24 @@ class LlmExecutor:
         }
         if cfg.output_mode != "text" and _accepts_stream_kwarg(provider):
             kwargs["stream"] = False
+        # 真实时流式：stream-capable provider 在 text 模式下边读边回调 emit OUTPUT_DELTA，
+        # 客户端看到逐 token 打字机而非完整响应到达后批量回放。
+        # deltas_emitted 记录已实时推送的数量；provider 未走流式（或未回调）时为 0，
+        # 下面的补发循环再按 extra["deltas"] 顺序推送，行为与改造前一致。
+        deltas_emitted = 0
+
+        async def _on_delta(text: str) -> None:
+            nonlocal deltas_emitted
+            if not isinstance(text, str) or not text:
+                return
+            await ctx.emit(
+                EventType.OUTPUT_DELTA,
+                {"callId": call_id, "index": deltas_emitted, "text": text},
+            )
+            deltas_emitted += 1
+
+        if _accepts_stream_kwarg(provider):
+            kwargs["on_delta"] = _on_delta
         try:
             result = await provider.complete(**kwargs)
         except TransientNodeError as exc:
@@ -216,7 +234,7 @@ class LlmExecutor:
             # asyncio.timeout 超时在 await provider.complete() 处抛 CancelledError，
             # 它继承 BaseException 而非 Exception，上面的分支都捕获不到。若不回冲，
             # 每次超时都会泄漏一笔 grant、:inflight +1，导致同执行后续节点被虚减的
-            # 余额提前触发预算硬停止（P1-2 修复）。注意此处只回冲、不吞异常。
+            # 余额提前触发预算硬停止。注意此处只回冲、不吞异常。
             if grant is not None and ctx.budget is not None:
                 await ctx.budget.settle(ctx.execution_id, grant, 0)
             raise
@@ -232,21 +250,24 @@ class LlmExecutor:
         resolved_model = str(result.extra.get("model") or cfg.model)
 
         # 流式增量作为展示层事件推送：严格落在 COMMAND_COMPLETED 之前，
-        # 且绝不影响 NodeResult —— 下游只消费完整结果。无增量（非流式 / 上游不支持）
-        # 时这一整块为空，行为与之前逐字节一致。
-        deltas = result.extra.get("deltas")
-        if isinstance(deltas, list):
-            for idx, delta in enumerate(deltas):
-                if not isinstance(delta, str) or not delta:
-                    continue
-                await ctx.emit(
-                    EventType.OUTPUT_DELTA,
-                    {
-                        "callId": call_id,
-                        "index": idx,
-                        "text": delta,
-                    },
-                )
+        # 且绝不影响 NodeResult —— 下游只消费完整结果。
+        # 真实时路径（on_delta 已边读边 emit）下 deltas_emitted > 0，这里跳过避免重复推送；
+        # provider 未走流式 / 未回调时 deltas_emitted == 0，按 extra["deltas"] 顺序补发，
+        # 行为与改造前一致。
+        if deltas_emitted == 0:
+            deltas = result.extra.get("deltas")
+            if isinstance(deltas, list):
+                for idx, delta in enumerate(deltas):
+                    if not isinstance(delta, str) or not delta:
+                        continue
+                    await ctx.emit(
+                        EventType.OUTPUT_DELTA,
+                        {
+                            "callId": call_id,
+                            "index": idx,
+                            "text": delta,
+                        },
+                    )
 
         await ctx.emit(
             EventType.COMMAND_COMPLETED,

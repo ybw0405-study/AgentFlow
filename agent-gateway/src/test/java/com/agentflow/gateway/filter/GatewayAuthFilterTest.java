@@ -58,7 +58,7 @@ class GatewayAuthFilterTest {
         var request = new MockHttpServletRequest("POST", "/engine/internal/executions");
         var response = new MockHttpServletResponse();
         filter.doFilter(request, response, (req, res) -> ((MockHttpServletResponse) res).setStatus(200));
-        assertEquals(404, response.getStatus());  // 不暴露路由存在性
+        assertEquals(404, response.getStatus()); // 不暴露路由存在性
 
         var ok = new MockHttpServletRequest("POST", "/engine/internal/executions");
         ok.addHeader("X-Internal-Token", "internal-tok");

@@ -101,7 +101,7 @@ public class ProjectorWriter {
             case "NodeCompleted" -> {
                 upsertNode(e, "SUCCEEDED", p, (String) p.get("outputDigest"), null, null);
                 // 成本中心：节点完成的 token 消耗累加到租户月度账本。
-                // 事件 seq 唯一键保证多副本/重放时只累加一次（P1-3 修复）；
+                // 事件 seq 唯一键保证多副本/重放时只累加一次；
                 // Redis 租约 fail-open 时也不再重复计费。
                 if (budgetSeen.claim(e.seq(), e.executionId()) == 1) {
                     budgets.accrue(e.executionId(), BudgetLedgerMapper.currentPeriod(),
@@ -194,7 +194,7 @@ public class ProjectorWriter {
      * 节点真正用的模型：LLM 节点把 provider 解析后的模型名放在 output 里
      * （占位名会被回落到服务端默认模型，所以要记回落后的那个）。
      *
-     * <p>非 LLM 节点没有这个字段；输出超过 256KB 时 payload 只剩引用与摘要（D5），
+     * <p>非 LLM 节点没有这个字段；输出超过 256KB 时 payload 只剩引用与摘要，
      * 同样取不到——这两种情况都返回 null，用量页归到「未标注」，不猜。
      */
     private static String modelOf(Map<String, Object> payload) {

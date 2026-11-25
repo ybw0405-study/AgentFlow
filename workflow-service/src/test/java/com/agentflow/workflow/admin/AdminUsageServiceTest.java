@@ -76,7 +76,7 @@ class AdminUsageServiceTest {
     void periodIsNormalizedAndEmptyFallsBackToCurrentMonth() {
         // `2026-8` 不是合法的 YearMonth 写法；静默当成本月会让管理员看错月份
         assertEquals(YearMonth.now().toString(), AdminUsageService.normalizePeriod(null));
-        assertEquals(YearMonth.now().toString(), AdminUsageService.normalizePeriod("  "));
+        assertEquals(YearMonth.now().toString(), AdminUsageService.normalizePeriod(" "));
         assertEquals("2026-11", AdminUsageService.normalizePeriod("2026-11"));
 
         var error = assertThrows(BusinessException.class,

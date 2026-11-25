@@ -1,7 +1,7 @@
 import type { FlowEdgeLike, FlowNodeLike } from './flow-convert'
 
 /** 落线前的即时校验。返回 null 表示可连；返回文案时画布直接提示，不再等发布期 422。
- *  规则与发布期校验保持一致，只做前置提示，不新增约束。 */
+ * 规则与发布期校验保持一致，只做前置提示，不新增约束。 */
 export interface ConnectionLike {
   source: string
   target: string

@@ -57,7 +57,7 @@ describe('flow-convert', () => {
     const cfg = newNodeConfig('llm', 'deepseek-chat')
     expect(cfg.provider).toBe('openai-compatible')
     expect(cfg.model).toBe('deepseek-chat')
-    expect(newNodeConfig('llm').model).toBe('deepseek-chat')
+    expect(newNodeConfig('llm').model).toBe('deepseek-flash')
   })
 
   it('已有模型连接时新建 llm 直接挂上连接', () => {

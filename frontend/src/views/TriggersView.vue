@@ -48,6 +48,7 @@ const CRON_PRESETS = [
   { label: '每天 09:00', value: '0 9 * * *' },
   { label: '每周一 09:00', value: '0 9 * * 1' },
   { label: '每 15 分钟', value: '*/15 * * * *' },
+  { label: '每 5 秒', value: '*/5 * * * * *' },
 ]
 
 /**
@@ -414,10 +415,10 @@ onMounted(() => {
         <span
           class="af-faint"
           style="font-size: 12px"
-        >按 cron 自动跑，精度到分钟；停机恢复后怎么补，看下面的策略（只看 24 小时内）</span>
+        >按 cron 自动跑（5 段到分钟，6 段支持秒级）；停机恢复后怎么补，看下面的策略（只看 24 小时内）</span>
       </div>
 
-      <label class="af-label">cron（5 段：分 时 日 月 周）</label>
+      <label class="af-label">cron（5 段：分 时 日 月 周；6 段：秒 分 时 日 月 周）</label>
       <div style="display: flex; gap: 6px; margin-bottom: 6px">
         <input
           v-model="cronDraft"

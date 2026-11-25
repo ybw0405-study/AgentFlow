@@ -10,10 +10,10 @@ import java.util.Objects;
  *
  * <p>四种模式，够用且不引入表达式执行：
  * <ul>
- *   <li>EXACT：期望与实际的 result 深度相等（适合结构化输出）</li>
- *   <li>CONTAINS：期望里的每段文本都出现在实际 JSON 序列化结果中（适合自由文本）</li>
- *   <li>EXISTS：按 path 取值存在且非空（适合「有没有答出来」）</li>
- *   <li>NUMERIC：按 path 取数值，落在 [min, max]（适合打分/置信度）</li>
+ * <li>EXACT：期望与实际的 result 深度相等（适合结构化输出）</li>
+ * <li>CONTAINS：期望里的每段文本都出现在实际 JSON 序列化结果中（适合自由文本）</li>
+ * <li>EXISTS：按 path 取值存在且非空（适合「有没有答出来」）</li>
+ * <li>NUMERIC：按 path 取数值，落在 [min, max]（适合打分/置信度）</li>
  * </ul>
  * 断言里出现未知 mode 一律判失败（宁错不静默）。
  */

@@ -5,7 +5,7 @@
      CREATE INDEX 必须带 information_schema 守卫；CREATE TRIGGER 必须
      IF NOT EXISTS；V019 的 DROP TRIGGER 必须排在 CREATE 之后（先建后删）。
   2) 真实重放（需要 MySQL）：
-       * af_idem_fresh    —— 按版本序把全部 V*.sql 灌一遍（空库重放一次）；
+       * af_idem_fresh —— 按版本序把全部 V*.sql 灌一遍（空库重放一次）；
        * af_idem_migrated —— 先灌一遍成为「已迁移库」，再把不含 CREATE TABLE
          的增量迁移重放一次（已迁移库重放一次），两遍都必须 0 错误。
      MySQL 由以下任一方式提供：
@@ -212,7 +212,7 @@ def main() -> int:
     if audit_errors:
         print(" 静态审计 FAIL:")
         for err in audit_errors:
-            print("  - " + err)
+            print(" - " + err)
         return 1
     print(f" 静态审计 PASS：{len([p for p in migration_files() if is_increment(p)])} 份增量迁移均带幂等守卫")
 
@@ -241,10 +241,10 @@ def main() -> int:
             f"CREATE DATABASE {MIGRATED_DB} "
             "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
        )
-        replay(executor, FRESH_DB, files)  # 空库重放一次
+        replay(executor, FRESH_DB, files) # 空库重放一次
         print(f" 空库重放 PASS：{len(files)} 份迁移全部成功")
-        replay(executor, MIGRATED_DB, files)  # 先成为已迁移库
-        replay(executor, MIGRATED_DB, increments)  # 已迁移库再重放一次
+        replay(executor, MIGRATED_DB, files) # 先成为已迁移库
+        replay(executor, MIGRATED_DB, increments) # 已迁移库再重放一次
         print(f" 已迁移库重放 PASS：{len(increments)} 份增量迁移二次执行 0 错误")
         verify_schema(executor, MIGRATED_DB)
         print(" schema 不变量 PASS：表/索引/不可变触发器/统一 collation")

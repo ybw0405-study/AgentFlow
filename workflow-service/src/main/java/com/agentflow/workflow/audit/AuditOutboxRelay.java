@@ -37,7 +37,7 @@ public class AuditOutboxRelay {
     private final int degradeAfter;
     private final int deadAfter;
     private final ObjectMapper json = new ObjectMapper();
-    /** 已送达 outbox 的保留天数（CON-4）：由配置注入，不再写死 7；单测默认 7。 */
+    /** 已送达 outbox 的保留天数：由配置注入，不再写死 7；单测默认 7。 */
     @Value("${agentflow.audit.purge-days:7}")
     private int purgeDays = 7;
 

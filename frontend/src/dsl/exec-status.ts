@@ -1,8 +1,8 @@
 import type { NodeExecutionDto } from '@/types/api'
 
 /** 子图 / 循环轮次的节点 key 形如 `gather#kb#kb_hit`、`polish#0#polish_sign`。
- *  根层图上只画 `gather` / `polish` 一个卡片，子节点状态按「最严重」聚合上去，
- *  避免并行分支里某个失败被整片 SUCCEEDED 盖住。 */
+ * 根层图上只画 `gather` / `polish` 一个卡片，子节点状态按「最严重」聚合上去，
+ * 避免并行分支里某个失败被整片 SUCCEEDED 盖住。 */
 const RANK: Record<string, number> = {
   SKIPPED: 0,
   SUCCEEDED: 1,

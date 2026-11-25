@@ -76,7 +76,7 @@ class GateExpressionTest {
                 () -> GateExpression.validate("user.rank >="));
         assertThrows(IllegalArgumentException.class,
                 () -> GateExpression.validate("user.id == \"u-1"));
-        assertThrows(IllegalArgumentException.class, () -> GateExpression.validate("  "));
+        assertThrows(IllegalArgumentException.class, () -> GateExpression.validate(" "));
     }
 
     @Test

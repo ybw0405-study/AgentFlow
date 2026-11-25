@@ -1,4 +1,4 @@
-"""E2E（P1 / US-03）：condition 分支命中与 SKIPPED 传播（经 gateway 全链路）。"""
+"""E2E：condition 分支命中与 SKIPPED 传播（经 gateway 全链路）。"""
 
 from __future__ import annotations
 
@@ -70,5 +70,5 @@ def test_condition_branch_skips(client, editor_token, admin_token):
     nodes = {n["nodeKey"]: n["status"] for n in detail["nodes"]}
     assert nodes["yes"] == "SUCCEEDED", nodes
     assert nodes["no"] == "SKIPPED", nodes
-    assert nodes["skipped_tail"] == "SKIPPED", nodes  # 级联跳过且保留在树中
-    assert nodes["end"] == "SUCCEEDED", nodes  # 汇聚节点仍执行
+    assert nodes["skipped_tail"] == "SKIPPED", nodes # 级联跳过且保留在树中
+    assert nodes["end"] == "SUCCEEDED", nodes # 汇聚节点仍执行

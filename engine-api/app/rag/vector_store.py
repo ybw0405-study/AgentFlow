@@ -29,12 +29,12 @@ class KnowledgeVectorStore:
             await conn.executemany(
                 "INSERT INTO knowledge_chunk_embedding"
                 " (chunk_id, tenant_id, kb_id, document_id, document_title, ordinal,"
-                "  content, content_hash, model, embedding)"
+                " content, content_hash, model, embedding)"
                 " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector)"
                 " ON CONFLICT (chunk_id, model) DO UPDATE SET"
-                "  content = EXCLUDED.content, content_hash = EXCLUDED.content_hash,"
-                "  document_title = EXCLUDED.document_title, ordinal = EXCLUDED.ordinal,"
-                "  embedding = EXCLUDED.embedding, updated_at = now()",
+                " content = EXCLUDED.content, content_hash = EXCLUDED.content_hash,"
+                " document_title = EXCLUDED.document_title, ordinal = EXCLUDED.ordinal,"
+                " embedding = EXCLUDED.embedding, updated_at = now()",
                 [
                     (
                         row["chunkId"],

@@ -36,7 +36,7 @@ public class ConnectorAudit {
                     JSON.writeValueAsString(payload));
         } catch (Exception e) {
             // 凭据治理事件（CONN_AUTHORIZED / CONN_OAUTH_GRANTED 等）不能静默丢：
-            // 直写失败时入 outbox，由 relay 补投（P1-11）。
+            // 直写失败时入 outbox，由 relay 补投。
             log.error("connector audit direct write failed; enqueue outbox: {}", e.toString());
             enqueueOutbox(tenant, traceId, eventType, payload);
         }

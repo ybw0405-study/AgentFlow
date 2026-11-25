@@ -9,9 +9,9 @@ import org.springframework.stereotype.Component;
  * 出口选择：{@code agentflow.audit.sink} = auto | mq | direct。
  *
  * <ul>
- *   <li>mq：只走 RocketMQ（audit-service 消费落库，支持下游多方订阅）；</li>
- *   <li>direct：只直写 audit_event（无 MQ 环境的默认）；</li>
- *   <li>auto：MQ 开启则走 MQ，否则直写。</li>
+ * <li>mq：只走 RocketMQ（audit-service 消费落库，支持下游多方订阅）；</li>
+ * <li>direct：只直写 audit_event（无 MQ 环境的默认）；</li>
+ * <li>auto：MQ 开启则走 MQ，否则直写。</li>
  * </ul>
  *
  * <p>无论选哪个，relay 在连续失败后都会降级到 {@link #degraded()}（直写），

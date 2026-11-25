@@ -37,6 +37,10 @@
         <checkstyle.version>10.26.1</checkstyle.version>
         <!-- 2.10.x 是 Spring Boot 3.5.x 线（该版本即构建于 3.5.16）；3.x 对应 Boot 4，不适用 -->
         <springdoc.version>2.10.0</springdoc.version>
+        <!-- 文档导入解析：PDFBox 3.0.x 用 Loader.loadPDF（3.x 起废弃 PDDocument.load） -->
+        <pdfbox.version>3.0.8</pdfbox.version>
+        <!-- POI 5.5.x 为 Java 8 基线的维护线；6.0.0 起要求 JDK 17+，暂留 5.5.x 降低迁移面 -->
+        <poi.version>5.5.1</poi.version>
     </properties>
 
     <dependencyManagement>
@@ -100,6 +104,16 @@
                 <groupId>org.springdoc</groupId>
                 <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
                 <version>${springdoc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${pdfbox.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi-ooxml</artifactId>
+                <version>${poi.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

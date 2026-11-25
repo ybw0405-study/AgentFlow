@@ -11,10 +11,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 事件投影器（D2）：轮询引擎全局事件尾读接口，把事件流投影到 MySQL 执行索引表。
+ * 事件投影器：轮询引擎全局事件尾读接口，把事件流投影到 MySQL 执行索引表。
  * 游标存 projector_cursor，与投影写入同事务；崩溃后从游标续读，事件幂等重放。
  *
- * <p><b>单实例约束（CON-2）</b>：budget_ledger.accrue 是 {@code calls_used = calls_used + 1}
+ * <p><b>单实例约束</b>：budget_ledger.accrue 是 {@code calls_used = calls_used + 1}
  * 的累加写入，若两个副本从同一游标读到同一批事件并各自投影，月度账本会重复计费。
  * 因此与 ExecutionReaper / TriggerScheduler 同款，先用 {@link RedisLease} 抢「同一时刻只有
  * 一个副本投影」的尽力租约（Redis 不可用时 fail-open）。租约是减少重复劳动的优化，不是
@@ -65,7 +65,7 @@ public class EventProjector {
                     page = engine.tailEvents(cursor, pageSize, spaceId);
                 } catch (Exception e) {
                     log.debug("engine tail unavailable: {}", e.getMessage());
-                    return;  // 下一轮再试；游标不动
+                    return; // 下一轮再试；游标不动
                 }
                 if (page == null || page.events() == null || page.events().isEmpty()) {
                     return;

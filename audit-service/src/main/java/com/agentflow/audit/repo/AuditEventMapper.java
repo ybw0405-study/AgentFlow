@@ -16,7 +16,7 @@ public interface AuditEventMapper {
 
     @Insert("INSERT INTO audit_event"
             + " (id, tenant_id, trace_id, execution_id, actor_id, event_type,"
-            + "  payload_redacted, token_used, latency_ms)"
+            + " payload_redacted, token_used, latency_ms)"
             + " VALUES (#{id}, #{tenantId}, #{traceId}, #{executionId}, #{actorId},"
             + " #{eventType}, #{payloadJson}, #{tokenUsed}, #{latencyMs})")
     int insert(AuditRow row);

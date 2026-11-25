@@ -5,7 +5,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 /**
- * 预算账本累加的事件级幂等标记（P1-3）。
+ * 预算账本累加的事件级幂等标记。
  *
  * <p>每条 EngineEvent 有全局唯一 seq。投影前先 INSERT IGNORE 占位，只有插入成功
  * （返回 1）才累加账本；重复投影同一事件时 INSERT IGNORE 返回 0，跳过累加。
