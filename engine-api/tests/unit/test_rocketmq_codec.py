@@ -128,6 +128,7 @@ def test_gate_consumer_normalizes_decision_case():
 
 # ---- broker host 重写：容器部署修 127.0.0.1 回环地址，非容器行为不变 ----
 
+
 def test_rewrite_broker_host_replaces_host_keeps_port():
     from app.messaging.client import rewrite_broker_host
 
