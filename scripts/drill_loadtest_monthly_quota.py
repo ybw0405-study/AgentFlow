@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""批次 4 / 性能压测脚本骨架 — 重点：AgentFlow 月度额度跨月窗口。
+"""性能压测脚本骨架 — 重点：AgentFlow 月度额度跨月窗口。
 
 背景（方案）：`BudgetLedgerMapper.java` 用 `DATE_FORMAT(NOW(3),'%Y-%m')`
 算账期（MySQL 侧、UTC 月），`ExecutionService.java` 用
@@ -19,7 +19,7 @@
 
 观测 / 断言：
   * 单个 (tenant, period) 账本恰好 1 行，不劈月；
-  * Java period 与 SQL 写入 period 完全一致（I5）；
+  * Java period 与 SQL 写入 period 完全一致；
   * 并发扣减总量不超过月度额度（无超发、无少算）；
   * 跨月窗口内重复请求不双计、不重复计费；
   * p99 延迟与错误率符合 SLO。
@@ -57,7 +57,7 @@ CASES = [
 
 ASSERTIONS = [
     "A1 单个 (tenant, period) 账本恰好 1 行（不劈月）",
-    "A2 Java PeriodClock 计算的 period == SQL 写入的 period（I5）",
+    "A2 Java PeriodClock 计算的 period == SQL 写入的 period",
     "A3 并发扣减总量 <= 月度额度（无超发）",
     "A4 用量不少算（请求数 == 账本 used 增量）",
     "A5 跨月窗口内幂等键生效，无重复计费",
@@ -101,7 +101,7 @@ def one_request(url: str, body: dict, headers: dict, timeout: float) -> tuple[bo
 def run(args: argparse.Namespace) -> int:
     r = LoadResult(execute=args.execute)
     print("=" * 72)
-    print("批次4 月度额度跨月窗口压测骨架 (AgentFlow) | execute =", args.execute)
+    print("月度额度跨月窗口压测骨架 (AgentFlow) | execute =", args.execute)
     print("跨月用例矩阵：")
     for name, clock, jp, sp, note in CASES:
         print(f" {name}: clock={clock} java_period={jp} sql_period={sp} # {note}")
@@ -150,7 +150,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="AgentFlow 批次4 月度额度跨月窗口压测骨架（默认 dry-run）")
+    p = argparse.ArgumentParser(description="AgentFlow 月度额度跨月窗口压测骨架（默认 dry-run）")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--base-url", default="http://127.0.0.1:8080")
     p.add_argument("--dsn", default="")

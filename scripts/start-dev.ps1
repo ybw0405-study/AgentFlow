@@ -1,7 +1,7 @@
 ﻿# AgentFlow 一键启动（Windows PowerShell）。
 # 顺序：基础设施(docker) → 迁移/授权/种子 → engine-api → Java 三服务 → 前端 dev server。
 # 日志：logs/*.log。停止：scripts/stop-dev.ps1。
-# P0-4：-Containers 切换为全容器模式（镜像内构建，不依赖本机 JDK/Maven）。
+# -Containers 切换为全容器模式（镜像内构建，不依赖本机 JDK/Maven）。
 param([switch]$Containers)
 $ErrorActionPreference = 'Continue'
 # 说明：保持 Continue 而非 Stop。PowerShell 5.1 会把 native 命令（docker/mysql 等）
@@ -58,7 +58,7 @@ if ($null -eq $env:AF_LLM_API_KEY -and $env:DEEPSEEK_API_KEY) {
   if ($null -eq $env:AF_LLM_MODEL) { $env:AF_LLM_MODEL = 'deepseek-flash' }
 }
 
-# P0-4：全容器模式——jar 由 Dockerfile 的 java-build stage 构建，topic 由 mq-init 预建，
+# 全容器模式——jar 由 Dockerfile 的 java-build stage 构建，topic 由 mq-init 预建，
 # 不依赖本机 JDK/Maven/Java，也不需要下面的宿主机 jar 构建与服务启动。
 if ($Containers) {
   if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-token' }

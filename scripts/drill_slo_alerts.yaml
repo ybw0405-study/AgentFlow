@@ -1,5 +1,5 @@
 # =============================================================================
-# 批次 4 / SLO 定义与告警规则样例 — AgentFlow
+# SLO 定义与告警规则样例 — AgentFlow
 # -----------------------------------------------------------------------------
 # 【诚实边界】这是**样例**，未接入真实 Prometheus / Alertmanager，未采集任何
 # 真实指标，也没有错误预算实测数据。指标名需按 engine-api / 各 Java 服务
@@ -13,28 +13,28 @@
 
 slo:
   - name: execution_dispatch_success
-    description: 执行提交后被真实派发（202 != 成功，I2）的比例
+    description: 执行提交后被真实派发（202 != 成功）的比例
     sli: "1 - sum(rate(agentflow_dispatch_lost_total[5m])) / sum(rate(agentflow_submit_total[5m]))"
     target: 0.999
     window: 30d
   - name: terminal_immutability
-    description: 终态不可逆成功率（乱序/重放事件不改回非终态，I1/）
+    description: 终态不可逆成功率（乱序/重放事件不改回非终态）
     sli: "sum(rate(agentflow_terminal_guard_checks_total{result='pass'}[5m])) / sum(rate(agentflow_terminal_guard_checks_total[5m]))"
     target: 1.0
     window: 30d
     note: "硬红线：任何一次终态回写即视为破线"
   - name: lease_takeover_latency
-    description: Redis 半开 / 实例关停后租约接管时延（/ B4）
+    description: Redis 半开 / 实例关停后租约接管时延
     sli: "histogram_quantile(0.99, sum(rate(agentflow_lease_takeover_seconds_bucket[5m])) by (le))"
     target_seconds: 30.0
     window: 30d
   - name: projection_lag
-    description: 事件流到 MySQL 投影的延迟（单向投影 I1）
+    description: 事件流到 MySQL 投影的延迟（单向投影）
     sli: "agentflow_projection_lag_seconds"
     target_seconds: 5.0
     window: 30d
   - name: monthly_quota_consistency
-    description: 月度额度账期一致性（Java period == SQL period，/I5）
+    description: 月度额度账期一致性（Java period == SQL period）
     sli: "sum(rate(agentflow_quota_period_checks_total{result='pass'}[5m])) / sum(rate(agentflow_quota_period_checks_total[5m]))"
     target: 1.0
     window: 30d
@@ -84,9 +84,8 @@ prometheus:
           labels:
             severity: critical
             team: agentflow
-            batch: "4"
           annotations:
-            summary: "控制面显示已触发但引擎无执行（双写语义裂缝，I2 破线）"
+            summary: "控制面显示已触发但引擎无执行（双写语义裂缝）"
             description: "校验 submitExecution 返回体 status/note；引擎未派发应返回 409/5xx 而非 202。"
             runbook: "scripts/drill_canary_rollback_runbook.md 第 4 节"
 
@@ -96,9 +95,8 @@ prometheus:
           labels:
             severity: critical
             team: agentflow
-            batch: "4"
           annotations:
-            summary: "终态被回写（I1 / 破线）"
+            summary: "终态被回写（红线破线）"
             description: "检查 markTerminal WHERE 前置状态、execution_tracker 终态守卫、Reaper 排除已终态行。"
             runbook: "scripts/drill_canary_rollback_runbook.md 第 4 / 5 节"
 
@@ -108,7 +106,6 @@ prometheus:
           labels:
             severity: critical
             team: agentflow
-            batch: "4"
           annotations:
             summary: "月度额度跨月劈月（Java CST 月与 SQL UTC 月不一致）"
             description: "period 必须由注入的 PeriodClock 统一计算后传参，任何 SQL 不得用 NOW() 算账期。"
@@ -119,7 +116,6 @@ prometheus:
           labels:
             severity: warning
             team: agentflow
-            batch: "4"
           annotations:
             summary: "租约接管 p99 > 30s（Redis 半开 / 关停 drain 异常）"
             description: "检查 redis socket_timeout、renew 的 wait_for、shutdown 是否先 drain 在途 _tasks。"
@@ -130,10 +126,9 @@ prometheus:
           labels:
             severity: warning
             team: agentflow
-            batch: "4"
           annotations:
             summary: "事件流到 MySQL 投影延迟 > 5s"
-            description: "确认 EventProjector 单实例租约（LeaderElector I3）与消费堆积。"
+            description: "确认 EventProjector 单实例租约（LeaderElector）与消费堆积。"
 
         - alert: AgentFlowPreviewResumed
           expr: "increase(agentflow_preview_resumed_total[5m]) > 0"
@@ -141,9 +136,8 @@ prometheus:
           labels:
             severity: critical
             team: agentflow
-            batch: "4"
           annotations:
-            summary: "preview 被恢复扫描续跑（，可能重复调用模型/重复计费）"
+            summary: "preview 被恢复扫描续跑（可能重复调用模型/重复计费）"
             description: "确认 preview 打标、finally 强制终态、恢复扫描跳过 preview spec。"
 
         - alert: AgentFlowEngineReadinessDown
@@ -152,7 +146,6 @@ prometheus:
           labels:
             severity: critical
             team: agentflow
-            batch: "4"
           annotations:
             summary: "引擎 readiness 非 200（PG / Redis 依赖 down）"
             description: "readiness 必须探真实依赖；依赖 down 返回 503 由编排器摘除实例。"
@@ -163,7 +156,6 @@ prometheus:
           labels:
             severity: critical
             team: agentflow
-            batch: "4"
           annotations:
             summary: "/engine/** 白名单外路径被放行或客户端内部令牌未被剥离"
             description: "网关应剥离 X-Internal-Token 并由服务端注入 engine.internal-token。"

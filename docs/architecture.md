@@ -19,7 +19,7 @@
 | D8 | 灰度发布：`workflow_definition.traffic_json = [{versionId, weight}]`，触发时按 `hash(idempotencyKey)` 确定性分桶选版本；NULL = 100% current | 同一幂等键永远路由同一版本，天然防重 |
 | D9 | retrieval 节点走 `RetrievalProvider` 抽象；P0 提供 mock provider（离线固定语料），P2 接 pgvector / DocQA RAG 服务 | §4 栈未列 pgvector，P0 须可离线演示 |
 | D10 | 表达式引擎用 simpleeval 白名单（禁下划线属性、禁 import、禁 lambda）；模板用 Jinja2 `SandboxedEnvironment`；CI 用 Ruff S 规则 + grep 禁 `eval`/`exec` | §9 安全约束 |
-| D11 | 预算硬停止实现：发出任何 Command 前，引擎用 Redis 原子 `INCRBY` 预占 `min(node.maxTokens, 剩余预算)`，并把该 Command 的 `maxTokens` 钳到剩余额度；完成后按实际结算回冲预占 | 保证 `tokenUsed ≤ tokenBudget` 恒成立（US-05） |
+| D11 | 预算硬停止实现：发出任何 Command 前，引擎用 Redis 原子 `INCRBY` 预占 `min(node.maxTokens, 剩余预算)`，并把该 Command 的 `maxTokens` 钳到剩余额度；完成后按实际结算回冲预占 | 保证 `tokenUsed ≤ tokenBudget` 恒成立 |
 
 ---
 
@@ -62,7 +62,7 @@ flowchart TB
     GW --> WF
     GW --> CONN
     GW --> AUD
-    WF -->|/engine/** 唯一入口 D1| GW
+    WF -->|/engine/** 唯一入口| GW
     GW --> ENG
     ENG -->|ToolCommand P2 起| GW
     ENG --> PG
@@ -73,7 +73,7 @@ flowchart TB
     WF --> MYSQL
     AUD --> MYSQL
     CONN --> MYSQL
-    WF -->|轮询事件投影 D2| GW
+    WF -->|轮询事件投影| GW
     REDIS -->|pub/sub| WF
     MQ --> AUD
     CONN --> TOOL
@@ -85,7 +85,7 @@ flowchart TB
 |---|---|---|
 | agent-gateway | 8080 | 唯一对外入口；`/api/v1/**` 业务路由，`/engine/**` 内部路由（仅服务间） |
 | workflow-service | 8084 | 工作流/版本/执行索引/审批/事件投影/SSE Hub |
-| connector-service | 8085 | P2 加入；P0–P1 由 engine 内置 mock 连接器替代（D3） |
+| connector-service | 8085 | P2 加入；P0–P1 由 engine 内置 mock 连接器替代 |
 | audit-service | 8086 | RocketMQ 消费者 + `/admin/audit` 查询 |
 | engine-api | 8000 | 仅内网；拒绝无 `X-Internal-Token` 请求 |
 | 前端 dev | 5174 | Vite dev server（IPv4 `127.0.0.1`，`strictPort`），代理到 8080；避开常被其他项目占用的 5173 |
@@ -440,7 +440,7 @@ CREATE TABLE execution_event (
   execution_id      UUID        NOT NULL,
   event_type        TEXT        NOT NULL,                -- 见 §5.2 事件目录
   node_key          TEXT        NULL,
-  payload           JSONB       NOT NULL,                -- 口径见 D5
+  payload           JSONB       NOT NULL,                -- 口径见决策表 D5（溢出落 node_io）
   aggregate_version INT         NOT NULL,                -- 每 execution 严格递增
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -577,10 +577,10 @@ stateDiagram-v2
 | CheckpointCreated | 执行 | completedNodes[], variablesSnapshot(脱敏), tokenUsed, stepsUsed | 核心（每 10 事件） |
 | NodeScheduled | 节点 | nodeKey, nodeType, attempt, dependsOn[] | 核心 |
 | NodeStarted | 节点 | nodeKey, attempt, inputDigest | 核心 |
-| NodeCompleted | 节点 | nodeKey, attempt, **output（完整·已脱敏，D5）**, outputDigest, tokenUsed, latencyMs | 核心 |
+| NodeCompleted | 节点 | nodeKey, attempt, **output（完整·已脱敏）**, outputDigest, tokenUsed, latencyMs | 核心 |
 | NodeFailed | 节点 | nodeKey, attempt, errorCode, class(PERMANENT/TRANSIENT), retryable, latencyMs | 核心 |
 | NodeRetryScheduled `ex` | 节点 | nodeKey, nextAttempt, delayMs, cause | §8.4 重试 |
-| NodeSkipped `ex` | 节点 | nodeKey, reason(BRANCH_NOT_TAKEN/UPSTREAM_SKIPPED), byNodeKey | US-03 SKIPPED 必须可见 |
+| NodeSkipped `ex` | 节点 | nodeKey, reason(BRANCH_NOT_TAKEN/UPSTREAM_SKIPPED), byNodeKey | SKIPPED 必须可见 |
 | NodeSuspended `ex` | 节点 | nodeKey, reason | 状态机完备性 |
 | GateSuspended | 节点 | nodeKey, approversRule, timeoutAt, defaultBranch | 核心（P3） |
 | GateResolved | 节点 | nodeKey, decision(APPROVED/REJECTED/TIMEOUT), resolvedBy | 核心（P3） |
@@ -610,9 +610,9 @@ stateDiagram-v2
 
 ### 5.5 租约
 
-`af:lease:{executionId}` = `SET NX PX=30000`，value=workerId+leaseId；每 10s 续约；**每次事件追加前**校验租约仍归属自己（GET 比对）；租约丢失 → 停止写事件并退出。正确性兜底是 `aggregate_version` 乐观锁（US-04 租约冲突场景）。
+`af:lease:{executionId}` = `SET NX PX=30000`，value=workerId+leaseId；每 10s 续约；**每次事件追加前**校验租约仍归属自己（GET 比对）；租约丢失 → 停止写事件并退出。正确性兜底是 `aggregate_version` 乐观锁（租约冲突场景）。
 
-### 5.6 预算硬停止（D11 细化）
+### 5.6 预算硬停止
 
 发出 Command 前：`remaining = tokenBudget - tokenUsed`；`remaining ≤ 0` → `ExecutionFailed{errorCode: EXEC-BUDGET_EXHAUSTED}`，不再发任何 Command；否则该 Command 的 `maxTokens := min(node.maxTokens, remaining)`，Redis 预占；完成时按实际 `tokenUsed` 结算回冲。MySQL `budget_ledger` 由 projector 异步对账。
 
@@ -1166,7 +1166,7 @@ AgentFlow/
 │   └── tests/              # auth-store / sse / flow-convert / dsl-validate / design-redlines
 ├── e2e/
 │   ├── conftest.py                   # 登录与租户/用户 fixture、等待终态
-│   ├── test_p0_happy_path.py         # 创建→草稿→发布→执行→事件树
+│   ├── test_happy_path.py            # 创建→草稿→发布→执行→事件树
 │   ├── test_dsl_cycle_422.py
 │   ├── test_cross_tenant_404.py
 │   ├── test_idempotent_trigger.py    # 同键并发 → 1 执行
@@ -1202,7 +1202,7 @@ AgentFlow/
 | 阶段 | 本文档支撑条目 |
 |---|---|
 | P0 | 模块骨架（common/gateway/workflow-service/audit-service）、V001–V004、start/llm/tool/end 节点、拓扑同步执行、事件追加、SSE、mock provider、3 条 E2E |
-| P1 | 事件溯源全量（§5.3）、租约（§5.5）、Checkpoint、恢复扫描（D4）、condition/loop/parallel/transform/subworkflow、灰度（D8）、故障注入测试 |
+| P1 | 事件溯源全量（§5.3）、租约（§5.5）、Checkpoint、恢复扫描、condition/loop/parallel/transform/subworkflow、灰度、故障注入测试 |
 | P2 | 三级租户继承、connector-service + V005、凭据加密、成本中心、预算硬停止对账（§5.6） |
 | P3 | human_gate + V006、审批裁决回调（HTTP 直达 + outbox 重投）、评测集、A/B 对比 |
 
@@ -1225,7 +1225,7 @@ AgentFlow/
 2. **成功响应信封**：外部 API 成功响应统一 `ApiResponse{code:"OK", msg, data, traceId}`（复用 DocQA 惯例）；错误一律 ProblemDetail。§7 的响应体示例均视为 `data` 字段内容。
 3. **RocketMQ 主题名**：`af-audit-event`（RocketMQ 主题不允许 `.`）。正文他处的 `af.audit.events` 以此为准。
 4. **审计只追加的第三重保证**：除 DB 授权外，V004 迁移内置 BEFORE UPDATE/DELETE 触发器（`AUD-APPENDONLY-001`）；audit-service 的 ArchUnit 测试禁止 repo 包依赖 MyBatis `@Update`/`@Delete`。
-5. **PG 新增 `execution_spec` 表**（V001）：派发请求快照（含不可变 DSL），使引擎崩溃恢复自足（D4），不读业务库。
+5. **PG 新增 `execution_spec` 表**（V001）：派发请求快照（含不可变 DSL），使引擎崩溃恢复自足，不读业务库。
 6. **`workflow_definition` 增加 `seq BIGINT AUTO_INCREMENT UNIQUE`**：游标分页（cursor = base64(seq)）。
 7. **`app_user` 增加 `platform_role ENUM('USER','ADMIN')`**：平台级 /admin/** 判定；租户角色仍在 `tenant_member`。
 8. **`refresh_token` 用 `status ENUM('ACTIVE','USED','REVOKED')`** 替代 revoked_at（重用检测语义），与 DocQA 轮换族一致。
@@ -1348,7 +1348,7 @@ transactional outbox：
 |---|---|---|
 | 引擎（Python） | `app/dsl/validate.py` 用 `ast.parse` + 白名单递归，拒函数调用/下标/未知属性 | 发布期（`DSL-GATE-EXPR` 类错误） |
 | 控制面（Java） | `gate/GateExpression`：手写词法+递归下降，`validate` / `evaluate` 两入口 | 运行期展开审批人 |
-| 画布（TS） | `dsl/approver-expr.ts`：`approverExpressionError()` 即时体检 | 编辑期 |
+| 画布（TS） | `dsl/approver-expr.ts`：`approverExpressionError()` 即时校验 | 编辑期 |
 
 文法：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`；
 比较 `== != < <= > >=`；成员 `in` / `not in`；布尔 `and` / `or` / `not`（支持括号）；
@@ -2021,7 +2021,7 @@ id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**—
 
 ### 25.2 「不知道」要能表达
 
-三个来源会让模型为空：非 LLM 节点、输出超过 256KB 被溢出成引用（D5，payload 里只剩摘要）、
+三个来源会让模型为空：非 LLM 节点、输出超过 256KB 被溢出成引用（payload 里只剩摘要）、
 V013 之前的历史执行。这些行统一进空串桶，前端渲染「未标注 · 非 LLM 或输出未带模型」。
 
 不按「工作流的默认模型」回填：默认模型只是没写 `config.model` 时的兜底，节点完全可以覆盖它，

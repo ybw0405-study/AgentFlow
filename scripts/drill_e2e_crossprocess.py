@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""批次 4 / 跨进程全链 e2e 脚本骨架 — AgentFlow。
+"""跨进程全链 e2e 脚本骨架 — AgentFlow。
 
 目标链路（真实环境才有意义）：
   前端 -> agent-gateway(路径白名单 + 服务端注入内部凭据) ->
@@ -8,10 +8,10 @@
   EventProjector 单向幂等投影 -> MySQL workflow_execution 终态 -> 前端查询一致。
 
 要机检的不变量（方案 4.1）：
-  I1 终态只能由 projector 从事件流单向写入；乱序/重放事件不得把 CANCELLED 改回 SUCCEEDED。
-  I2 提交只有一条通道（outbox 与业务写入同事务）；引擎「接受但未派发」必须返回明确错误，202 != 成功。
-  I3 定时任务统一 LeaderElector，单实例假设不能只写在文档里。
-  I6 关停顺序：停止接收 -> drain 在途 -> 停后台 -> 关连接池。
+  终态只能由 projector 从事件流单向写入；乱序/重放事件不得把 CANCELLED 改回 SUCCEEDED。
+  提交只有一条通道（outbox 与业务写入同事务）；引擎「接受但未派发」必须返回明确错误，202 != 成功。
+  定时任务统一 LeaderElector，单实例假设不能只写在文档里。
+  关停顺序：停止接收 -> drain 在途 -> 停后台 -> 关连接池。
    preview 打标并从恢复扫描排除，超时/重启不续跑、不重复计费。
 
 【脚手架定位 / 诚实边界】
@@ -50,16 +50,16 @@ STAGES = [
     "submit_execution", # 提交，断言返回体语义（202 != 成功）
     "engine_event_stream", # 事件流写入、单调 last_seq
     "projection_terminal", # MySQL 投影终态与事件流一致
-    "terminal_immutable", # 乱序/重放事件不改回非终态（I1）
+    "terminal_immutable", # 乱序/重放事件不改回非终态
     "preview_no_resume", # preview 超时/重启不续跑
     "report",
 ]
 
 ASSERTIONS = [
-    "I1 终态不可逆：重放 SUCCEEDED/FAILED 事件不覆盖已有终态",
-    "I2 提交单通道：outbox 行与业务写入同事务；引擎未派发返回 409/5xx 而非 202",
-    "I3 投影器/Reaper/relay 走 LeaderElector，仅单实例生效",
-    "I6 关停先 drain 在途 _tasks 再关 store/redis（含真实在跑任务）",
+    "终态不可逆：重放 SUCCEEDED/FAILED 事件不覆盖已有终态",
+    "提交单通道：outbox 行与业务写入同事务；引擎未派发返回 409/5xx 而非 202",
+    "投影器/Reaper/relay 走 LeaderElector，仅单实例生效",
+    "关停先 drain 在途 _tasks 再关 store/redis（含真实在跑任务）",
     " /engine/** 白名单外 404；客户端 X-Internal-Token 被剥离改服务端注入",
     " preview 打标、finally 强制终态、恢复扫描不续跑",
     " readiness 探 PG+Redis，依赖 down 返回 503",
@@ -111,7 +111,7 @@ def http_json(method: str, url: str, body: dict | None, headers: dict, timeout: 
 def run(args: argparse.Namespace) -> int:
     r = Result(execute=args.execute)
     print("=" * 72)
-    print("批次4 跨进程全链 e2e 骨架 (AgentFlow) | execute =", args.execute)
+    print("跨进程全链 e2e 骨架 (AgentFlow) | execute =", args.execute)
     if not args.execute:
         print("DRY-RUN：仅列出阶段与断言，不发起任何请求。加 --execute 才会连真实服务。")
     print("=" * 72)
@@ -162,7 +162,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="AgentFlow 批次4 跨进程全链 e2e 骨架（默认 dry-run）")
+    p = argparse.ArgumentParser(description="AgentFlow 跨进程全链 e2e 骨架（默认 dry-run）")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--gateway-url", default="http://127.0.0.1:8080")
     p.add_argument("--engine-url", default="http://127.0.0.1:8000")

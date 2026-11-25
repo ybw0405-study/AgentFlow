@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 批次 4 / 故障注入脚本骨架 — AgentFlow
+# 故障注入脚本骨架 — AgentFlow
 # -----------------------------------------------------------------------------
-# 三类注入（方案第 6 节批次 4）：
+# 三类注入（方案第 6 节）：
 #   redis-halfopen   Redis TCP 半开 -> 租约 renew 不永久阻塞
 #   mq-backlog       MQ 堆积        -> 事件投影 / 重投 / 终态不回写
-#   rolling-restart  实例滚动关停    -> shutdown 三级收口、在途任务 drain（B4）
+#   rolling-restart  实例滚动关停    -> shutdown 三级收口、在途任务 drain
 #
 # 【脚手架定位 / 诚实边界】
 #   * 这是可执行骨架，**本机未做真实故障演练**：没有真实实例/流量，
@@ -49,7 +49,7 @@ run() {
 }
 
 say "============================================================================"
-say "批次4 故障注入骨架 (AgentFlow) | case=$case_name apply=$APPLY target=${TARGET:-<none>} duration=${DURATION}s"
+say "故障注入骨架 (AgentFlow) | case=$case_name apply=$APPLY target=${TARGET:-<none>} duration=${DURATION}s"
 say "本机未做真实故障演练；本脚本默认只打印计划，--apply 才会动真实目标。"
 say "============================================================================"
 
@@ -66,14 +66,14 @@ case "$case_name" in
     say "观测点："
     say "  - renew() 是否在 wait_for 超时内返回，而非让 _run 卡在 finally"
     say "  - _tasks 是否清空、租约是否 release、start_sweep 能否接管（不是永久僵死）"
-    say "  - /internal/health readiness 是否探 Redis 并返回 503（，LB 摘除）"
+    say "  - /internal/health readiness 是否探 Redis 并返回 503（LB 摘除）"
     say "  - 不出现误导性 'worker crashed' 刷屏"
     say "恢复：DEBUG SLEEP 到期 / network connect / 删除 iptables 规则"
     say "判据：接管时延 < SLO（见 drill_slo_alerts.yaml）；无永久僵死执行；恢复后 PING 通。"
     ;;
 
   mq-backlog)
-    say "目的：MQ 堆积 / 迟到事件下，终态不可逆、投影单调（I1）。"
+    say "目的：MQ 堆积 / 迟到事件下，终态不可逆、投影单调。"
     say "前置：记录基线堆积深度；确认事件流 last_seq 单调、execution_tracker 终态守卫。"
     say "注入思路：暂停 EventProjector 消费 / 批量投递事件，制造堆积与乱序重放。"
     run "docker pause ${TARGET:-agentflow-workflow} || true"
@@ -89,7 +89,7 @@ case "$case_name" in
     ;;
 
   rolling-restart)
-    say "目的：SIGTERM 滚动发布时 shutdown 三级收口，在途执行先 drain 再关 store/redis（B4/I6）。"
+    say "目的：SIGTERM 滚动发布时 shutdown 三级收口，在途执行先 drain 再关 store/redis。"
     say "前置：至少 2 个实例、注入一个真实在跑任务（不要空 _tasks）、LB 摘流、记录 digest。"
     say "注入思路：逐个实例 SIGTERM，观察在途任务收口顺序。"
     run "docker stop --signal=SIGTERM --time=${DURATION} ${TARGET:-agentflow-engine}"

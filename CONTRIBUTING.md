@@ -173,5 +173,5 @@ engine-api/.venv/Scripts/pip freeze > engine-api/requirements.lock.txt
 
 按 `.github/workflows/` 的六条流水线自查（`java-ci` / `frontend-ci` / `python-ci` /
 `contract-drift` / `e2e` / `security`），并在 PR 描述里写清影响面（改到哪些服务、是否需要迁移、
-是否影响线上契约）。`security` 是本轮新增的依赖 / 代码扫描门禁（G9），合并到 `main` 后方生效。
+是否影响线上契约）。`security` 是本轮新增的依赖 / 代码扫描门禁，合并到 `main` 后方生效。
 涉及安全的改动请先看 [SECURITY.md](SECURITY.md)。
