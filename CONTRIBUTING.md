@@ -143,6 +143,7 @@ python scripts/check-java-routes.py
 - **CI 强制**：`scripts/check_migration_immutability.py`（由 `config-guard` workflow 调用）会对比最近一个发布 tag，**任何在 tag 时已存在的迁移文件被修改都会让 CI 失败**。改动排序规则、索引、列定义等一律新增 `V+1__<desc>.sql`，用 `ALTER` / `CREATE INDEX` 承载。
 - **本地 dev 库漂移**：若本地库在校验和与当前迁移文件不一致（通常因为拉取了改过迁移的分支），用 `docker compose -f ops/docker-compose.infra.yml run --rm flyway repair` 对齐 `flyway_schema_history`，再 `migrate`。`repair` 只改 schema history 表、不动业务数据。
 - **镜像与迁移一致性**：Java 服务 jar 内打包了 `db/mysql/migration`（`workflow-service/pom.xml` 的 `resources`），改了迁移后必须 `docker compose build` 重建 Java 服务镜像，否则内嵌 Flyway 与挂载目录的校验和不一致会让服务启动失败。
+- **镜像-源码新鲜度预检**：`scripts/check_image_freshness.py`（由 `start-dev.ps1 -Containers` 自动调用）对比 workflow-service 镜像创建时间与最新迁移文件 mtime，过期即警告重建。本地若曾手动 `docker compose build` 后又改了源码，重跑前请先 `build` 或留意该警告。
 
 ## 提交信息
 

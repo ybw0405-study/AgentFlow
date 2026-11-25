@@ -55,6 +55,9 @@ if ($Containers) {
   if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
   if ($null -eq $env:AF_DEMO_ACCOUNTS) { $env:AF_DEMO_ACCOUNTS = 'true' }
   Write-Host '==> [4/5] -Containers：全容器模式，compose 起应用层'
+  # 镜像-源码新鲜度预检：防止用过期本地镜像跑新迁移导致 Flyway checksum 冲突。
+  # 仅警告（exit 2），不阻断；docker 不可用时跳过。
+  python (Join-Path $root 'scripts/check_image_freshness.py') 2>&1 | ForEach-Object { Write-Host $_ }
   docker compose -f (Join-Path $root 'ops/docker-compose.infra.yml') `
                  -f (Join-Path $root 'ops/docker-compose.app.yml') up -d
   if ($LASTEXITCODE -ne 0) { throw 'docker compose up (app) failed' }
