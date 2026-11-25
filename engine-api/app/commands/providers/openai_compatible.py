@@ -16,8 +16,9 @@ import json
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -481,7 +482,9 @@ class OpenAICompatibleProvider:
                             try:
                                 await on_delta(delta)
                             except Exception:
-                                logger.warning("on_delta callback failed; continuing stream", exc_info=True)
+                                logger.warning(
+                                    "on_delta callback failed; continuing stream", exc_info=True
+                                )
         except httpx.TimeoutException as exc:
             return self._failure("LLM-TIMEOUT-001", True, started, type(exc).__name__)
         except httpx.HTTPError as exc:

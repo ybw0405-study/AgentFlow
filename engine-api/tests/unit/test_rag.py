@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.errors import PermanentNodeError, TransientNodeError
+from app.dsl.models import RetrievalNode
 from app.rag.embedding import OpenAIEmbeddingProvider
 from app.rag.fusion import rrf_fuse
 from app.rag.rerank import OpenAIRerankProvider
@@ -304,8 +305,6 @@ class _FakeReranker:
 
 
 def _node_rerank(mode: str) -> RetrievalNode:
-    from app.dsl.models import RetrievalNode
-
     return RetrievalNode(
         type="retrieval",
         key="r1",

@@ -97,7 +97,11 @@ class OpenAIRerankProvider:
         if len({index for index, _ in items}) != len(items):
             raise PermanentNodeError("RERANK-RESPONSE-001", "rerank response has duplicate indexes")
         if any(index < 0 or index >= len(documents) for index, _ in items):
-            raise PermanentNodeError("RERANK-RESPONSE-001", "rerank response has an out-of-range index")
+            raise PermanentNodeError(
+                "RERANK-RESPONSE-001", "rerank response has an out-of-range index"
+            )
         if any(not math.isfinite(score) for _, score in items):
-            raise PermanentNodeError("RERANK-RESPONSE-001", "rerank response has a non-finite score")
+            raise PermanentNodeError(
+                "RERANK-RESPONSE-001", "rerank response has a non-finite score"
+            )
         return items
