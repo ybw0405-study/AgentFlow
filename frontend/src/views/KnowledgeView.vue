@@ -188,7 +188,7 @@ async function createWorkflow(): Promise<void> {
         position: { x: 580, y: 180 },
         config: {
           provider: 'openai-compatible',
-          model: 'deepseek-chat',
+          model: 'deepseek-flash',
           promptTemplate:
             '请只依据以下文档片段回答，并注明出处。\n文档：{{ nodes.retrieve.output.text }}\n问题：{{ vars.question }}',
           maxTokens: 1024,

@@ -186,7 +186,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 清单外的服务点「自定义 OpenAI 兼容端点」自行填写端点、模型名与 Key，走同一套校验。「管理已有连接」直达「连接器」页：**高级模式**（连接器页与配置抽屉里的「模型来源 / provider / model」）字段一个没少，仍可手动精调、拉取模型清单、换密钥。
 
 1. 「连接器」→ 类型选「模型接入（OpenAI 兼容）」，填名称、Base URL（如 `https://api.deepseek.com/v1`）、API Key。允许域名留空会取 Base URL 的域名。
-2. 「模型」一栏可以直接填自己用的模型名（逗号分隔，如 `deepseek-chat, deepseek-reasoner`）；留空则创建时自动拉一次 `/models`。手填与拉取结果会取并集，上游不支持 `/models` 时靠手填照样能用。
+2. 「模型」一栏可以直接填自己用的模型名（逗号分隔，如 `deepseek-flash, deepseek-v4-pro`）；留空则创建时自动拉一次 `/models`。手填与拉取结果会取并集，上游不支持 `/models` 时靠手填照样能用。
 3. 画布选中 llm 节点，「模型来源」选这条连接，「model」下拉列出该连接的模型，也允许直接填清单外的名字；新建 llm 节点会自动挂上第一条模型连接。执行详情里 `output.model` 是**实际下发**的模型名。
 
 也可以不用连接、走进程级单端点（适合本地快速试）：在**启动脚本之前**设置环境变量（脚本不会覆盖它们，子进程会继承）。
@@ -194,7 +194,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
    ```powershell
    $env:AF_LLM_BASE_URL = 'https://api.deepseek.com/v1'   # 或 Qwen/Ollama/OpenAI 等兼容端点
    $env:AF_LLM_API_KEY  = '<你的密钥>'
-   $env:AF_LLM_MODEL    = 'deepseek-chat'
+   $env:AF_LLM_MODEL    = 'deepseek-flash'
    .\scripts\start-dev.ps1
    ```
 
@@ -205,7 +205,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 - 经连接调用时，端点与密钥**只在 connector-service 解密**并注入请求头；引擎与画布都只有连接 id。走进程级配置时同理，端点与密钥只来自环境变量，DSL 无法指定 URL。两条路径都不把密钥写进日志、错误体、事件载荷。
 - 上游 `401/403` → `LLM-AUTH-001`（永久）；`429/5xx/超时` → 瞬时错误，由引擎 `RetryPolicy` 重试；`400/404/422` → `LLM-REQUEST-001`（多为模型名不对）。未配置环境变量 → `LLM-NOT_CONFIGURED-001`。
 - 若上游不支持 `response_format`，设 `AF_LLM_JSON_RESPONSE_FORMAT=false`。
-- 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板与新建节点默认用非推理的 `deepseek-chat`。
+- 选推理型模型（`deepseek-flash` / `deepseek-v4-pro`）时，`maxTokens` 要留足思维链空间；否则思维链耗尽预算、正文为空，节点报 `LLM-RESPONSE-001`。示例、模板、新建节点与 `start-dev` 派生默认用 `deepseek-flash`（推理型，引擎会把低于 4096 的 `maxTokens` 自动抬到 4096）。以控制台 `/models` 清单为准，清单里没有的模型名会被上游拒绝。
 - 模型输入框下面会带能力标签（推理型 / 长上下文 / 支持 JSON / 图像输入）与上游给的上下文长度、输出上限。标签优先取上游 `/models` 的字段；上游只回 id 时按模型名推断并标「推断」，不硬编码某家某代的能力。选到推理型而 `maxTokens` 偏小时，界面给一个「设为 4096」的一键建议。
 - 走模型连接时，探测结果里的 `context_window` / `max_output_tokens` / `input_modalities` / `supported_parameters` / `effort.supported_levels` 会随模型清单一并写进连接配置（只搬这些白名单字段），画布据此标注能力、不必每次重新出网。连接建得早、库里还没有这份缓存时，界面退回按模型名推断——点一次「拉取模型」即可补齐。
 - 真实模型是**外部非确定性副作用**：callId 短期缓存与服务端去重可以挡住绝大多数重放，但缓存过期、跨进程崩溃或下游自身不幂等时仍可能重复计费（**整体语义是 at-least-once，不是恰好一次**）。生产环境 `AF_PRODUCTION=true` 时强制要求 https 端点。
@@ -480,7 +480,7 @@ git add docs/openapi/java-*.json
 | `AF_GATE_SWEEP_INTERVAL_S` | 15 | human_gate 超时裁决扫描间隔 |
 | `AF_LLM_BASE_URL` | 空 | 真实模型端点（OpenAI 兼容，如 `https://api.deepseek.com/v1`）；空则节点报 `LLM-NOT_CONFIGURED-001` |
 | `AF_LLM_API_KEY` | 空 | 上游密钥；只在 engine-api 进程内使用，绝不写入日志/事件/仓库 |
-| `AF_LLM_MODEL` | gpt-4o-mini | 默认模型名；`start-dev` 由 `DEEPSEEK_API_KEY` 派生为 `deepseek-chat`（非推理模式，正文不会被思维链吃光） |
+| `AF_LLM_MODEL` | gpt-4o-mini | 默认模型名；`start-dev` 由 `DEEPSEEK_API_KEY` 派生为 `deepseek-flash`（推理型，引擎自动抬 token） |
 | `AF_LLM_TIMEOUT_S` / `AF_LLM_MAX_RESPONSE_CHARS` | 60 / 100000 | 单次调用超时、响应文本上限 |
 | `AF_LLM_JSON_RESPONSE_FORMAT` | true | 若上游不支持 `response_format` 则置 false |
 | `AF_LLM_SEND_SEED` | false | 是否向上游传递确定性 seed（仅部分厂商支持） |
@@ -510,7 +510,7 @@ git add docs/openapi/java-*.json
 7. 评测与 A/B 用轮询收口（默认 3s），不是事件驱动；用例数上限 50/次。
 8. `loop.body` 与 `parallel.branches` 是子图，画布上有独立子图画布：面包屑逐层进出，层内可增删连线，子图内不能放 `start`、也不要求 `end`（出口由上层节点收口）；JSON 编辑保留为「高级」入口，与表单实时双向同步。校验能定位到 `loop_1.body#body_end` 这样的层内 key。**最多 4 层**在画布下钻、前端即时校验、引擎发布校验三处共用同一口径：到第 5 层明确报错（`子图最多嵌套 4 层` / `subgraph nesting exceeds 4 levels`），而不是无限递归把发布请求拖死，也不是静默跳过校验；到达上限的那一层照常做引用与结构检查。子图内可用 `vars.<itemVar>` / `vars.<indexVar>`，无需声明；不允许出现 `human_gate`（挂起后无法原地续跑）。
 9. `retrieval` 检索为本地词法 BM25（中文单字 + 二元组），不是语义向量召回；无 rerank、无 PDF/Office 解析、无增量索引重建。不引入 embedding 服务，文档内容不出服务端。单次检索扫描切片上限 20000，`topK` 上限 50，单文档上限 200000 字符 / 500 切片；超出导入会在请求期被拒绝，不会静默截断。
-10. 默认模型用非推理的 `deepseek-chat`。DeepSeek 的 `deepseek-flash` / `deepseek-v4-pro` 是推理模型，`max_tokens` 同时约束思维链与正文；给到 1024 时思维链可能吃光预算、正文为空。引擎与前端现在按同一口径从模型名推断推理型（只认 `deepseek` + `flash` / `v4` 这类组合，不会把别家的 `v4` 或 `gpt-4o-mini` 误标），LLM 节点对推理型且 `maxTokens < 4096` 的情况把下发值抬到 4096，预算预占也按抬升后的量算；DSL 不改写，`COMMAND_ISSUED` 事件与 `input_snapshot` 留 `reasoningAdjusted` / `configuredMaxTokens` 便于对账。这只能缓解、不能根治：思维链与正文共用一个上限是上游行为，真超出时节点仍以 `LLM-RESPONSE-001` 失败，不会退回示例文本。
+10. 默认模型用 `deepseek-flash`（以控制台 `/models` 清单为准）。DeepSeek 的 `deepseek-flash` / `deepseek-v4-pro` 是推理模型，`max_tokens` 同时约束思维链与正文；给到 1024 时思维链可能吃光预算、正文为空。引擎与前端现在按同一口径从模型名推断推理型（只认 `deepseek` + `flash` / `v4` 这类组合，不会把别家的 `v4` 或 `gpt-4o-mini` 误标），LLM 节点对推理型且 `maxTokens < 4096` 的情况把下发值抬到 4096，预算预占也按抬升后的量算；DSL 不改写，`COMMAND_ISSUED` 事件与 `input_snapshot` 留 `reasoningAdjusted` / `configuredMaxTokens` 便于对账。这只能缓解、不能根治：思维链与正文共用一个上限是上游行为，真超出时节点仍以 `LLM-RESPONSE-001` 失败，不会退回示例文本。
 11. 定时触发由 workflow-service 内的调度器扫表（默认 30s 一轮），多副本靠「扫描租约 + 分钟 claim + 幂等键 `sched-{triggerId}-{档位}`」三层收口，同一档只会有一条执行；租约是尽力而为的优化（Redis 故障时每个副本都会扫），正确性由幂等键保证。触发粒度到分钟，因此**秒位不为 0 的 cron 会被拒绝**（`*/5 * * * * *` 这类写法在分钟粒度的调度上只能跑到一半）。停机恢复的补跑策略由 `misfirePolicy` 决定（默认只补最近一档 / 补齐最近 20 档 / 完全跳过），窗口一律 24 小时，所以是「有界补偿」而不是 exactly-once 的追赶：`CATCH_UP_ALL` 也会丢弃 20 档以外的部分，`SKIP` 之后的档位不会追溯。并发上限可以按工作流配（`max_concurrent`，0 = 不限，上界 64），补跑逐档检查余量、跑满就停并把剩下的档位留到下一轮；但它是**保护性软限**：判定是「数在跑的执行再插入」，多入口并发时有 1~2 条的竞态窗口，目标是把一次补跑的洪峰削平，不是精确的配额系统。推迟以分钟为粒度（同一分钟内的重试会被 claim 挡住），所以「下一轮」实际是下一分钟。`SUSPENDED`（等人工审批）不占名额。Webhook 限流是 Redis 固定窗口 60 次/分钟：跨副本共享计数，但窗口边界处可能瞬时放行到 2 倍，需要严格令牌桶时再换滑动窗口。
 12. 试跑不落执行记录（不进执行列表、不产生版本、不进评测），但**消耗计入成本中心**：明细写 `preview_usage`、token 与节点数累加进 `budget_ledger`，所以在「用量」页与月度额度里都算得出来。它跑的是真实副作用（模型调用会真的计费），只是没有 `workflow_execution` 行，因此执行列表里看不到这次调用。上游含 `loop` / `parallel` / `human_gate` 的节点不给试跑。
 13. 模型能力标签不是权威数据：上游 `/models` 给出字段才标得更准，只回 id 时按模型名推断并显式标「推断」。标签只影响界面提示与 `maxTokens` 建议，不改变实际下发的请求。

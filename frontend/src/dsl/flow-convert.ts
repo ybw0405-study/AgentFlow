@@ -106,7 +106,7 @@ export function newNodeConfig(
       return {
         provider: 'openai-compatible',
         ...(llmConnection ? { connectionId: llmConnection.id } : {}),
-        model: llmConnection?.defaultModel || llmModel || 'deepseek-chat',
+        model: llmConnection?.defaultModel || llmModel || 'deepseek-flash',
         promptTemplate: '{{ vars.question }}',
         maxTokens: 1024,
       }

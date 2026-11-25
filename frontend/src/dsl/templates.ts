@@ -28,7 +28,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           position: { x: 340, y: 160 },
           config: {
             provider: 'openai-compatible',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             promptTemplate: '{{ vars.question }}',
             maxTokens: 1024,
           },
@@ -60,7 +60,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           position: { x: 300, y: 200 },
           config: {
             provider: 'openai-compatible',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             promptTemplate: '请就以下问题起草回复：{{ vars.question }}',
             maxTokens: 1024,
           },
@@ -84,7 +84,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           position: { x: 820, y: 110 },
           config: {
             provider: 'openai-compatible',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             promptTemplate: '润色成正式回复：{{ vars.question }}',
             maxTokens: 1024,
           },
@@ -146,7 +146,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
                     type: 'llm',
                     config: {
                       provider: 'openai-compatible',
-                      model: 'deepseek-chat',
+                      model: 'deepseek-flash',
                       promptTemplate: '只列出与问题相关的事实要点：{{ vars.question }}',
                       maxTokens: 512,
                     },
@@ -166,7 +166,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
                     type: 'llm',
                     config: {
                       provider: 'openai-compatible',
-                      model: 'deepseek-chat',
+                      model: 'deepseek-flash',
                       promptTemplate: '指出回答这个问题需要注意的风险与前提：{{ vars.question }}',
                       maxTokens: 512,
                     },
@@ -191,7 +191,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
           position: { x: 620, y: 200 },
           config: {
             provider: 'openai-compatible',
-            model: 'deepseek-chat',
+            model: 'deepseek-flash',
             promptTemplate: '结合知识库与客户记录回答：{{ vars.question }}',
             maxTokens: 1024,
           },
