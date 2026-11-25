@@ -198,6 +198,24 @@ class LlmExecutor:
         }
         if cfg.output_mode != "text" and _accepts_stream_kwarg(provider):
             kwargs["stream"] = False
+        # 真实时流式：stream-capable provider 在 text 模式下边读边回调 emit OUTPUT_DELTA，
+        # 客户端看到逐 token 打字机而非完整响应到达后批量回放。
+        # deltas_emitted 记录已实时推送的数量；provider 未走流式（或未回调）时为 0，
+        # 下面的补发循环再按 extra["deltas"] 顺序推送，行为与改造前一致。
+        deltas_emitted = 0
+
+        async def _on_delta(text: str) -> None:
+            nonlocal deltas_emitted
+            if not isinstance(text, str) or not text:
+                return
+            await ctx.emit(
+                EventType.OUTPUT_DELTA,
+                {"callId": call_id, "index": deltas_emitted, "text": text},
+            )
+            deltas_emitted += 1
+
+        if _accepts_stream_kwarg(provider):
+            kwargs["on_delta"] = _on_delta
         try:
             result = await provider.complete(**kwargs)
         except TransientNodeError as exc:
@@ -232,21 +250,24 @@ class LlmExecutor:
         resolved_model = str(result.extra.get("model") or cfg.model)
 
         # 流式增量作为展示层事件推送：严格落在 COMMAND_COMPLETED 之前，
-        # 且绝不影响 NodeResult —— 下游只消费完整结果。无增量（非流式 / 上游不支持）
-        # 时这一整块为空，行为与之前逐字节一致。
-        deltas = result.extra.get("deltas")
-        if isinstance(deltas, list):
-            for idx, delta in enumerate(deltas):
-                if not isinstance(delta, str) or not delta:
-                    continue
-                await ctx.emit(
-                    EventType.OUTPUT_DELTA,
-                    {
-                        "callId": call_id,
-                        "index": idx,
-                        "text": delta,
-                    },
-                )
+        # 且绝不影响 NodeResult —— 下游只消费完整结果。
+        # 真实时路径（on_delta 已边读边 emit）下 deltas_emitted > 0，这里跳过避免重复推送；
+        # provider 未走流式 / 未回调时 deltas_emitted == 0，按 extra["deltas"] 顺序补发，
+        # 行为与改造前一致。
+        if deltas_emitted == 0:
+            deltas = result.extra.get("deltas")
+            if isinstance(deltas, list):
+                for idx, delta in enumerate(deltas):
+                    if not isinstance(delta, str) or not delta:
+                        continue
+                    await ctx.emit(
+                        EventType.OUTPUT_DELTA,
+                        {
+                            "callId": call_id,
+                            "index": idx,
+                            "text": delta,
+                        },
+                    )
 
         await ctx.emit(
             EventType.COMMAND_COMPLETED,

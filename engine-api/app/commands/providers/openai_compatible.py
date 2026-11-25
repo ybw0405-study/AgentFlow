@@ -17,7 +17,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import httpx
 
@@ -312,6 +312,7 @@ class OpenAICompatibleProvider:
         call_id: str = "",
         space_id: str = "",
         stream: bool | None = None,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> CommandResult:
         started = time.monotonic()
         if not self.configured:
@@ -356,6 +357,7 @@ class OpenAICompatibleProvider:
                 system=system,
                 output_mode=output_mode,
                 resolved_model=resolved_model,
+                on_delta=on_delta,
             )
 
         try:
@@ -431,6 +433,7 @@ class OpenAICompatibleProvider:
         system: str | None,
         output_mode: str,
         resolved_model: str,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> CommandResult:
         """流式路径：逐 SSE 事件读取增量，最终仍组装成与一次性调用完全一致的完整结果。
 
@@ -438,6 +441,8 @@ class OpenAICompatibleProvider:
         - 返回的 ``CommandResult.data`` 与 ``extra.usage`` 与非流式路径完全一致；
         - 增量以 ``extra["deltas"]`` 单独携带（list[str]，去空、不重复计费），
           供调用方在 COMMAND_COMPLETED 前逐个推成 OutputDelta 展示事件；
+        - 若传入 ``on_delta``，则**边读边回调**实时推送（真实时打字机），
+          ``extra["deltas"]`` 仍保留完整序列用于审计/重放，但调用方不应再二次 emit；
         - 上游若不支持/未返回流式增量，回退成单条完整文本，语义无损。
         """
         try:
@@ -470,6 +475,13 @@ class OpenAICompatibleProvider:
                     if delta:
                         parts.append(delta)
                         deltas.append(delta)
+                        # 真实时推送：上游每产出一个 delta 立即回调，不等整段流读完。
+                        # 回调内由调用方（llm.py）emit OUTPUT_DELTA 事件；失败不阻断生成。
+                        if on_delta is not None:
+                            try:
+                                await on_delta(delta)
+                            except Exception:
+                                logger.warning("on_delta callback failed; continuing stream", exc_info=True)
         except httpx.TimeoutException as exc:
             return self._failure("LLM-TIMEOUT-001", True, started, type(exc).__name__)
         except httpx.HTTPError as exc:
