@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.errors import PermanentNodeError, TransientNodeError
 from app.dsl.models import RetrievalNode
+from app.errors import PermanentNodeError, TransientNodeError
 from app.rag.embedding import OpenAIEmbeddingProvider
 from app.rag.fusion import rrf_fuse
 from app.rag.rerank import OpenAIRerankProvider
