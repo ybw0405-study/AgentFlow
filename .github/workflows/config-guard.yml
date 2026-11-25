@@ -48,6 +48,9 @@ jobs:
       - name: docker compose config（含 G16 digest 固定）
         run: docker compose -f ops/docker-compose.infra.yml config --quiet
 
+      - name: 迁移不可变门禁（已发布迁移禁止修改）
+        run: python scripts/check_migration_immutability.py
+
       - name: workflow / compose 静态门禁
         run: |
           python - <<'PY'
@@ -129,7 +132,7 @@ jobs:
           if errors:
               print('配置守卫失败：', file=sys.stderr)
               for item in errors:
-                  print(f'  - {item}', file=sys.stderr)
+                  print(f' - {item}', file=sys.stderr)
               sys.exit(1)
           print(f'配置守卫通过：{len(workflows)} 个 workflow、compose 镜像全部按 digest 固定。')
           PY
@@ -175,13 +178,13 @@ jobs:
           # 不是生产凭据；生产路径一律环境变量注入（见 SECURITY.md）。
           # 新增豁免必须在此写明理由；清单之外的命中仍然硬失败。
           dev_allowlist = [
-              ('ops/docker-compose.infra.yml', '-proot'),          # 本地 MySQL 容器引导口令 root/root
-              ('scripts/start-dev.sh', '-proot'),                  # 同上，宿主机重放授权/种子
-              ('scripts/gen-seed.py', '-proot'),                   # 注释里的用法示例
-              ('.github/workflows/e2e.yml', '-proot'),             # CI 临时容器，跑完即毁
-              ('e2e/conftest.py', 'agentflow123'),                 # 演示账号口令，README 公开
+              ('ops/docker-compose.infra.yml', '-proot'), # 本地 MySQL 容器引导口令 root/root
+              ('scripts/start-dev.sh', '-proot'), # 同上，宿主机重放授权/种子
+              ('scripts/gen-seed.py', '-proot'), # 注释里的用法示例
+              ('.github/workflows/e2e.yml', '-proot'), # CI 临时容器，跑完即毁
+              ('e2e/conftest.py', 'agentflow123'), # 演示账号口令，README 公开
               ('scripts/check_migrations_idempotent.py', 'afidem'),# 一次性临时测试库口令
-              ('.github/workflows/config-guard.yml', '-proot'),    # 本豁免清单自身的字面量
+              ('.github/workflows/config-guard.yml', '-proot'), # 本豁免清单自身的字面量
           ]
 
           errors = []
@@ -208,7 +211,7 @@ jobs:
           if errors:
               print('弱凭据泄漏门禁失败：', file=sys.stderr)
               for item in errors:
-                  print(f'  - {item}', file=sys.stderr)
+                  print(f' - {item}', file=sys.stderr)
               sys.exit(1)
           print('弱凭据泄漏门禁通过：未发现可被直接利用的明文弱口令/弱令牌。')
           PY
@@ -225,7 +228,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version-file: .python-version
-      - name:  空库 + 已迁移库各重放一次
+      - name: 空库 + 已迁移库各重放一次
         run: python scripts/check_migrations_idempotent.py --require-replay
-      - name:  跨表引用一致性（真库）
+      - name: 跨表引用一致性（真库）
         run: python scripts/check_cross_table_consistency.py --require-db --bootstrap-migrations

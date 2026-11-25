@@ -140,6 +140,10 @@ python scripts/check-java-routes.py
 `db/mysql` 与 `db/postgres` 由 Flyway 管理，**已合入的迁移文件禁止修改**，只能追加新版本号。
 迁移与对应实体/Mapper 变更放在同一个提交里，便于回滚。
 
+- **CI 强制**：`scripts/check_migration_immutability.py`（由 `config-guard` workflow 调用）会对比最近一个发布 tag，**任何在 tag 时已存在的迁移文件被修改都会让 CI 失败**。改动排序规则、索引、列定义等一律新增 `V+1__<desc>.sql`，用 `ALTER` / `CREATE INDEX` 承载。
+- **本地 dev 库漂移**：若本地库在校验和与当前迁移文件不一致（通常因为拉取了改过迁移的分支），用 `docker compose -f ops/docker-compose.infra.yml run --rm flyway repair` 对齐 `flyway_schema_history`，再 `migrate`。`repair` 只改 schema history 表、不动业务数据。
+- **镜像与迁移一致性**：Java 服务 jar 内打包了 `db/mysql/migration`（`workflow-service/pom.xml` 的 `resources`），改了迁移后必须 `docker compose build` 重建 Java 服务镜像，否则内嵌 Flyway 与挂载目录的校验和不一致会让服务启动失败。
+
 ## 提交信息
 
 采用 Conventional Commits，描述用中文、动词开头：
