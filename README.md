@@ -72,9 +72,9 @@ Windows PowerShell 对应命令：
 | 执行引擎 | 拓扑调度、并行上限、重试、超时、取消、checkpoint、崩溃恢复重放 |
 | 版本治理 | 草稿 / 发布冻结（不可变 + checksum）/ 回滚 / 灰度分桶 |
 | 人工审批 | human_gate 挂起 / 恢复 / 超时裁决；审批人 ROLE / USERS / 受限表达式 |
-| 触发器 | Webhook（HMAC + 幂等键 + 限流）与分钟粒度定时（补跑策略有界补偿） |
+| 触发器 | Webhook（HMAC + 幂等键 + 限流）与定时（5/6 段 cron 支持秒级，补跑策略有界补偿） |
 | 连接器 | AES-256-GCM 凭据、OAuth2、出网沙箱、MCP tools/resources/prompts/sampling |
-| 知识库与检索 | 建库 / 导入 / 切片；lexical BM25 / vector pgvector / hybrid RRF 三模式（vector 需 `AF_EMBEDDING_*`，见已知限制 9） |
+| 知识库与检索 | 建库 / 导入（纯文本 JSON + PDF/Office 上传解析）/ 切片；lexical BM25 / vector pgvector / hybrid RRF 三模式 + 可选 rerank 精排（`AF_RERANK_*`，见已知限制 9） |
 | 成本中心 | 预算账本投影、月度额度、按工作流 / 按天 / 按模型分解、试跑份额 |
 | 评测 | 数据集 / 用例 / 四种断言 / A/B 双版本对比；nightly 真模型冒烟 + LLM judge |
 | 可观测 | SSE 实时节点状态、OTel + LangFuse（可选）、Prometheus 指标、审计只追加 |

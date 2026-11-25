@@ -1606,6 +1606,13 @@ MyBatis 构造器映射失败，知识库列表在实机返回 500；`KnowledgeS
 守住这处回归。`scripts/gen-seed.py` 同时写入 `kb-demo` 与三份售后文档切片，
 种子里的两条示例升级为 v4 并引用该知识库，起服后无需手工导入即可检索到真实内容。
 
+纯文本导入之外，`POST /api/v1/knowledge/bases/{id}/documents/upload`（multipart）承接
+PDF/Office 二进制上传：`DocumentParser` 用 PDFBox 3.x（`Loader.loadPDF` + `PDFTextStripper`）
+提 PDF、POI 5.5.x（`XWPFWordExtractor` / `XMLSlideShow` / `XSSFWorkbook` + `DataFormatter`）
+提 Word/PPT/Excel，正文提取后走与文本导入同一条 `normalise → insertDocument` 链路切片入库，
+保证切片算法与去重口径对两条入口一致。不支持类型与解析失败都明确报 `COM_VALIDATION_001`，
+不把损坏文件伪装成空文档。
+
 ### 20.2 BM25 与信任边界
 
 `KnowledgeService.searchForTenant` 在应用层做 BM25（k1=1.5, b=0.75），分数经
@@ -1637,8 +1644,15 @@ MyBatis 构造器映射失败，知识库列表在实机返回 500；`KnowledgeS
 节点明确报 `RETRIEVAL-NOT_CONFIGURED-001`，不静默回落到示例文本。
 `Settings.supported_node_types` 正式加入 `retrieval`，DSL 校验不再拒绝。
 
+可选精排（rerank）复用 DocQA 的 OpenAI 兼容 `/rerank` 形态，但落在引擎侧
+`OpenAIRerankProvider`（`AF_RERANK_*` 注入）：错误分类与 embedding 同口径
+（401/403/400/404/422 永久，429/5xx/超时瞬时），节点勾选 `rerank` 时先按
+`rerank_candidate_factor`（默认 3）放大召回、精排后截断到 topK。rerank 只决定名次、
+不改命中分数（与检索端 `RerankedItem` 设计一致），未配置时 `rerank=true` 明确报
+`RERANK-NOT_CONFIGURED-001`，不静默回退到融合次序。
+
 前端：`KnowledgeView.vue` 建库/导入/试检索/一键生成工作流；`ConfigDrawer.vue`
-为 retrieval 提供知识库多选、`queryTemplate` / `topK` / `minScore`；
+为 retrieval 提供知识库多选、`queryTemplate` / `topK` / `minScore` / `rerank`；
 `validate.ts` 要求至少选一个知识库；`NodePalette` / `node-card` / `flow-convert`
 同步补齐类型描述、卡片字段与新建默认配置。
 
@@ -1723,7 +1737,7 @@ DSL 增加 `defaults.llm`（`connectionId` + `model`），画布新建 llm 节�
 |---|---|---|---|
 | `token` | 路径里的入口 id | 不使用 | 24 字节 Base64URL，唯一索引；轮换即换 token |
 | `secret` | HMAC 密钥 | 不使用 | 32 字节 hex，只在创建/轮换时回显给创建者 |
-| `cron_expr` | 不使用 | 5/6 段 cron | 5 段前补 `0` 秒，秒位必须为 `0`，`CronExpression.parse` 校验 |
+| `cron_expr` | 不使用 | 5/6 段 cron | 5 段前补 `0` 秒；6 段秒位非 `0` 即秒级触发，`CronExpression.parse` 校验 |
 | `variables_json` | 固定入参 | 固定入参 | 请求体中的同名字段覆盖它 |
 | `last_fired_at` | 不使用 | 上次真正跑起来的时刻 | 与 `last_slot_at` 之差就是补偿延迟 |
 | `last_slot_at` | 不使用 | 上次执行代表的档位（`V012`） | 判点从它往后推，幂等键也由它生成 |
@@ -1826,7 +1840,7 @@ WHERE e.id = #{executionId} ON DUPLICATE KEY UPDATE ...
 | 层 | 键 | 作用 | 失效后果 |
 |---|---|---|---|
 | 扫描租约 | `af:sched:leader`（60s TTL，持有者续期） | 同一时刻只有一个副本扫表 | 多个副本扫表（多几次 SELECT 与日志） |
-| 分钟 claim | `af:sched:claim:{id}:{分钟}`（120s TTL） | 同一分钟只有一个副本派发 | 多一次派发尝试 |
+| claim | `af:sched:claim:{id}:{秒}`（120s TTL） | 本次扫描只有一个副本派发 | 多一次派发尝试 |
 | 幂等键 | `sched-{id}-{档位}` + `workflow_execution` 唯一约束 | **正确性**：这一档只有一条执行 | 不可能——冲突走 `DuplicateKeyException` 回放已有执行 |
 
 三条都 fail-open：Redis 抛异常时租约与 claim 返回「可以继续」。方向是刻意选的——漏跑一次
@@ -1836,7 +1850,8 @@ cron（业务方看不见、也不会自动补）比多扫一轮表严重得多�
 就会把自己挡在门外。`GET` 与 `SETNX` 之间的窗口允许两个副本都认为自己拿到租约——这只影响
 谁扫表，不影响正确性，因此没有为此引入 Lua 或 Redlock。
 
-触发粒度仍是分钟（秒位不为 0 的 cron 直接拒绝，见 §24），这与上面的 claim / 幂等键口径一致。
+cron 支持秒级（秒位非 0，见 §24.3）：秒级触发把 claim 键精确到秒、幂等键精确到秒档位，
+同一分钟内的多个秒档位不再互相吞掉；分钟级 cron 的 claim / 幂等键口径不变。
 
 ## 23. 模型能力标注的第二条来源（2026-11-20）
 
@@ -1938,16 +1953,29 @@ id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**—
 写清楚，比悄悄补 180 条更容易解释。但「只补一次」也不是所有任务想要的——见 §27：这条被改成
 按触发器可选的三种策略，默认仍是这里的「只补最近一档」。
 
-### 24.3 秒位必须为 0
+### 24.3 秒级触发
 
-`requireCron` 现在拒绝秒位不为 `0` 的 cron（`*/5 * * * * *`）。这不是偷懒：claim 键到分钟、
-幂等键到分钟、扫描每 30 秒一轮，秒级 cron 里同一分钟的第二个档位注定被吞掉。与其「配了但只
-跑一半」，不如在写入时就报 `WF-STATE-001`，把限制摆在明面上。
+`requireCron` 接受 5 段（分钟）与 6 段（含秒）两种写法，秒位非 0 即秒级触发。要支持秒级，
+光放开解析还不够——三处「分钟精度」必须一起改，否则秒级 cron 的第二个档位会被静默吞掉：
+
+1. **幂等键**：`slotOf` 按 `isSubMinute(cron)` 决定截到秒还是分钟。分钟级档位本来就在整分上，
+   截到秒与截到分钟结果一致；秒级档位必须带秒，否则 `*/10 * * * * *` 的同一分钟里 6 个档位
+   会撞出同一个键，账面只剩一条执行。
+2. **claim 键**：从 `{分钟}` 改成 `{秒}`。分钟级 claim 会让第一个副本 claim 成功后、接下来
+   2 分钟（`CLAIM_TTL`）整条触发器都不再派发，秒级档位直接饿死。
+3. **展示**：预览与 `lastSlotAt` 对秒级 cron 用 `yyyy-MM-dd HH:mm:ss`，否则用户看不到档位
+   到底落在哪一秒。
+
+准点精度仍受扫描间隔约束：默认 30s 一轮，`*/5 * * * * *` 的实际效果是「每 30 秒一次性补回
+6 个档位」，而不是每 5 秒准点。需要更密准点就把 `agentflow.trigger.poll-interval-ms` 调小，
+补跑的「有界补偿」语义不变。这是有意的边界：秒级触发解决的是「分钟粒度不够用」，
+不是承诺毫秒级实时。
 
 ### 24.4 可预期性：预览与展示
 
 - `POST /api/v1/workflows/{id}/triggers/cron-preview`：只解析不落库，回 `{cron, timezone, times[]}`。
-  5 段写法回填为 6 段规范形式，时间按**触发器时区**格式化（`yyyy-MM-dd HH:mm`）。
+  5 段写法回填为 6 段规范形式，时间按**触发器时区**格式化（分钟级 `yyyy-MM-dd HH:mm`，
+  秒级 `yyyy-MM-dd HH:mm:ss`）。
 - `TriggerView` 多三个字段：`lastSlotAt`（档位）、`nextFireAt` / `nextFireTimes`（接下来三次）。
 - 触发页输入 cron 时 350ms 防抖调预览：写错当场看到原因；保存后的触发器显示「上次触发
   <浏览器时区>（09:00 档 · Asia/Shanghai）」与「下次 2026-11-21 09:00（Asia/Shanghai）」。
@@ -1959,10 +1987,11 @@ id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**—
 ### 24.5 验收
 
 - Java：`TriggerServiceTest`（同档同键、档位与墙钟分开记账、未到点返回 null、新触发器只命中
-  当前档、停机补最近一档、24 小时窗口、每 15 分钟 cron 的取档、时区渲染、秒级 cron 拒绝、
-  预览归一与条数钳制）、`TriggerSchedulerTest`（档位透传、claim 独占、租约与 fail-open）。
+  当前档、停机补最近一档、24 小时窗口、每 15 分钟 cron 的取档、时区渲染、秒级 cron 接受与
+  秒精度幂等键、预览归一与条数钳制）、`TriggerSchedulerTest`（档位透传、claim 独占、租约与
+  fail-open）。
 - 前端：`triggers-view.spec.ts`（预览展示、预览失败就地报错、档位与下次触发）。
-- E2E：`e2e/test_triggers.py`（秒级 cron 409、预览不落触发器、跨租户 404、定时触发后
+- E2E：`e2e/test_triggers.py`（预览不落触发器、跨租户 404、定时触发后
   `lastSlotAt` / `nextFireAt` 有值；用例结束显式停用，避免「每分钟」的测试触发器一直烧 token）。
 
 ## 25. 用量按模型分解与额度条分段（2026-11-20）
@@ -2116,7 +2145,7 @@ JSON 与进度条上，前端还得反推这个魔数是什么意思。这与 `U
 `skipped` 不是装饰：它进审计（`TRIGGER_FIRED.skipped` / `TRIGGER_SKIPPED.missed`），
 用户问「为什么只跑了一次」时，答案就在这个数字里，不用去猜当时停机了多久。
 
-`CATCH_UP_ALL` 一次派发多档，共用同一分钟的 claim：一个副本拿到 claim 后连续派发整批，
+`CATCH_UP_ALL` 一次派发多档，共用同一次扫描的 claim：一个副本拿到 claim 后连续派发整批，
 其他副本被挡在外面；每档各自记账（`markFired`），所以中途崩溃时下一轮从断点继续，已经跑过的
 档位靠幂等键 `sched-{id}-{档位}` 回放而不是重跑。
 
@@ -2275,7 +2304,7 @@ webhook；「最多几个同时在跑」是流水线的属性。放到触发器�
 **为什么调度器「推迟」而交互式入口「拒绝」。** 两者要的东西不同：
 - 手动 / webhook 的调用方在等一个结果，必须立刻知道「现在不行」，所以 `429 WF-CONCURRENCY-001`；
 - 调度器没有调用方在等，它要的是「最终补完」。所以逐档检查余量，跑满就停，**游标不动**，
-  下一轮从断点继续（最多晚一分钟，因为 claim 按分钟）。若把这也做成拒绝，那一档就被永久
+  下一轮从断点继续（最多晚一个扫描间隔）。若把这也做成拒绝，那一档就被永久
   消费掉了——`CATCH_UP_ALL` 会退化成「补到几个算几个」且没有审计。
 
 **为什么是软限。** 判定是「先 `COUNT` 再 `INSERT`」，两者之间没有锁。同一触发器的并发被
