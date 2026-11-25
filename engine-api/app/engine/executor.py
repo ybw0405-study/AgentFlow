@@ -103,7 +103,8 @@ class NodeRunner:
         start_attempt = previous.attempt + 1 if resumed else 1
         if start_attempt > max_attempts:
             logger.warning(
-                "node %s execution=%s resumed past retry budget (attempt=%s > %s); allowing one recovery try",
+                "node %s execution=%s resumed past retry budget (attempt=%s > %s); "
+                "allowing one recovery try",
                 node.key,
                 execution_id,
                 start_attempt,
