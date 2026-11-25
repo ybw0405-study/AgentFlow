@@ -1,0 +1,1423 @@
+# 实现期对齐与落地记录
+
+> 本文件由 `docs/architecture.md` 按主题拆分归档，正文保持原文（含原章节编号）。
+> 章节索引与 `§` 交叉引用对照见 [docs/README.md](../README.md)。
+
+## 10. 完整文件清单（§15.1 交付物）
+
+```
+AgentFlow/
+├── pom.xml                                   # 父 POM：模块聚合 + 依赖管理
+├── README.md                                 # 架构图/功能矩阵/快速开始/环境变量/演示脚本/已知限制
+├── docs/
+│   ├── architecture.md                       # 本文件
+│   ├── openapi/                              # 生成物提交入库（契约漂移 CI 基线）
+│   │   ├── agent-gateway.yaml
+│   │   ├── workflow-service.yaml
+│   │   └── engine-api.yaml
+│   └── adr/                                  # 后续重大决策
+├── common/                                   # Java 共享模块
+│   ├── pom.xml
+│   └── src/main/java/com/agentflow/common/
+│       ├── dto/          # ProblemDetail, Page<T>, GovernanceHeaders, PolicyDto...
+│       ├── error/        # ErrorCode 枚举 + ProblemDetailFactory
+│       ├── trace/        # TraceContext, MdcFilter, TraceRestTemplateInterceptor
+│       ├── tenant/       # TenantContext, TenantHierarchyResolver
+│       ├── pii/          # PiiMasker（pii-v2，与 Python 同规则）
+│       ├── idempotency/  # IdempotencyService（Redis + MySQL 双写）
+│       └── security/     # JwtService, RbacConstants
+│   └── src/test/java/... # pii、幂等、JWT 单测
+├── agent-gateway/
+│   ├── pom.xml
+│   └── src/main/java/com/agentflow/gateway/
+│       ├── GatewayApplication.java
+│       ├── config/       # RouteConfig（/api/v1/**、/engine/** 内部路由）、SecurityConfig、RedisConfig
+│       ├── filter/       # AuthGlobalFilter, TenantResolveFilter, RateLimitFilter,
+│       │                 # GovernanceFilter（预算钳制/KillSwitch）, TraceFilter
+│       └── proxy/        # EngineProxyController, EnginePathPolicy（/engine 白名单 + 凭据隔离）
+│   └── src/test/java/... # 钳制、KillSwitch、404 语义、ArchUnit
+├── workflow-service/
+│   ├── pom.xml
+│   └── src/main/java/com/agentflow/workflow/
+│       ├── WorkflowServiceApplication.java
+│       ├── controller/   # WorkflowController, VersionController, ExecutionController,
+│       │                 # GateController(P3), AdminUsageController
+│       ├── service/      # WorkflowService, VersionService(冻结/发布/回滚), ExecutionService,
+│       │                 # TrafficRouter(P1), NotificationService(P3)
+│       ├── projector/    # EventProjector(轮询 engine), ProjectorCursorStore, SseHub
+│       ├── client/       # EngineGatewayClient（唯一出口，ArchUnit 保护）
+│       ├── repo/         # MyBatis Mapper 接口 + resources/mapper/*.xml
+│       └── config/       # MyBatis, Security, WebMvc
+│   └── src/test/java/... # 版本不可变、幂等触发、投影、RBAC、ArchUnit
+├── audit-service/
+│   ├── pom.xml
+│   └── src/main/java/com/agentflow/audit/
+│       ├── consumer/     # AuditEventConsumer（RocketMQ，af_audit 账号写入）
+│       ├── controller/   # AdminAuditController（cursor 分页）
+│       └── service/
+│   └── src/test/java/... # 只追加约束、查询
+├── connector-service/                        # 连接器服务（P2，:8085）
+│   ├── pom.xml
+│   └── src/main/java/com/agentflow/connector/
+│       ├── ConnectorServiceApplication.java
+│       ├── config/       # JWT / 凭据密钥 / 沙箱策略
+│       ├── crypto/       # CredentialCipher（AES-256-GCM，AAD=connectorId|tenantId）
+│       ├── domain/       # ConnectorRepository（tool_connector / tool_credential）
+│       ├── service/      # ConnectorService、ConnectorInvoker、SandboxPolicy、ConnectorAudit
+│       ├── tenant/       # JdbcTenantTreePort（三级继承）
+│       └── web/          # ConnectorController、InternalConnectorController
+│   └── src/test/java/... # 加密篡改、SSRF、幂等缓存、跨租户 404
+├── db/
+│   ├── mysql/migration/  # V001__tenant_user_auth.sql ... V006__gate_eval.sql
+│   ├── mysql/grants/     # least-privilege.sql（af_app / af_audit 最小授权）
+│   └── postgres/migration/ # V001__event_log.sql
+├── engine-api/
+│   ├── pyproject.toml                          # ruff + pytest + 依赖锁定
+│   └── app/
+│       ├── main.py, config.py, errors.py
+│       ├── api/            # internal.py, problems.py
+│       ├── dsl/            # models.py, validate.py, compile.py
+│       ├── engine/         # scheduler.py, executor.py, state.py,
+│       │                   # dispatcher.py, replay.py, requests.py, lease.py
+│       ├── nodes/          # registry.py, base.py, subgraph.py, subworkflow_resolver.py
+│       │                   # start/end/llm/tool/condition/loop/parallel/transform/
+│       │                   # subworkflow/human_gate
+│       ├── commands/       # base.py + providers/{connector_llm,openai_compatible,http_tool}.py
+│       ├── events/         # store.py, log.py, types.py, publisher.py
+│       ├── governance/     # budget.py, tokenmeter.py, pii.py
+│       ├── expression/     # safeexpr.py, template.py
+│       └── observability/  # trace.py, metrics.py, logging.py
+│   └── tests/
+│       ├── unit/           # dsl 校验、状态机全转移、重放、checkpoint、预算、
+│       │                   # 表达式沙箱、PII、human_gate、故障注入
+│       └── integration/    # testcontainers 自举 PG（不可用时整模块 skip）
+├── frontend/
+│   ├── package.json / vite.config.ts / tsconfig.json / eslint.config.js
+│   └── src/
+│       ├── api/            # http.ts（axios 拦截器）, index.ts（按域分组的客户端）, sse.ts
+│       ├── dsl/            # types.ts, flow-convert.ts, validate.ts
+│       ├── design/         # tokens.css, base.css
+│       ├── stores/         # auth.ts
+│       ├── views/          # LoginView, WorkflowListView, CanvasEditorView, VersionsView,
+│       │                   # ExecutionDetailView, ExecutionListView, ConnectorsView,
+│       │                   # ApprovalsView, EvalsView, AdminView
+│       ├── components/     # canvas/{WorkflowNode,NodePalette,ConfigDrawer,VariablesPanel,
+│       │                   #   DslSourcePanel}.vue
+│       │                   # execution/{NodeTree,IoPanel,TracePanel}.vue
+│       └── router/ main.ts App.vue
+│   └── tests/              # auth-store / sse / flow-convert / dsl-validate / design-redlines
+├── e2e/
+│   ├── conftest.py                   # 登录与租户/用户 fixture、等待终态
+│   ├── test_happy_path.py            # 创建→草稿→发布→执行→事件树
+│   ├── test_dsl_cycle_422.py
+│   ├── test_cross_tenant_404.py
+│   ├── test_idempotent_trigger.py    # 同键并发 → 1 执行
+│   ├── test_condition_skip.py        # 条件分支 + 未命中显式 SKIPPED
+│   ├── test_subworkflow.py           # 子工作流解析 + 输出映射
+│   ├── test_canary_release.py        # 灰度发布
+│   ├── test_tenant_inheritance.py    # 三级租户继承
+│   ├── test_connector_flow.py        # 连接器 CRUD/授权/沙箱拒绝
+│   ├── test_cost_center.py           # 成本账本累加与限额继承
+│   ├── test_gate_approval.py         # human_gate 挂起→待办→裁决→续跑分流
+│   └── test_evals.py                 # 评测跑分 + A/B 汇总
+├── ops/
+│   └── docker-compose.infra.yml     # mysql, postgres, redis, rocketmq（并含 grants 一次性容器）
+├── scripts/
+│   ├── start-dev.ps1 / start-dev.sh        # 一键启动（Windows / WSL2）
+│   ├── stop-dev.ps1 / stop-dev.sh          # 停止（-Infra 连容器一起停）
+│   ├── verify-all.ps1 / verify-all.sh      # 本地全量门禁（对齐 CI）
+│   ├── seed-demo.sql                       # 演示租户/用户/示例工作流
+│   ├── gen-seed.py                         # 生成密码哈希写入 seed
+│   ├── dump-openapi.py                     # 导出引擎 OpenAPI 基线
+│   └── gen-seed.py                         # 生成幂等种子 SQL
+└── .github/workflows/
+    ├── java-ci.yml         # mvn verify + ArchUnit + Checkstyle
+    ├── python-ci.yml       # ruff check + ruff format --check + pytest
+    ├── frontend-ci.yml     # eslint + vue-tsc + vitest + build
+    └── contract-drift.yml  # 引擎 OpenAPI 生成物 vs 入库基线
+```
+
+---
+
+## 11. 阶段映射（与 §11 计划对齐）
+
+| 阶段 | 本文档支撑条目 |
+|---|---|
+| P0 | 模块骨架（common/gateway/workflow-service/audit-service）、V001–V004、start/llm/tool/end 节点、拓扑同步执行、事件追加、SSE、mock provider、3 条 E2E |
+| P1 | 事件溯源全量（§5.3）、租约（§5.5）、Checkpoint、恢复扫描、condition/loop/parallel/transform/subworkflow、灰度、故障注入测试 |
+| P2 | 三级租户继承、connector-service + V005、凭据加密、成本中心、预算硬停止对账（§5.6） |
+| P3 | human_gate + V006、审批裁决回调（HTTP 直达 + outbox 重投）、评测集、A/B 对比 |
+
+---
+
+## 12. 开放点裁决（2026-11-16 已按推荐方案锁定）
+
+1. **mock 连接器内置 engine-api**（P0–P1），P2 建 connector-service 承接真实工具。理由：遵守 §11 P0 模块清单；内置 mock 无凭据无外网，不触碰信任边界。
+2. **沿用本人既有的前后端分层约定**（DocQA 工程实践）落到 AgentFlow 包结构，不做跨仓库引用。
+3. **NodeCompleted 存完整脱敏输出**，其余事件存摘要+digest；溢出阈值 256KB 转 node_io。
+4. **SSE = Redis pub/sub + afterSeq 追平**；RocketMQ 仅审计兜底与 P3 审批回调。
+5. **E2E = API 级 pytest 打 gateway**（`e2e/`）；前端交互用 Vitest，Playwright 推迟 P3。
+6. **真实 LLM 先直连、后补模型连接**（2026-11-18）：最初 `LlmExecutor` 直接新增 `openai-compatible` 实现、密钥只经 `AF_LLM_*` 注入，不引入新的服务间信任边界。随后补了 `connectionId` 路径——把端点与密钥托管进 connector-service，节点只持连接 id。理由是「一台端点一套密钥」无法支撑多空间、多厂商复用，且换密钥要重启引擎；复用既有 connector 的密文存储与沙箱，比新造一套 provider 表更省且口径一致。进程级 `AF_LLM_*` 保留为本地快速试，两条路径共用同一份请求构造与响应解析（`build_chat_payload` / `extract_text`），避免语义漂移。设计细节见 §5.7。
+
+---
+
+## 13. 实现期对齐记录（2026-11-16，P0 落地时与本文档的偏差修正）
+
+1. **错误码新增**（§8 补充）：`EXEC-INPUT-001`（start 入参校验失败，永久）、`EXEC-MAX_STEPS_EXCEEDED`、`CONN-FORBIDDEN-001`（连接器未授权）、`CONN-NOT_FOUND-001`、`LLM-PROVIDER-001`、`LLM-UPSTREAM-001`、`NODE-TIMEOUT`（瞬时）、`NODE-INTERNAL-001`（永久）、`EVT-CONCURRENCY-001`、`TOOL-OP-001`；真实模型 provider（§5.7）另增 `LLM-NOT_CONFIGURED-001`、`LLM-AUTH-001`、`LLM-REQUEST-001`、`LLM-RATE_LIMIT-001`、`LLM-TIMEOUT-001`、`LLM-RESPONSE-001`。
+2. **成功响应信封**：外部 API 成功响应统一 `ApiResponse{code:"OK", msg, data, traceId}`（复用 DocQA 惯例）；错误一律 ProblemDetail。§7 的响应体示例均视为 `data` 字段内容。
+3. **RocketMQ 主题名**：`af-audit-event`（RocketMQ 主题不允许 `.`）。正文他处的 `af.audit.events` 以此为准。
+4. **审计只追加的第三重保证**：除 DB 授权外，V004 迁移内置 BEFORE UPDATE/DELETE 触发器（`AUD-APPENDONLY-001`）；audit-service 的 ArchUnit 测试禁止 repo 包依赖 MyBatis `@Update`/`@Delete`。
+5. **PG 新增 `execution_spec` 表**（V001）：派发请求快照（含不可变 DSL），使引擎崩溃恢复自足，不读业务库。
+6. **`workflow_definition` 增加 `seq BIGINT AUTO_INCREMENT UNIQUE`**：游标分页（cursor = base64(seq)）。
+7. **`app_user` 增加 `platform_role ENUM('USER','ADMIN')`**：平台级 /admin/** 判定；租户角色仍在 `tenant_member`。
+8. **`refresh_token` 用 `status ENUM('ACTIVE','USED','REVOKED')`** 替代 revoked_at（重用检测语义），与 DocQA 轮换族一致。
+9. **前端 API 客户端**：手写 axios 模块 + `tests/` 契约与设计红线守卫测试（DocQA 同款）；OpenAPI 生成物限引擎侧（`docs/openapi/engine-api.json`，contract-drift CI）。Java 侧 springdoc 生成物入库移到 P1。
+10. **P0 已提前实现的 P1 条目**：事件溯源全量（事件即真相从第一天落地）、租约、Checkpoint、崩溃恢复扫描（启动 + 周期扫描兜底）。故障注入测试矩阵仍在 P1。
+
+---
+
+## 14. P2 落地对齐记录（2026-11-17）
+
+1. **三级租户继承语义**：`TenantHierarchyResolver` 沿 `parent_id` 向上解析（≤8 层 + 环检测）。
+   直接成员角色原样生效；祖先成员的 **OWNER 降级为 ADMIN**（组织所有者不应在子空间同样拥有
+   「所有者」语义）；无成员关系时平台 ADMIN 兜底 ADMIN。祖先节点缺失或成环只截断链，
+   不把合法空间判成 404；目标空间本身缺失才 404。
+2. **连接器凭据格式**：`12B IV || ciphertext || 16B tag`，AAD = `connectorId|tenantId`，
+   使密文无法跨连接器/租户搬运；`key_id` = 主密钥 SHA-256 前 12 hex，为轮换留版本位。
+   OAuth `state` 用同一主密钥派生 HMAC-SHA256、截断 16 字节、10 分钟过期。
+3. **沙箱边界**：只允许 https（显式开关下允许 loopback + http）；host 必须命中
+   `config.allowedHosts`（`*.` 通配仅匹配真子域）；DNS 解析结果拒绝环回/私网/链路本地/
+   组播/CGNAT；不跟随重定向（防白名单绕过）；响应体上限 256KB。
+4. **连接器调用路径**：`engine → gateway /internal/connectors/{id}/invoke → connector-service`，
+   与 `subworkflow` 走同一条「Python 只经 gateway」的边界；`callId` 在连接器服务侧再做一次
+   Redis 幂等缓存（24h），崩溃重发返回首次结果。
+5. **授权清单来源**：workflow-service 触发时取「connector-service 目录中该空间可见且启用的
+   连接器 id」；连接器服务不可用时集合为空，真实连接器节点会在授权校验处
+   `CONN-FORBIDDEN-001`（不再有内置兜底清单）。
+6. **成本中心**：`budget_ledger` 由投影器在 `NodeCompleted` 时累加（与游标同事务，重放不重复）；
+   `/admin/usage` 额外返回 `tenants`（沿祖先链取最小限额，并标出是谁卡住的，见 §26）。**预占泄漏**由
+   `BudgetLedger.reconcile` 在恢复与 checkpoint 时按事件流 `tokenUsed` 校准。
+7. **V005 补充约束**：`tool_credential.connector_id` 唯一（一个连接器一份凭据），
+   便于 upsert；其余列与 §3.1 草案一致。
+
+---
+
+## 15. P3 落地对齐记录（2026-11-17）
+
+1. **挂起不是失败**：`human_gate` 节点只由执行器抛 `GateSuspendedSignal`（刻意**不**继承
+   `EngineError`，避免被瞬时/永久错误分类和重试逻辑接住），NodeRunner 落
+   `NodeSuspended` + `GateSuspended` 后原样上抛，调度器返回 `SUSPENDED` 而不落执行级终态。
+   `workflow_execution.status` 因此新增 `SUSPENDED`（V006）。
+2. **挂起必然落 checkpoint**：变量只活在内存与快照里，挂起时强制写一次
+   `CheckpointCreated`（变量快照是续跑的唯一来源）。这条与「每 N 事件一次」的常规节奏无关，
+   是挂起路径的硬要求：否则裁决续跑会静默用回初始变量。
+3. **`NodeSuspended` 携带 `attempt`**；`GateSuspended` 是业务载荷（审批人规则/提示词/超时），
+   **不带** attempt，因此节点索引只由 `NodeSuspended` 投影。早期两者都投影会让
+   `node_execution` 多出一条 `attempt=0` 的幽灵行，真正的那次尝试永远停在 `RUNNING`。
+4. **超时裁决落在引擎侧**：`Dispatcher.sweep_gates()` 每 `AF_GATE_SWEEP_INTERVAL_S`（默认 15s）
+   扫 `GateSuspended` 之后同节点无 `GateResolved` 的挂起执行，到点按 `onTimeout`
+   （`REJECT` / `DEFAULT_BRANCH`）自动裁决。理由：事件库是唯一真相，进程重启后超时仍然生效；
+   控制器只做「人点了通过/驳回」这一件事。
+5. **裁决幂等三态**：`resolve_gate` 返回 `ALREADY_RESOLVED`（已裁决，返回原分支）/
+   `ALREADY_TERMINAL`（执行已终态，`WF_STATE_001`）/ `BUSY`（拉租约失败，409
+   `EXEC-GATE_BUSY-001`）。租约 owner 每次带随机后缀（`:gate:` / `:run:`），
+   避免「挂起释放租约」删掉「裁决续跑」刚拿到的那把。
+6. **审批人展开**：`ROLE` 沿租户祖先链按角色阈值取成员（≥ADMIN 时并入平台
+   ADMIN）；`USERS` 用 `TenantHierarchyResolver` 过滤掉不可见成员；`EXPRESSION` 逐候选求值
+   （见 §16.2）；展开为空回退平台管理员。
+   快照在挂起瞬间冻结进 `gate_task.approvers`（JSON），后续成员变动不影响已发出的待办。
+7. **裁决回调的 outbox + 广播**：控制器先 `POST /internal/executions/{id}/gates/{nodeKey}/resolve`
+   到引擎；引擎不可达（`AGT_UPSTREAM_001`）时写 `gate_resolve_outbox` 并返回 `DEFERRED`，
+   `GateResolveRelay`（默认 5s）退避重投 `min(10s×n, 300s)`，20 次置 `FAILED`。
+   引擎侧 404/409 映射为 `WF_STATE_001`（状态冲突，不重投）。另向 `af-gate-decision`
+   广播一条裁决消息供引擎并行消费（§16.3）。
+8. **通知幂等**：`notification.id` 由 `gate|executionId|nodeKey|userId` 派生确定性 UUID，
+   投影重放不会给同一个人发第二条待办。
+9. **评测**：一次评测 = 对每个启用用例触发一次真实执行（幂等键 `eval:{runId}:{caseId}`），
+   轮询器在用例执行落终态后取 `result` 做断言；断言四种模式 EXACT / CONTAINS / EXISTS
+   （点号路径）/ NUMERIC（min/max），`12` 与 `12.0` 归一为等价。
+10. **A/B 结论口径**：通过率优先（差 ≤0.5pp 视为持平）→ 平均耗时（≤50ms 持平）→
+    平均 token；两者都持平返回 `TIE`，不编造胜负。
+11. **子图内禁止 `human_gate`**（`SUBGRAPH-GATE-001` / DSL 校验期即拒）：loop/parallel 的
+    并发迭代与 subworkflow 的嵌套执行都假设「一个节点一次事件序列」，挂起会破坏该假设。
+12. **dev 限流放宽**：`start-dev` 通过 `AF_RATE_LIMIT_TRIGGER_MAX=300` 覆盖网关默认
+    `20 次/60s/用户`（全量 E2E 一轮触发数十次执行）；产品默认值不变。
+13. **两个 P3 期间的回归缺陷（已修，附单测）**：
+    - `checkpoint_payload` 直接引用 `state.variables`，事件折叠时 `clear()` 把快照一起清空 →
+      写完 checkpoint 变量即丢（`tests/unit/test_checkpoint.py`）。
+    - `NodeSuspended` 不带 `attempt` → 节点索引写出幽灵 attempt=0 行（见第 3 条）。
+
+---
+
+## 16. 遗留四项收口（2026-11-19）
+
+上一轮把「能力已支持、画布够不着」的缺口补完了，但仍留下四处在验收口径上站不住的
+硬伤：审计靠 MQ 且 MQ 一挂就只剩进程日志、引擎只收 HTTP 回调、`EXPRESSION` 审批人在
+引擎侧被当成非法类型、子图只能手写 JSON。这一节记录四者的落地方式与取舍。
+
+### 16.1 审计改为 outbox + relay（`db/mysql/migration/V007`）
+
+原先 `AuditPublisher` 直接 `send` 到 RocketMQ，`AF_MQ_ENABLED=false` 时就退化成
+「每次 emit 一条 WARN」——等于没有留痕。现在改成与控制面其他写路径同源的
+transactional outbox：
+
+1. `OutboxAuditPublisher` 在**业务同库同事务**里 `INSERT audit_outbox`，不做任何网络调用；
+   写 outbox 本身失败时才尝试一次直达，两者都失败才 `log.error("audit LOST …")`。
+2. `AuditOutboxRelay`（默认 2s 一轮）取 `due` 批次投递：成功 `markSent`，失败
+   `markRetry(attempts+1, delay = min(5×attempts, 60))`。
+3. **审计不允许“放弃投递”**——这点与 `gate_resolve_outbox` 不同：后者 20 次置 `FAILED`
+   可以接受（执行本身另有事件真相），审计放弃了就真的没有记录。所以 `status` 只有
+   `PENDING` / `SENT`，重投次数没有上限，只有退避上限。
+4. 连续失败达 `AF_AUDIT_DEGRADE_AFTER_ATTEMPTS`（默认 3）次后，出口切到
+   `direct:audit_event`（用只读 `af_audit` 账号直写库，`DuplicateKeyException` 视为已送达）；
+   `AF_AUDIT_SINK=direct` 可显式走这条，`mq` 可强制不许降级。降级后的消息仍会 `markSent`
+   关单，避免同一条事件在两条出口上反复横跳。
+5. `V007` 的 `audit_outbox` 与 `audit_event` 共用「只追加」纪律：relay 只做
+   `PENDING→SENT` 的状态迁移与 7 天后的物理清理，不改写载荷。
+6. 积压必须可见：`GET /api/v1/admin/audit-outbox`（平台 ADMIN）回 `sink / degradedSink /
+   pending / retrying / oldestPendingAt / oldestPendingAgeSeconds`。outbox 的前提是
+   「积压能被看见」，否则它只是把丢失变成静默延迟。
+
+`RocketMqAuditPublisher` / `NoopAuditPublisher` 随之删除——它们编码的是「要么发出去、
+要么只记一行日志」的旧假设。
+
+### 16.2 `EXPRESSION` 审批人：一份文法，三处实现
+
+表达式要有意义，必须在「发布」「运行」「编辑」三个时刻给出一致的判定，否则会出现
+「画布放行、发布拒绝」或「发布过了、运行时谁都不能批」。为此定了一个**受限子集**并三处同构：
+
+| 位置 | 实现 | 时机 |
+|---|---|---|
+| 引擎（Python） | `app/dsl/validate.py` 用 `ast.parse` + 白名单递归，拒函数调用/下标/未知属性 | 发布期（`DSL-GATE-EXPR` 类错误） |
+| 控制面（Java） | `gate/GateExpression`：手写词法+递归下降，`validate` / `evaluate` 两入口 | 运行期展开审批人 |
+| 画布（TS） | `dsl/approver-expr.ts`：`approverExpressionError()` 即时校验 | 编辑期 |
+
+文法：属性 `user.id` / `user.role` / `user.rank` / `user.platformAdmin` / `space.id`；
+比较 `== != < <= > >=`；成员 `in` / `not in`；布尔 `and` / `or` / `not`（支持括号）；
+字面量 字符串 / 整数 / 布尔 / `null` / 列表。**没有函数调用、没有下标、没有属性链**——
+`len(...)`、`.startswith(...)`、`users[0]` 一律在发布期被拒（`ast` 白名单里根本没有
+`Call` / `Subscript`），避免把「表达式」做成一个可执行为任意逻辑的沙箱逃逸面。
+
+求值不按角色粗筛：`GateApprovers.resolveByExpression` 对空间链上**全部成员**逐个判定，
+再单独过一遍平台管理员（他们未必出现在成员表里）。表达式为空或非法 → 打 ERROR 并返回
+空集，即 **fail-closed**：宁可「无人可批、超时按 `onTimeout` 收口」，也不放行。
+
+### 16.3 引擎真正消费 MQ（`engine-api/app/messaging/`）
+
+审批回调原本只有 HTTP 一条路，`gate_resolve_outbox` 负责补偿。现在加了第二条通道：
+控制面裁决成功后向 `af-gate-decision` 发一条
+`{executionId, nodeKey, decision, resolvedBy, comment, occurredAt}`（key =
+`executionId:nodeKey`），引擎侧 `GateDecisionConsumer` 并行消费，重复裁决由引擎既有的
+幂等三态吸收。
+
+不引官方 Python 客户端：`rocketmq` / `rocketmq-client-python` 都是 C++ 客户端的 ctypes
+绑定，要本机有 `librocketmq`，Windows 与精简 CI 装不上。于是按 5.x remoting 协议
+（帧 = `totalLen + headerLen + headerJson + body`，V1 消息定长头 88 字节 +
+`body/topic/props`，properties 用 `\x01` / `\x02` 分隔）用标准库自己实现，`remoting.py`
+只做编解码、`client.py` 做连接与拉取。踩过的三个坑，都留在代码注释里：
+
+1. **不发心跳**。5.x `ClientManageProcessor` 只从 body 解析 `consumerData`，放 `extFields`
+   会在注册循环里 NPE；而且心跳会**多回一帧**（`40` 紧跟 `0`），把一问一答的连接错位。
+2. **不挂起长轮询**。`_PULL_FLAG` 只留 `SUBSCRIPTION`、`suspendTimeoutMillis=0`——
+   5.x 的挂起时长由 broker 侧 `brokerSuspendMaxTimeMillis`（15s）决定，客户端传的值
+   被忽略，必然先踩到 socket 超时。改成短轮询 + 200ms 空闲间隔。
+3. **每次 `connect()` 先 `close()`**。半连接（地址已记、连接对象为 `None`）会让重连被
+   跳过，表现为「一直超时但看不出没连上」。
+
+偏移用 `GET_MAX_OFFSET`（只取新消息，不重放历史）；`PULL_OFFSET_MOVED` 接受 broker
+建议值；topic 尚未创建（`code=17`）降级为 INFO 并重试，同时在 `start-dev` / `e2e`
+流水线里预建 `af-audit-event` 与 `af-gate-decision`。消费状态见 `GET /internal/mq/status`
+（`consumed / applied / duplicate / stale / invalid / failed / lastError`）。三类非故障
+结果要分清：`applied` 是本通道真的推进了状态机，`duplicate` 是节点已裁决，`stale` 是执行
+已收口、消息迟到。HTTP 是快路径，MQ 大多数时候在后两者里，把它们算成 `failed` 只会让
+告警长期变红并掩盖真故障。`BUSY`（租约被 HTTP 侧占着）会先本地重试 3 次再计数。
+
+### 16.4 子图画布（`frontend/src/dsl/subgraph.ts` + `CanvasEditorView`）
+
+`loop.body` / `parallel.branches` 此前只能在抽屉里手写 JSON，等于把最容易写错的
+（层内 key 唯一性、不能有 `start`、节点数下限）交给用户。现在：
+
+1. **一份真源**：`rootDsl` 是整份 DSL，`path: SubgraphRef[]` 表示当前层
+   （`{nodeKey, branch?}`）。`readSubgraph` / `writeSubgraph` 都是不可变的，未命中
+   返回同一对象（避免 Vue 无谓的深层 diff）。`toDsl()` 把当前层经 `writeSubgraphPath`
+   合并回根，变量与 defaults 始终取根层——子图不拥有自己的变量表。
+2. **层内编辑**：子图内 `start` 置灰（入口由上层节点决定，子图没有 start）；层内 key 只需
+   层内唯一。**只有整图**必须留一个 `end` 且删掉最后一个会被拒绝——子图的出口由上层
+   `loop` / `parallel` 节点收口，引擎同样不要求子图内有 `end`（见 §17.2）。
+3. **校验能下钻**：`validateGraph(nodes, edges, scope)` 递归 `validateNested`，问题 key
+   带层前缀（`loop_1.body#body_end`），画布与抽屉都能把错误挂回具体那一层。深度上限 4。
+4. **JSON 不删**：抽屉里的文本域改成「高级：直接编辑 …JSON」，无解析错误时从配置实时
+   序列化，和表单是同一份数据的两个视图。
+
+## 17. 交付前对齐记录（2026-11-20，v0.4.0）
+
+这一版没有新增大模块，处理的是「一处放行、另一处拒绝」「界面显示的和投影里存的不一致」
+这类跨层错位。它们不体现在功能矩阵里，但都足以让一条合法流程跑不通。
+
+### 17.1 表达式字面量：三处同文法补齐
+
+§16.2 的文法表里漏了字面量。`ast.parse("vars.urgent == true")` 把 `true` 解析成
+`ast.Name`，发布期白名单判「未知标识符」，而画布编辑器与 Java `GateExpression` 都放行；
+引擎侧的 `simpleeval` 又没有 `true/false/null` 别名，同一句在执行期报
+`EXPR-EVAL-001`。现在：
+
+- 发布期 `app/dsl/validate.py` 认 `true/false/null/none` 四个 `ast.Name`；
+- 运行期 `app/expression/safeexpr.py` 把 `_LITERAL_ALIASES` 并入 `evaluate` 的 names；
+- 编辑期 `approver-expr.ts` 的关键字（`and/or/not/in` 与字面量）大小写不敏感，
+  标识符（`user` / `space` / 属性名）保持区分大小写，与 Java 递归下降一致。
+
+### 17.2 子图规则与引擎严格对齐
+
+引擎按 `WorkflowDsl` 解析 `loop.body` / `parallel.branches`，`SubGraph.nodes` 有
+`minItems: 2`。此前画布强制子图必须有 `end`，把合法图报成校验错误；单节点子图却能通过
+发布、一执行就 `PARALLEL-BRANCH-FAILED`。现在统一为：**整图**必须留一个 `end`，
+**子图**不放 `start`、不要求也不依赖 `end`（出口由上层节点收口）、至少 2 个节点。
+`subgraphRemovalError(..., isRoot)` 只对整图做末位 `end` 保护。
+
+### 17.3 执行详情：实时事件不能覆盖 REST 快照
+
+`GET /executions/{id}` 返回的是投影后的最新状态，但详情页的 SSE 原来从 `afterSeq=0`
+连上去，会先回放整条事件流：旧的 `ExecutionStarted` 把 `SUSPENDED` 刷回 `RUNNING`，
+不带 `attempt` 的 `GateSuspended` 又给同一节点补出一条 `attempt=0` 的重复行。修复：
+
+- 连接前用 `executionApi.events(id, lastSeq, 500).lastSeq` 对齐游标，SSE 只收增量；
+  取不到游标就退回回放，下面的状态映射兜底。
+- 执行级状态补齐 `GateSuspended → SUSPENDED` / `GateResolved → RUNNING`，
+  `ExecutionStarted` 不再覆盖挂起态或终态。
+- 节点事件按 `nodeKey + attempt` 找行；payload 里没有 `attempt` 时按 `nodeKey` 找最后一行，
+  不再凭空 `push` 一条。终态与挂起态不会被历史事件倒退，但裁决续跑后的 `NodeStarted`
+  仍能把 `SUSPENDED` 推回 `RUNNING`。
+- `NodeFailed.message` 经 `V008` 落到 `node_execution.error_message`，执行详情的 I/O 面板
+  直接展示错误码 + 原因，不必回去翻事件流。
+
+### 17.4 画布首屏与变量面板
+
+DSL 存的是绝对坐标，宽流程的首屏会只看到前几个节点、末尾的 `end` 被裁在视口外。
+现在 `VueFlow` 开 `fitViewOnInit`，并在 `nodesInitialized` / 切子图后重新
+`fitView({ padding: 0.15 })`。变量面板的折叠初值改为跟着变量数走（画布先挂载、DSL 后到），
+用户手动点过之后不再被自动折叠。
+
+### 17.5 内置示例二：客户工单分诊
+
+`scripts/gen-seed.py` 改成按清单生成多个示例，`wf-demo-triage` 在一条链路上跑齐
+`condition` / `parallel` / `human_gate(EXPRESSION)` / `loop`，并有 approved / rejected 双出口。
+两条例外都要注意：子图至少 2 节点；`end.resultMapping` 只能引用**两条分支都会写入**的变量——
+被 `SKIPPED` 的节点没有 `output`，直接引用会在收口时 `EXPR-EVAL-001`。所以两条分支各自把
+结果写进 `vars.outcome`，`end` 只取这一个变量。canonical 串与 checksum 仍由生成脚本计算，
+与服务端落库口径一致。
+
+## 18. 前端呈现层改造（2026-11-20，ComfyUI 式画布）
+
+### 18.1 边界
+
+这一轮只动 `frontend/`：DSL schema、引擎、控制面 API、数据库、投影、发布期校验与
+既有 34 个全栈 e2e 全部未改。新增能力都是「加法」，原能力一个不删：
+
+- `ConfigDrawer.vue`（全字段）与 `DslSourcePanel.vue`（JSON）原样保留，收进卡片
+  「展开完整配置」与工具条「DSL」两个高级入口，字段逻辑一行未重写。
+- `NodeTree.vue` 扁平列表原样保留，执行详情新增「节点列表」标签切过去。
+- 子图画布的面包屑逐层进出不变；折行只影响排布，不改 `body` / `branches` 语义。
+
+### 18.2 节点卡片
+
+`dsl/node-card.ts` 把卡片呈现规则从视图里抽出来：`nodeCategory` 三类
+（执行 / 控制 / 边界）、`categoryColor` 只返回设计令牌、`inlineFields` 每类挑 1~2 个
+顶层字段、`nodeSummary` 给出子图规模与审批人规则、`statusColor` 守三色语义。
+`WorkflowNode.vue` 只负责渲染；内联编辑通过 `update-config` 抛一个 patch，
+`CanvasEditorView.patchNodeConfig` 只合并顶层字段，不重建节点、不碰 `cases` / `mappings`
+这类嵌套数组（嵌套结构仍只读展示）。表单元素一律加 `nodrag` 与
+`mousedown` / `pointerdown` / `click` / `keydown` 的 `stop`，避免与 Vue Flow 拖拽、
+画布快捷键冲突。
+
+### 18.3 交互与校验前置
+
+`dsl/connection.ts` 的 `connectionProblem()` 把发布期已有的连线规则前置到落线瞬间；
+`dsl/auto-layout.ts` 按拓扑分层并在超过 4 层时折行（`MAX_COLS=4`），只用于展示与
+「整理布局」，不改持久化的 `position`。`NodeSearch.vue` 支持中文名模糊匹配，
+`addFromSearch` 在落位后按需补一条连线；三个模板都在单测里过一遍
+`validateDslLocal`，保证拖进来就能发布。
+
+### 18.4 执行态复用同一张图
+
+执行详情从 `workflowApi.detail(definitionId).versions` 里按 `execution.versionId`
+取**冻结版本**的 `dslJson`，不用当前草稿，否则节点与执行记录对不上。
+`dsl/exec-status.ts` 的 `aggregateStatus` 把 `gather#kb#kb_hit` / `polish#0#polish_sign`
+这类带层级的执行记录按最严重状态聚合到根层卡片，避免分支失败被整片 `SUCCEEDED` 盖住。
+`ExecutionGraph.vue` 对冻结 DSL 做一次纯展示用的折行 `autoLayout`，再交给只读
+`VueFlow`；`fitView` 在 `nodesInitialized` 与节点数变化后各触发一次（节点数据是异步
+到达的，初始化那次可能量不到尺寸）。SSE 合并逻辑未改，`detail.nodes` 变化时两个视图
+同时刷新；DSL 取不到时自动回退列表视图并给出说明。
+
+### 18.5 设计红线与验收
+
+`design/tokens.css` 只新增一个分类色 `--af-node-control`；状态色仍严格是
+强调（进行/挂起）、危险（失败）、中性（完成）三种，`design-redlines.spec.ts`
+继续守「原始色值只在 tokens/base」「全仓无绿色」。新增 44 个前端单测覆盖
+节点分类与状态色、内联编辑、连接校验、折行布局、节点搜索、模板合法性、
+执行图状态聚合；前端 168 passed，全量门禁 ALL GATES GREEN，全栈 e2e 34 passed。
+
+## 19. 模型清单与画布一键接入（2026-11-20）
+
+### 19.1 问题与边界
+
+§18 把节点配置搬到了图上，但 LLM 节点的「模型」仍是一个裸文本框：模板默认值
+`mock-large` 看起来像没配好，而接真实模型要先去「连接器」页手填 `baseUrl`、
+`allowedHosts`、`auth`、`operations`，再回画布选「模型来源」，路径过长。
+
+本次只做**呈现层加法**，硬约束与 §18 一致：
+
+- 接入路径只在前端与连接器页增加了编排逻辑，引擎与控制面的接口契约保持不变。
+- 安全边界不变：`LlmConfig` 仍是 `extra="forbid"`，`baseUrl` / `apiKey` **绝不进 DSL**；
+  端点与密钥只在 connector-service 解密后注入出网请求头，画布只持 `connectionId`。
+- 高级模式全保留：`ConfigDrawer` 的模型来源 / provider / model、`ConnectorsView`、
+  DSL / JSON 视图、进程级 `AF_LLM_*` 三条原有路径一个不少。
+
+### 19.2 预设清单是资料，不是配置
+
+`dsl/model-presets.ts` 存的是各家**公开可查的 OpenAI 兼容端点**与常见模型别名
+（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 /
+Step / OpenAI / 本地 Ollama），附厂商、标签、Key 申请地址、易错说明。它不含任何密钥，
+也不参与 DSL 校验：端点与模型名在向导里都可编辑，服务商控制台才是最终依据。
+`needsServerOptIn` 标注本地 Ollama 这类 `http + loopback` 预设需要
+`AF_SANDBOX_ALLOW_LOOPBACK` / `AF_SANDBOX_ALLOW_HTTP`，避免把沙箱拦截误判成故障。
+
+### 19.3 两步交互与连接编排
+
+`ModelHub.vue` 管两步：`ModelPicker.vue`（分组平铺列表、中文搜索、厂商标识、标签、
+内置演示 / 自定义 / 管理连接三个入口）→ `ModelConnectDialog.vue`（名称、Base URL、
+模型名、API Key、高级选项）。卡片上的「模型」字段由 `InlineField.kind='picker'`
+渲染成按钮，`displayModelName()` 把 `mock-*` 显示成「内置演示模型 · 离线可跑」，
+`nodeSummary()` 补一行接入提示；执行态只读时仍退化为纯文本。
+
+`dsl/model-connection.ts` 串起现有 API：
+
+```
+create(LLM/API_KEY, config) → authorize(id, secret) → probeModels(id) → update(id, config)
+```
+
+`probeModels` 在服务端解密凭据后真实请求 `GET /models`，因此一次操作同时验证
+网络可达、沙箱放行、凭据正确与 OpenAI 兼容格式。验证通过后把 `connectionId` / `model`
+写回节点 `config`，节点立即可执行；失败则 `safeRemove()` 删掉临时连接并返回
+`probeErrorMessage()` 的人话原因，列表里不留脏记录。上游不提供 `/models` 时可用
+`allowWithoutProbe` 降级按预填模型名保存，本地无 Key 端点走 `authType=NONE` 并跳过探测。
+
+`buildLlmConfig()` / `hostOf()` / `mergeModels()` / `probeErrorMessage()` 同时被
+`ConnectorsView.vue` 引用，两条入口共用一份 config 构造与错误口径，不再漂移。
+§6.2 的 llm JSON Schema 同步补上 `connectionId`（此前只有 Pydantic `LlmConfig`
+与前端运行时在写，文档与 `additionalProperties:false` 不一致）。
+
+### 19.4 验收
+
+新增 `model-presets` / `model-connection` / `model-picker` / `model-connect-dialog`
+四组单测，并更新节点卡片、配置抽屉的既有断言；前端 204 passed，typecheck / lint /
+build / design-redlines 全绿。实机验证覆盖：模型清单渲染、预设预填、无效 Key 出网
+返回 401 后向导就地显示「检查 Base URL 路径与 API Key」并保持可修改，以及演示模型
+卡片提示。截图落在 `docs/images/model-picker.png`、`model-connect.png`、
+`model-connect-error.png`，`canvas.png` 同步刷新。
+
+## 20. 文档检索与「运行即所见」（2026-11-20）
+
+§19 完成了模型接入向导，但接入只改草稿、触发只读版本快照，两条路径的 DSL 并不一致；
+内置示例也还停留在离线演示配置。本节记录两处补齐：知识库与 `retrieval` 执行器，
+以及「运行」按画布当前草稿生成版本快照。
+
+引擎的 `openai-compatible` provider 用 `httpx` 请求 `POST /chat/completions`，
+`connectionId` 路径经网关到 connector-service，由后者解密注入凭据并做出网校验。
+内置示例与模板现在默认指向这条链路，检索节点读用户导入的文档；未注入
+`AF_LLM_*` 时节点返回 `LLM-NOT_CONFIGURED-001`，不再回落到确定性示例文本。
+离线 provider 已从 `app/` 移除，离线夹具移到 `tests/support/`，产品装配不再注册；历史 DSL 里的 `provider: mock` 会在 schema 校验阶段给出「请设置 connectionId 或改用进程端点」。
+
+### 20.1 V009：知识库 / 文档 / 切片
+
+检索不引入 pgvector 或外部 RAG 服务，打分在本地用 BM25 完成（见 §20.2）：
+文档内容不出控制面，也不新增基础设施依赖。`db/mysql/migration/V009__knowledge.sql`
+建三张带 `tenant_id` 的表：
+
+```
+knowledge_base      (id, tenant_id, name, description, created_by, created_at, deleted_at)
+knowledge_document  (id, tenant_id, kb_id, title, source, char_count, chunk_count, ..., deleted_at)
+knowledge_chunk     (id, tenant_id, kb_id, document_id, ordinal, document_title, content, token_count)
+```
+
+写入时切片（`KnowledgeService.split`）：~420 字符窗口，优先在句末标点/换行断开，
+段间保留 60 字符重叠，纯确定性算法保证同一文档每次得到相同切片。文档/知识库软删时
+**同步物理删除切片**，于是检索 SQL 不需要 JOIN 软删状态，过滤条件可完全下推到 SQL。
+`KnowledgeMapper.BASE_SELECT` 把 `documentCount` / `chunkCount` 两个统计子查询与
+其余 6 列合并成 8 列，与 `BaseRow` 的 8 个字段对齐——此前 `findBase` 只查 6 列，
+MyBatis 构造器映射失败，知识库列表在实机返回 500；`KnowledgeServiceTest` 用列数契约
+守住这处回归。`scripts/gen-seed.py` 同时写入 `kb-demo` 与三份售后文档切片，
+种子里的两条示例升级为 v4 并引用该知识库，起服后无需手工导入即可检索到真实内容。
+
+纯文本导入之外，`POST /api/v1/knowledge/bases/{id}/documents/upload`（multipart）承接
+PDF/Office 二进制上传：`DocumentParser` 用 PDFBox 3.x（`Loader.loadPDF` + `PDFTextStripper`）
+提 PDF、POI 5.5.x（`XWPFWordExtractor` / `XMLSlideShow` / `XSSFWorkbook` + `DataFormatter`）
+提 Word/PPT/Excel，正文提取后走与文本导入同一条 `normalise → insertDocument` 链路切片入库，
+保证切片算法与去重口径对两条入口一致。不支持类型与解析失败都明确报 `COM_VALIDATION_001`，
+不把损坏文件伪装成空文档。
+
+### 20.2 BM25 与信任边界
+
+`KnowledgeService.searchForTenant` 在应用层做 BM25（k1=1.5, b=0.75），分数经
+`1 - exp(-raw / 3)` 有界归一化到 (0,1)，`minScore` 才有稳定含义。词项
+（`tokenize`）：ASCII 字母数字按整词小写；CJK 同时产单字与相邻二元组，中文查询
+无需分词器也能召回。候选集由 `listChunksForSearch` 以 `tenant_id + kb_id IN (...)`
+下推并用 `LIMIT 20000` 硬上限，`topK` 上限 50。
+
+不引入向量库 / embedding 服务：全部计算在本地 JDK 完成，文档内容不出控制面，
+离线可跑。代价是词法检索而非语义召回，见 README「已知限制」。
+
+两条入口共用 `searchForTenant`：用户侧 `POST /api/v1/knowledge/search`（画布配置前
+自测）与内部 `POST /internal/knowledge/search`（引擎检索节点）。内部端点只认
+`X-Internal-Token`，`tenantId` 来自执行上下文而非请求方可信输入，
+`distinctOwnedBases` 逐 kbId 调 `findBase` 复核归属，越权 id 静默忽略——既不返回
+数据，也不报错暴露存在性。网关 `internal-dsl` 与 `workflow-service` 路由同时放行
+`/internal/knowledge/**` 与 `/api/v1/knowledge/**`，`TenantFilter` 同步纳入。
+
+### 20.3 retrieval 执行器
+
+`engine-api/app/nodes/retrieval.py` 的 `RetrievalExecutor` 通过
+`KnowledgeSearchClient`（`httpx.AsyncClient`）调用内部端点，错误按既有口径分类：
+超时/网络/5xx → `TransientNodeError`（由 RetryPolicy 重试），401/403/404 与畸形响应
+→ `PermanentNodeError`。Command 事件照旧发 `CommandIssued` / `CommandCompleted` /
+`CommandFailed`，`callId` 仍由 `executionId/nodeKey/attempt` 确定性派生。
+输出 `text` 是带 `《标题》 片段 N（相关度 …）` 出处的拼接上下文（上限 32KB），
+`results` / `citations` 保留结构化命中，`result` 与 tool 节点同形，模板可直接沿用。
+`build_executors` 新增 `knowledge_gateway=(gateway_base, internal_token)`；未配置时
+节点明确报 `RETRIEVAL-NOT_CONFIGURED-001`，不静默回落到示例文本。
+`Settings.supported_node_types` 正式加入 `retrieval`，DSL 校验不再拒绝。
+
+可选精排（rerank）复用 DocQA 的 OpenAI 兼容 `/rerank` 形态，但落在引擎侧
+`OpenAIRerankProvider`（`AF_RERANK_*` 注入）：错误分类与 embedding 同口径
+（401/403/400/404/422 永久，429/5xx/超时瞬时），节点勾选 `rerank` 时先按
+`rerank_candidate_factor`（默认 3）放大召回、精排后截断到 topK。rerank 只决定名次、
+不改命中分数（与检索端 `RerankedItem` 设计一致），未配置时 `rerank=true` 明确报
+`RERANK-NOT_CONFIGURED-001`，不静默回退到融合次序。
+
+前端：`KnowledgeView.vue` 建库/导入/试检索/一键生成工作流；`ConfigDrawer.vue`
+为 retrieval 提供知识库多选、`queryTemplate` / `topK` / `minScore` / `rerank`；
+`validate.ts` 要求至少选一个知识库；`NodePalette` / `node-card` / `flow-convert`
+同步补齐类型描述、卡片字段与新建默认配置。
+
+### 20.4 「运行」按草稿执行，而不是按已发布版本
+
+`ExecutionService.trigger` 只认版本快照：不带 `versionId` 时走
+`def.currentVersionId`（或灰度分流），而接入向导改的是当前编辑中的草稿，
+两者不是同一份 DSL，因此刚接入的连接不会出现在执行里。
+
+`CanvasEditorView.run()` 现在：保存当前草稿 → 取 `detail` 比对 checksum →
+若已发布版本 checksum 与草稿一致则不带 `versionId`（保留灰度语义）；
+否则复用历史中同 checksum 的版本，找不到才 `freeze` 一份快照，最后显式带
+`versionId` 触发。因此：
+
+- 跑的是画布所见，接入的模型连接/文档检索立刻生效；
+- **不改已发布版本、不改灰度配置**，正式发布仍只由「冻结并发布」触发；
+- 同内容草稿不重复冻结，避免版本表被每次运行刷满。
+
+`inspectDemo` 在导入旧版演示 DSL 时给出提示；`applyConnectionToAllLlm` 把整层
+llm 节点切到指定连接，`confirmTemplate` 用 `bindConnectionToLlmNodes` 在应用模板时
+整层改写（含子图）。两条路径都要求连接带默认模型名，否则不改写。
+
+### 20.5 验收
+
+- Python：`test_retrieval.py`（真实切片、模板渲染、错误分类、客户端信封解析、
+  阶段门放行）、`test_dsl_validate.py`（白名单摘除仍拒绝）；ruff + 308 passed。
+- Java：`KnowledgeServiceTest`（切片/词项/BM25 排序/topK/minScore/租户隔离/
+  列数契约）；`mvn verify` 全模块 BUILD SUCCESS。
+- 前端：`demo-state.spec.ts`（演示态与整层改写含子图）、`knowledge-view.spec.ts`、
+  `canvas-editor.spec.ts`（运行带 `versionId` 触发）；typecheck / lint /
+  228 passed / build 全绿。
+- E2E：`e2e/test_knowledge_retrieval.py` 覆盖建库→导入→检索→跨租户隔离→删除清切片，
+  以及 retrieval 节点产出里出现导入原文且不含「测试语料片段」；`e2e/test_subworkflow.py`
+  用自建子流程验证 `sub#run#` 前缀与 `outputMapping`，不把模型可用性耦合进来。先起全栈
+  （`scripts/start-dev.*`）后，`AF_E2E_REAL_LLM=1 pytest e2e -q` 全量通过。
+
+## 21. 调试与外部触发（2026-11-20）
+
+这一层解决的是「跑之前怎么确认对」和「跑之外怎么被叫起来」两类问题。两者的共同约束是：
+**不能为了调试或便利，绕过引擎已有的幂等、预算、审计与租户边界**。
+
+### 21.1 单节点试跑：同源执行，裁剪语义
+
+画布上的「试跑」不是本地模拟：`engine-api/app/preview.py` 把「目标节点 + 全部上游」裁成一张
+小图（保留 `variables` / `defaults`，补一个合成 end 节点收口），连同整份草稿交给
+`Dispatcher`，用与正式执行**同一套**执行器、预算账本、错误分类与重试策略跑一遍。
+
+为什么不复用「临时改 DSL 跑全图」：全图会执行目标节点之后的分支，副作用不可控；也不做
+「只渲染模板」的假跑，那样模型、检索、连接器都不会真的被调用，用户拿到的还是猜。
+
+裁剪的语义禁区（`UNSUPPORTED_TYPES`）：上游出现 `loop` / `parallel` / `human_gate` 时
+直接拒绝（422 `PREVIEW-STRUCTURE-001`）。三者裁剪后会变语义——循环迭代次数、并行分支聚合、
+挂起后续跑都不再成立，与其给一个看起来能跑的结果，不如让用户用「运行」跑完整流程。
+
+试跑不落 `workflow_execution`：它是草稿的调试动作，不该出现在执行列表、成本中心与评测里。
+可观测性由事件流里的一条 `NODE_PREVIEWED` 审计承载（含 `definitionId` / `nodeKey` /
+`status` / `tokenUsed`）。代价是试跑消耗的 token 不进预算账本，这一点写在「已知限制」里。
+
+`Dispatcher.wait()` 用 `asyncio.shield` 等任务收口，超时后置取消位、由调度器在节点边界
+取消，避免试跑请求挂着不走。控制面 `ExecutionService.preview` 只做三件事：选 DSL
+（入参 > 草稿 > 当前版本）、PII 脱敏、拼请求；权限仍是 `EDITOR`。
+
+### 21.2 运行入参：表单化 + 必填前置
+
+运行弹窗按 `variables` 的 `type` / `required` / `default` 渲染控件；`object` / `array`
+退回 JSON 编辑并即时提示解析错误，右上角可切回「JSON 原文」。`missingRequired()` 在触发前
+挡住必填缺失——不是为了替代引擎校验，而是避免白造一条注定 `EXEC-INPUT-001` 的执行记录
+（执行记录是只增的，脏数据会一直躺在列表里）。引擎侧校验不变，仍是唯一权威。
+
+### 21.3 `defaults.llm`：只影响新建节点
+
+DSL 增加 `defaults.llm`（`connectionId` + `model`），画布新建 llm 节点时继承，弹窗可勾选
+批量应用到现有节点。**执行时仍以节点自身 `config` 为准**：如果默认值能覆盖节点配置，
+「改了默认模型，线上跑的还是老模型」这类问题会变成「改了默认模型，线上悄悄换了模型」，
+两种都不可接受。
+
+### 21.4 外部触发：凭据模型与信任边界
+
+`V010__trigger.sql` 的 `workflow_trigger` 一行对应一个入口，两种类型共用同一套凭据字段：
+
+| 字段 | Webhook | 定时 | 说明 |
+|---|---|---|---|
+| `token` | 路径里的入口 id | 不使用 | 24 字节 Base64URL，唯一索引；轮换即换 token |
+| `secret` | HMAC 密钥 | 不使用 | 32 字节 hex，只在创建/轮换时回显给创建者 |
+| `cron_expr` | 不使用 | 5/6 段 cron | 5 段前补 `0` 秒；6 段秒位非 `0` 即秒级触发，`CronExpression.parse` 校验 |
+| `variables_json` | 固定入参 | 固定入参 | 请求体中的同名字段覆盖它 |
+| `last_fired_at` | 不使用 | 上次真正跑起来的时刻 | 与 `last_slot_at` 之差就是补偿延迟 |
+| `last_slot_at` | 不使用 | 上次执行代表的档位（`V012`） | 判点从它往后推，幂等键也由它生成 |
+
+信任边界的四层：
+
+1. **公开路径白名单**（`PublicPaths.PREFIXES`）只放 `/api/v1/hooks/`，注释明确「只给凭据在
+   路径里的入口用，其余不用通配符」；`/api/v1/triggers/**` 仍走 JWT + `TenantFilter`。
+2. **签名可选、校验从严**：带 `X-AF-Signature` 就必校验，`MessageDigest.isEqual` 常量时间
+   比较；`X-AF-Timestamp` 与服务器偏差超过 300 秒直接拒。不带签名时令牌本身就是 bearer。
+3. **限流在服务内**：Redis 固定窗口 `af:hook:rate:{triggerId}:{分钟}`，60 次/分钟。
+   `RateLimitFilter` 不覆盖 hooks（它按 JWT 主体计数），所以这一层由 `TriggerService` 自己做。
+4. **降权执行**：`triggerFromExternal` 走与用户触发同一个 `dispatch`（幂等、版本解析、政策
+   钳制、PII 脱敏），但 `actorId` 是 `trigger:{id}`，审计里能一眼区分是人点的还是外部叫的。
+
+入口探测 `POST /api/v1/hooks/{token}/probe` 只回类型、启用状态与所属工作流，不触发执行、
+不回 `secret`——接入方联调时用它确认地址对不对，而不是靠发一次真实请求试。
+
+### 21.5 模型能力标注：数据从哪来
+
+`model_capabilities.describe_model` 把上游 `/models` 的零散字段收敛成四个标签：
+`reasoning` / `long-context` / `json` / `vision`，外加 `context_window` 与
+`max_output_tokens`。真实来源（以 DeepSeek 为例）：
+
+- `context_window` / `max_output_tokens` / `input_modalities`：上游直接给数字与模态；
+- `effort.supported_levels`：只有推理型模型才有的「思考强度」开关，比按名字猜可靠；
+- `supported_parameters`（部分网关）：`reasoning` / `response_format` 直接对应能力。
+
+上游只回 id 时退回模型名推断（整词元匹配，`gpt-4o-mini` 不会被 `o1` 误伤），并在
+`source` 里标 `inferred`，界面显式写「推断」。**刻意不做家族能力表**：把某家某代的上下文
+长度写死在代码里，等厂商换代就成了一句静默的谎话。标签只影响界面提示与 `maxTokens`
+建议，不参与任何执行决策。
+
+### 21.6 错误展示：正文之外补一行原因
+
+`describeError` 的正文与 hint 仍是翻译后的固定文案（不暴露内部码），但额外返回 `detail`
+——problem+json 里业务代码显式写给人看的那一句（`invalid cron expression: ...`、
+`trigger is disabled`）。触发页把它渲染成第二行「后端说明」。普通异常的 `message` 依旧
+不透出：只有 `ApiError`（服务端受控文案）才允许走到这一行。
+
+### 21.7 验收
+
+- Python：`test_preview.py`（裁剪、合成 end 的 key 冲突避让、缺节点/不可达/结构拒绝、
+  `variables` 与 `defaults` 保留）、`test_model_capabilities.py`（上游字段优先、effort 判推理、
+  词元边界、无字段不出标签）；ruff + 324 passed。
+- Java：`LlmControllerTest`（`items` 透传）、`WorkflowArchitectureTest`（试跑端点放在执行
+  控制器里，守住 `workflow -> execution` 不成环）；`mvn verify` 全模块 BUILD SUCCESS。
+- 前端：`triggers-view.spec.ts`（建入口、复制地址、停用、后端原因回显）、
+  `model-capabilities.spec.ts` / `model-facts-chips.spec.ts`（标签、推断、`maxTokens` 建议）、
+  `canvas-editor.spec.ts`（必填拦截）；typecheck / lint / 249 passed / build 全绿。
+- E2E：`e2e/test_node_preview.py`（上游真实执行、不落执行记录、跨租户 404、循环结构 422）、
+  `e2e/test_triggers.py`（真实触发、未知 token 404、签名 403/200、幂等、停用 409、probe
+  不触发、非法 cron 409、定时 1 分钟内到点）。
+
+## 22. 用量记账与多副本调度（2026-11-20）
+
+这一节记录两个「不显眼但会让数字说谎」的问题，以及为什么修法是现在这样。
+
+### 22.1 试跑为什么必须单独记账
+
+试跑的设计是**不落 `workflow_execution`**（调试动作不该污染执行列表，也不该产生版本）。
+代价藏在成本中心里：`BudgetLedgerMapper.accrue` 的 SQL 是
+
+```sql
+INSERT INTO budget_ledger (...) SELECT e.tenant_id, ... FROM workflow_execution e
+WHERE e.id = #{executionId} ON DUPLICATE KEY UPDATE ...
+```
+
+——租户是从 execution 行里查出来的。试跑没有这一行，`INSERT ... SELECT` 匹配不到任何行，
+**不报错、不插入、也不记账**。于是「调了十次」在月度账本上是零：额度没动，账单也没有，
+只有一条 `NODE_PREVIEWED` 审计躺在事件流里。这不是精度问题，是可见性问题。
+
+修法两条腿：
+
+1. `V011__preview_usage.sql` 建明细表，一次试跑一行（租户 / 工作流 / 节点 / 操作人 / 模型 /
+   实际跑过的节点数 / token / 耗时 / 状态）。只写不改——用量是审计数据，写错了追加更正行。
+2. `BudgetLedgerMapper.accrueByTenant` 直接按租户累加（`INSERT ... VALUES ... ON DUPLICATE
+   KEY UPDATE`），与投影器共用同一个账期口径，所以「本月已用」天然是「执行 + 试跑」。
+
+两个容易做错的地方：
+
+- **调用口径**：`calls_used` 一次试跑加几？加 1 会让「一次试跑跑了两个模型」少记，加 token
+  数又没意义。取实际跑过的节点数（`trace` 长度），与投影器按 `NodeCompleted` 累加的口径一致。
+- **失败不能连坐**：记账抛异常时试跑结果照常返回（用户要的是节点输出），但必须留 `warn`。
+  静默吞掉就等于回到「账面上没有」，只是这次有了日志。
+
+`UsageService.ratio` 现在是唯一口径：平台管理员页（`/api/v1/admin/usage`）与租户自助页
+（`/api/v1/usage/summary`）都调它，避免「管理员看到 80%、租户自己看到 92%」这种没法解释的
+分歧。按天序列在服务端补 0，前端不负责找洞——空白天在前端补，一旦换渲染方式就会漏。
+
+### 22.2 定时触发：三层防线，各管一件事
+
+原来的实现写着「多实例同时扫描也只会产生一次执行」，靠的是幂等键
+`sched-{triggerId}-{LocalDateTime}`。问题在于 `LocalDateTime.toString()` **带秒**：
+副本 A 在 07 秒扫到、副本 B 在 41 秒扫到，得到两个不同的键，唯一约束认它们是两次不同的请求，
+于是两条执行。文档里的结论是对的，实现是错的。
+
+现在按职责拆成三层，任何一层失效都不会变成「跑两次」：
+
+| 层 | 键 | 作用 | 失效后果 |
+|---|---|---|---|
+| 扫描租约 | `af:sched:leader`（60s TTL，持有者续期） | 同一时刻只有一个副本扫表 | 多个副本扫表（多几次 SELECT 与日志） |
+| claim | `af:sched:claim:{id}:{秒}`（120s TTL） | 本次扫描只有一个副本派发 | 多一次派发尝试 |
+| 幂等键 | `sched-{id}-{档位}` + `workflow_execution` 唯一约束 | **正确性**：这一档只有一条执行 | 不可能——冲突走 `DuplicateKeyException` 回放已有执行 |
+
+三条都 fail-open：Redis 抛异常时租约与 claim 返回「可以继续」。方向是刻意选的——漏跑一次
+cron（业务方看不见、也不会自动补）比多扫一轮表严重得多；而重复派发已经被幂等键兜住。
+
+租约的续期必须判断「持有者是不是自己」（`GET` 比对 + `EXPIRE`），否则同一个进程在第二轮
+就会把自己挡在门外。`GET` 与 `SETNX` 之间的窗口允许两个副本都认为自己拿到租约——这只影响
+谁扫表，不影响正确性，因此没有为此引入 Lua 或 Redlock。
+
+cron 支持秒级（秒位非 0，见 §24.3）：秒级触发把 claim 键精确到秒、幂等键精确到秒档位，
+同一分钟内的多个秒档位不再互相吞掉；分钟级 cron 的 claim / 幂等键口径不变。
+
+## 23. 模型能力标注的第二条来源（2026-11-20）
+
+### 23.1 为什么连接侧也要带
+
+§21.5 的能力标注只覆盖了进程级 `/llm/models`。用户实际更多走「模型连接」（连接器托管端点与
+密钥），而那条路径上的探测接口只回 `models: string[]`——画布拿到一串 id，标签只能按名字猜。
+「是不是推理型」直接决定 `maxTokens` 该填多少，猜错的代价是节点以 `LLM-RESPONSE-001` 失败
+（思维链吃光预算、正文为空）。
+
+于是把 `POST /api/v1/connectors/{id}/models/probe` 的返回扩成
+`{ok, models, items, errorCode}`，`items` 里每个模型带 5 个字段：
+`contextWindow` / `maxOutputTokens` / `inputModalities` / `supportedParameters` /
+`reasoningEffort`。
+
+### 23.2 Java 只搬运，标签只在前端算
+
+三条约束决定了这个切法：
+
+1. **要落库**。探测结果会像 `models` 一样写进 `config_json`，所以只能搬白名单字段。上游
+   `/models` 还有 owner、created、权限等与选模型无关的内容，多搬一个就多一份会过期的数据。
+2. **别再加第三份规则**。标签规则已经有两处：Python（引擎侧，见 §21.5）与 TS（前端在拿不到
+   `items` 时按模型名推断）。再在 Java 抄一份，等于三个地方慢慢长歪。
+3. **前端本来就在做这件事**。「引擎没给 → 按名字推断」与「连接给了字段 → 用字段」是同一段
+   逻辑的两端，放在一起才不会出现两套口径。
+
+所以 `ConnectorInvoker.modelItems` 只做四件事：按别名取第一个有值的数字（`context_length` /
+`context_window` / `max_context_length` / `max_model_len`，输出上限还会看 `top_provider`）、
+列表字段小写去重后截断到 16 项、`effort.supported_levels` 非空则 `reasoningEffort=true`、
+id 去重排序且条数与长度封顶。**取不到就留 null，不填 0**——界面上「上下文 0」比不显示更糟。
+
+`factsFromProbe` 在前端把这些字段翻成与引擎一致的标签与 `source`：`supported_parameters` 里的
+`reasoning` / `response_format`、`effort` 开关、`input_modalities` 含 `image`、
+`context_window ≥ 100_000`（阈值与 Python 侧同一个常量），名字推断仍作为兜底。
+
+代价要说清楚：引擎侧与前端各有一份标签规则。这是既有事实（前端本来就要在没有 `items` 时推断），
+本次没有把它变成三份。
+
+### 23.3 连接优先于引擎清单
+
+`mergeFacts(连接探测结果, 引擎清单)` 让同名模型取连接的。理由不是「新的比旧的好」，而是两条来源
+可能指向完全不同的端点：`deepseek-chat` 在进程级端点是 128k，在另一家网关的转售实例上可能是
+32k。谁在服务这次调用，就以谁的字段为准。引擎清单只补连接里没有的模型（比如节点还没配
+`connectionId`）。
+
+### 23.4 缓存与失效
+
+`config.modelItems` 是展示用缓存，与 `models` 同生共死：重新探测整份覆盖，探测没回任何能力
+字段就整段删掉（`withProbeItems`）。不做「合并保留旧值」——留着上一轮的数字，界面会长期显示
+一个早已不成立的上限。连接建得早、库里还没有这份缓存时，界面退回按模型名推断并标「推断」，
+点一次「拉取模型」即补齐；这条回退路径保证老数据不会把界面变成空白。
+
+### 23.5 验收
+
+- Java：`ConnectorLlmTest`（带能力字段的上游 → 五项字段齐全、`owner`/`created` 不出现在结果里、
+  超长 id 截断、参数小写去重）、`ConnectorServiceTest`（`items` 透传）。
+- 前端：`model-capabilities.spec.ts`（字段→标签、`effort` 判推理、0/负数当没给、连接优先于
+  引擎、来源为空不报错）、`connectors-view.spec.ts`（刷新覆盖、探测无字段时清缓存）、
+  `model-connection.spec.ts`（快速接入把 `modelItems` 一起回写）。
+
+## 24. 定时触发：从「看现在」改成「看档位」（2026-11-20）
+
+§22.2 修掉了多副本的重复执行，但判点逻辑还有一种含糊：`isDue` 只回答「有没有一档到点了」，
+真正派发时用的却是**当前分钟**。这两件事在多副本下能凑合，在两个场景里会露馅：
+
+1. **停机恢复**。`last_fired_at` 停在 09:00，服务 09:37 才起来。旧实现里 09:37 这一跑用的是
+   `sched-{id}-09:37` ——它不是「09:00 那一档」，只是「09:37 那次扫描」。用户看到的是「日报
+   跑在 09:37」，审计里也看不出这一跑迟到了 37 分钟。
+2. **派发与记账之间的崩溃**。`triggerFromExternal` 成功、`markFired` 之前进程被杀，重启后
+   `last_fired_at` 没变，于是再跑一次——因为键是「新的当前分钟」，唯一约束认它是另一档。
+
+### 24.1 档位（slot）是唯一基准
+
+`TriggerService.dueSlot(row, now)` 从 `last_fired_at` 出发（新触发器取「一分钟前」，所以创建
+即触发不会发生），一路向后找**最近一个 ≤ now 的 cron 档位**，返回这个 `Instant`。调度器拿到
+档位同时做三件事：claim、派发、记账，幂等键是 `sched-{id}-{档位}`。
+
+于是：
+
+| 场景 | 旧行为 | 现在 |
+|---|---|---|
+| 正常运行 | 键 = 当前分钟 | 键 = 档位（与当前分钟相同，无变化） |
+| 停机 37 分钟后恢复 | 键 = 09:37，看不出迟到 | 键 = 09:00，`lateSeconds=2220`，审计标 `compensated` |
+| 派发后崩溃 | 重跑一次 | 重算出同一档 → 幂等回放 |
+| 停机 3 小时的每分钟任务 | 跑一次（用当前分钟键） | 跑一次（最近一档），不会补 180 次 |
+
+`workflow_trigger.last_slot_at`（`V012`）就是这次派发代表的档位。它与 `last_fired_at` 分开存，
+是因为「跑在什么时候」和「跑的是哪一档」是两个事实：前者的用途是运维排障，后者的用途是
+业务对齐（今天这份日报到底算不算今天的）。
+
+### 24.2 补跑是有界的、只补一次
+
+`CATCHUP_WINDOW = 24h`：起点早于窗口就截到窗口边界，之后仍然只取最近一档。这条规则同时是
+循环的上界（每分钟一档最多 1440 次 `next()`，另有 1500 的硬上限兜底），所以扫描一轮不会被
+一个长期停机的触发器拖死。
+
+为什么不是「把错过的每一档都重放」：那是另一个语义（at-least-once 追赶），需要每档的独立
+去重与顺序保证，而业务方真正要的通常是「今天这份还没跑，补上」。补跑一次、并把「迟到多少」
+写清楚，比悄悄补 180 条更容易解释。但「只补一次」也不是所有任务想要的——见 §27：这条被改成
+按触发器可选的三种策略，默认仍是这里的「只补最近一档」。
+
+### 24.3 秒级触发
+
+`requireCron` 接受 5 段（分钟）与 6 段（含秒）两种写法，秒位非 0 即秒级触发。要支持秒级，
+光放开解析还不够——三处「分钟精度」必须一起改，否则秒级 cron 的第二个档位会被静默吞掉：
+
+1. **幂等键**：`slotOf` 按 `isSubMinute(cron)` 决定截到秒还是分钟。分钟级档位本来就在整分上，
+   截到秒与截到分钟结果一致；秒级档位必须带秒，否则 `*/10 * * * * *` 的同一分钟里 6 个档位
+   会撞出同一个键，账面只剩一条执行。
+2. **claim 键**：从 `{分钟}` 改成 `{秒}`。分钟级 claim 会让第一个副本 claim 成功后、接下来
+   2 分钟（`CLAIM_TTL`）整条触发器都不再派发，秒级档位直接饿死。
+3. **展示**：预览与 `lastSlotAt` 对秒级 cron 用 `yyyy-MM-dd HH:mm:ss`，否则用户看不到档位
+   到底落在哪一秒。
+
+准点精度仍受扫描间隔约束：默认 30s 一轮，`*/5 * * * * *` 的实际效果是「每 30 秒一次性补回
+6 个档位」，而不是每 5 秒准点。需要更密准点就把 `agentflow.trigger.poll-interval-ms` 调小，
+补跑的「有界补偿」语义不变。这是有意的边界：秒级触发解决的是「分钟粒度不够用」，
+不是承诺毫秒级实时。
+
+### 24.4 可预期性：预览与展示
+
+- `POST /api/v1/workflows/{id}/triggers/cron-preview`：只解析不落库，回 `{cron, timezone, times[]}`。
+  5 段写法回填为 6 段规范形式，时间按**触发器时区**格式化（分钟级 `yyyy-MM-dd HH:mm`，
+  秒级 `yyyy-MM-dd HH:mm:ss`）。
+- `TriggerView` 多三个字段：`lastSlotAt`（档位）、`nextFireAt` / `nextFireTimes`（接下来三次）。
+- 触发页输入 cron 时 350ms 防抖调预览：写错当场看到原因；保存后的触发器显示「上次触发
+  <浏览器时区>（09:00 档 · Asia/Shanghai）」与「下次 2026-11-21 09:00（Asia/Shanghai）」。
+
+时间串的两种格式是刻意的：`lastFiredAt` / `createdAt` 是**真实瞬间**，用 ISO（UTC）交给前端
+按浏览器时区渲染；`lastSlotAt` / `nextFireAt` / `times` 是**cron 墙钟**，按触发器自己的时区
+格式化。混用会出现「每天 09:00 的任务显示成 01:00」这种没法解释的偏差。
+
+### 24.5 验收
+
+- Java：`TriggerServiceTest`（同档同键、档位与墙钟分开记账、未到点返回 null、新触发器只命中
+  当前档、停机补最近一档、24 小时窗口、每 15 分钟 cron 的取档、时区渲染、秒级 cron 接受与
+  秒精度幂等键、预览归一与条数钳制）、`TriggerSchedulerTest`（档位透传、claim 独占、租约与
+  fail-open）。
+- 前端：`triggers-view.spec.ts`（预览展示、预览失败就地报错、档位与下次触发）。
+- E2E：`e2e/test_triggers.py`（预览不落触发器、跨租户 404、定时触发后
+  `lastSlotAt` / `nextFireAt` 有值；用例结束显式停用，避免「每分钟」的测试触发器一直烧 token）。
+
+## 25. 用量按模型分解与额度条分段（2026-11-20）
+
+§22 解决了「试跑的消耗看不见」，但账面上还是两个笼统的数字：本月用了多少 token、区间里执行
+与试跑各占多少。两个问题随之而来：
+
+1. **花在谁身上？** 同一个租户里，`deepseek-chat` 与一个推理模型的单价可以差十几倍，只看总
+   token 无法判断「这个月变贵是因为跑得多了，还是因为换模型了」。
+2. **额度被谁吃掉了？** 账本是一本账（执行 + 试跑），进度条只有一根。用户看到 82%，却不知道
+   其中 30% 是调试——于是要么不敢调，要么调完才发现额度没了。
+
+### 25.1 模型记在节点上，不新开一本账
+
+`V013__node_model.sql` 只给 `node_execution` 加一列 `model`，不新建 ledger：
+
+- 节点行已经是「一次执行里某个节点的一次尝试」的最小粒度，token、延迟、错误码都在上面。
+  再建一张 `model_usage` 表就等于把同一批事实写两遍，两份数据一旦漂移就要靠对账解释。
+- 按模型聚合是**展示维度**，不是记账维度：`budgets` 仍然按「租户 + 账期」累加一份。
+- 查询是 `node_execution JOIN workflow_execution`（租户与时间在执行上，`execution_id` 有索引），
+  量级是「区间内的节点行」，与按工作流分解同阶。
+
+记的是 **provider 回落后的真实模型名**（`NodeCompleted.payload.output.model`，LLM 节点在
+`nodes/llm.py` 里把 `result.extra["model"] or cfg.model` 写进 output），不是 DSL 里配的那个。
+占位名（如 `default`）会被上游替换，记请求名等于把「实际用了什么」记错——而这个字段的唯一
+用途就是回答「实际用了什么」。
+
+### 25.2 「不知道」要能表达
+
+三个来源会让模型为空：非 LLM 节点、输出超过 256KB 被溢出成引用（payload 里只剩摘要）、
+V013 之前的历史执行。这些行统一进空串桶，前端渲染「未标注 · 非 LLM 或输出未带模型」。
+
+不按「工作流的默认模型」回填：默认模型只是没写 `config.model` 时的兜底，节点完全可以覆盖它，
+而且历史数据里到底跑的是哪个模型我们真的不知道。把「不知道」写成「知道」，比留空更危险。
+
+同理，试跑侧的 `preview_usage.model` 也按同样口径合并：同一模型在两个来源里是同一行，因为
+用户问的是「这个模型花了多少」，而不是「这个模型在调试时花了多少」——后者用两列分列展示。
+
+### 25.3 额度条的两段：派生，不是第二本账
+
+`budget.previewCalls / previewTokens` 来自 `preview_usage` 的本月合计（`calls` 用
+`SUM(node_count)`，与 `accrueByTenant` 的调用口径一致）。它与账本行在**同一个事务**里写，
+所以正常情况下 `previewTokens ≤ tokensUsed` 恒成立。
+
+服务端**不做夹取**：账本与明细不一致（记账失败、手工改库）时，宁可让两个数字对不上，也要让
+问题露出来。夹取放在前端绘图那一层——`min(previewUtilization, utilization)`，两段宽度之和
+永远不超过已用量，墨迹不会画出进度条。
+
+颜色沿用每日柱状图的语义：执行 = accent，试跑 = neutral。同一页面上同一种消耗只有一种颜色，
+不需要图例二次解释。
+
+### 25.4 验收
+
+- Java：`UsageServiceTest`（两来源同模型合并、空模型独立成桶、按合计倒序、试跑份额与利用率、
+  账本缺行时用配置限额）、`ProjectorWriterTest`（记回落模型、无 output 时留空）。
+- 前端：`usage-view.spec.ts`（额度条两段宽度、份额大于已用时封顶、按模型表的合并与「未标注」）。
+- E2E：`test_cost_center.py`（`byModel` 里能找到 `DEMO_DSL` 用过的模型且执行 token > 0、
+  `previewTokens ≤ tokensUsed`、`previewCalls ≤ callsUsed`）。
+
+## 26. 管理端成本中心：从账本快照到可诊断视图（2026-11-20）
+
+§14 的成本中心接口一直返回 `effectiveLimits`——沿祖先链取最小限额，逻辑是对的，但**前端从来
+没渲染它**。结果是页面上的「限额」列显示的是各租户账本行自己写的数字：`Space Alpha` 写着
+10,000，而真正生效的是 ORG 的 5,000。管理员据此判断「还有余量」，而新的执行已经被拒了。
+
+这一节修的是「算对了但没人看」和「看了也判断不了」两件事。
+
+### 26.1 有效限额要带来源
+
+`TenantLimitResolver` 沿 `parent_id` 向上走，维护两个维度各自的「当前最小值 + 是谁给的」：
+
+```java
+Integer callLimit = ownCallLimit;  String callBy = ownCallLimit == null ? null : tenant.id();
+Long    tokenLimit = ownTokenLimit; String tokenBy = ownTokenLimit == null ? null : tenant.id();
+while (cursor != null && depth++ < MAX_DEPTH) {
+    if (ancestorCalls < callLimit) { callLimit = ancestorCalls; callBy = cursor; }
+    ...
+}
+```
+
+两个维度分开记，因为它们未必由同一个祖先卡住：ORG 可以 `limit_tokens=10,000` 很紧而
+`limit_calls=100,000` 很松，TEAM 反过来。只报「限额来自 X」会在这种配置下指错人——而指错人
+的代价是管理员跑去改一个改了也没用的账本行。
+
+`limitedByToken == tenantId` 表示这一维由自己决定（前端写「本租户」），否则写「继承自 <名字>」。
+「无上限」用 `null` 表达（没有账本行，或限额 ≤ 0），**不用 `Long.MAX_VALUE` 冒充**：那会一路冒到
+JSON 与进度条上，前端还得反推这个魔数是什么意思。这与 `UsageService.ratio` 的口径一致——那里
+同样把「没有有效限额」折算成 0 利用率。
+
+### 26.2 整页统一账期口径
+
+旧接口混了两种时间口径：`budgetLedger` 是账期，`executions` 是**全部时间**按租户×状态分组。
+同一页上「这个月」和「一共」并列，读的人一定会把「失败 8 次」当成这个月的失败数。
+
+现在 `usageByTenantSince(from)` 也按 `created_at` 卡账期，`totals` 是各租户行之和，`byModel` 用
+账期起点作为 `from`。三个数字之间可以互相验算，这本身就是一个可用的正确性检查——E2E 里就有一条
+断言 `totals.tokens == Σ tenants.tokensUsed`。
+
+### 26.3 跨租户按模型：并集不是和
+
+`byModel` 把执行侧（`node_execution` 按 model 聚合）与试跑侧（`preview_usage`）按模型合并。
+「几个租户在用」取两来源的**较大值**而不是相加：同一个租户既可能跑过执行也可能跑过试跑，相加会
+把 3 个租户算成 5 个。
+
+### 26.4 状态是结论，利用率是画法
+
+`state` 有四种：`unbounded`（两维都无上限）、`ok`、`near`（任一维 ≥80%）、`over`（任一维已到顶）。
+判「超限」用原始数字比较（`used >= limit`），不用夹取后的 `utilization`——`ratio` 把超额压到 1.0，
+拿它判断会把「刚好到顶」和「超了三倍」混成一类。展示上仍然只有两种颜色（accent / danger），
+与设计令牌「状态色只三种」的约束一致：`near` 用 danger 的文字色，但不改进度条的填充色，避免
+「接近」和「已经完了」看起来一样。
+
+### 26.5 验收
+
+- Java：`TenantLimitResolverTest`（自身最紧 / 祖先最紧 / 三级链取祖父 / 两维不同来源 / 无账本行 /
+  子无行但继承祖先 / 超额 / 80% 边界 / 限额 0 视为无上限 / parent 成环不死循环）、
+  `AdminUsageServiceTest`（账期规范化与拒绝、行字段、汇总、按模型并集、`non_null` 下的缺省字段）。
+- 前端：`admin-view.spec.ts`（继承来源、本租户、无上限不画条、两段封顶、超限状态、汇总、按模型、
+  账期切换与空账期、错误原因、空态、审计翻页）。
+- E2E：`test_cost_center.py`（祖先继承、来源归属、`totals` 与租户行可互相验算、按模型跨租户、
+  非法账期 400）。
+
+## 27. 错过档位的三种处置（misfire，2026-11-20）
+
+### 27.1 「只补最近一档」是一条业务判断，不是通用规则
+
+§24.2 把补跑收成「只补最近一档」，理由是「日报迟到 3 天，用户要的是今天的日报」。这个理由
+对**日报**成立，对另外两类任务正好相反：
+
+| 任务 | 停机 3 小时后恢复，应该怎么做 |
+|---|---|
+| 每分钟探活 / 心跳 | 补 180 次毫无意义，最理想是一档都不补 |
+| 每小时对账 / 拉单 | 只补最近一次 = 漏掉 2 小时的账，必须补齐 |
+| 每日站会提醒 | 下午 3 点补出来一条「9 点站会」的提醒，是纯噪音 |
+
+三种期待互相排斥，用一个「补跑开关」表达不出来。所以在触发器上加了 `misfire_policy`
+（`V014`），三档语义：`CATCH_UP_LATEST`（默认）/ `CATCH_UP_ALL` / `SKIP`。
+
+### 27.2 三种策略共用同一段扫描
+
+`TriggerService.dueSlots(row, now)` 返回 `SlotPlan(slots, consumeTo, skipped)`：先把窗口内
+**所有**已到点的档位扫出来，再按策略收尾。这样「哪一档算错过」的口径只有一份，三种策略
+不可能各自算错；差别只在最后几行：
+
+| 策略 | `slots` | `consumeTo` | `skipped` |
+|---|---|---|---|
+| `CATCH_UP_LATEST` | 最后一档 | null | 其余档数 |
+| `CATCH_UP_ALL` | 最近 20 档（升序） | null | 被丢弃的更老档数 |
+| `SKIP` | 空 | 最新一档 | 全部档数 |
+
+`skipped` 不是装饰：它进审计（`TRIGGER_FIRED.skipped` / `TRIGGER_SKIPPED.missed`），
+用户问「为什么只跑了一次」时，答案就在这个数字里，不用去猜当时停机了多久。
+
+`CATCH_UP_ALL` 一次派发多档，共用同一次扫描的 claim：一个副本拿到 claim 后连续派发整批，
+其他副本被挡在外面；每档各自记账（`markFired`），所以中途崩溃时下一轮从断点继续，已经跑过的
+档位靠幂等键 `sched-{id}-{档位}` 回放而不是重跑。
+
+### 27.3 SKIP 不能写 last_fired_at
+
+这是实现上最容易踩的一处。`last_fired_at` 被两个地方读：扫描游标，和界面的「上次触发」。
+跳过时如果写它，界面就会说「上次触发 15:03」，而实际上一档都没跑——一句假话。
+
+做法是把两件事拆开：
+
+- `SKIP` 只写 `last_slot_at`（+ `last_outcome='SKIP'`），`last_fired_at` 原样保留；
+- 扫描游标的基准改成 `last_slot_at`（`cursorOf`；它为空时才退回 `last_fired_at`，兼容
+  V012 之前的历史行）。档位游标天然就是「最后消费掉的档位」，拿它当基准既能让 SKIP 前进，
+  也不会让 FIRE 之后重复算同一档。§29.1 记了一次实测修正：曾经用「两者较大值」，
+  在补跑中途推迟时会把未跑的档位跳过——`last_fired_at` 记的是扫描时刻，不是档位。
+
+`last_outcome`（`FIRE` / `SKIP`）是为了让界面能说清「上次扫描到底跑了没有」：触发页在
+`SKIP` 时显示「上次扫描跳过 2026-11-20 09:00 档（未执行）」，而不是把跳过冒充成一次执行。
+
+### 27.4 有界仍然是硬约束
+
+`CATCH_UP_ALL` 的「全部」是「最近 20 档」（`MAX_CATCHUP_SLOTS`）。理由是并发与成本：一次补齐
+180 条执行会在同一秒进队列，前 20 条已经把引擎和额度打满，剩下 160 条只是排队等超时。丢弃的
+部分记在 `skipped` 里，语义是「有界补偿」而不是「一条不落」——这一点在 README 已知限制里写明。
+
+窗口仍然是 24 小时，三种策略共用；`CATCH_UP_ALL` 在 24 小时内最多也只能补 20 档。
+
+### 27.5 兼容与默认值
+
+- 迁移给 `misfire_policy` 默认 `CATCH_UP_LATEST`，升级不改变既有触发器的行为；
+- 读路径用 `parseOrDefault`（脏数据 / 手改过的行退回默认，不打断扫描），写路径用 `require`
+  （拼错的值 409，不静默变成别的策略——用户以为「跳过了」而系统在补跑，是最坏的一种沉默）；
+- 首次到点（`last_fired_at` 与 `last_slot_at` 都为空）无视策略，一律跑当前这一档：新触发器
+  没有「错过」过什么，第一次就跳过会让「每分钟」的任务看起来根本没生效。
+
+### 27.6 验收
+
+- Java：`TriggerServiceTest`（三种策略的 slots / consumeTo / skipped、20 档上界与丢弃最老、
+  首次到点无视 SKIP、SKIP 只写游标不写 fired_at、未知值写时拒绝 / 读时回落）、
+  `TriggerSchedulerTest`（一批多档全派发、SKIP 只调 `skipMissed`、claim 挡住重复）。
+- 前端：`triggers-view.spec.ts`（默认选中、切换后随保存下发、跳过后显示「上次扫描跳过」）。
+- E2E：`e2e/test_triggers.py`（策略建 / 改 / 读回一致、不传时为默认值、非法值 409）。
+
+## 28. 执行看护：把「永远运行中」的执行收口（2026-11-20）
+
+### 28.1 投影模式的必然漏洞
+
+§7 定了「事件是唯一真相，MySQL 只是查询索引」。这条原则换来的是可重放与顺序确定，
+代价是一个没人兜底的缺口：**终态只可能由事件产生**。于是三种情况下投影会永远停在
+`PENDING` / `RUNNING`：
+
+| 断在哪 | 现象 | 原来会发生什么 |
+|---|---|---|
+| 插入执行行之后、提交引擎之前（进程被杀） | 行是 `PENDING`，引擎从没收到 | 永远 PENDING；取消也走不通（取消是转发给引擎的） |
+| 引擎进程崩溃 | 已 `RUNNING` 的执行不再产生事件 | 永远 RUNNING |
+| 引擎事件存储被清 / 引擎换了实例 | 事件流里没有这条执行 | 永远 RUNNING，且详情页拉事件也是空 |
+
+引擎侧有自己的 deadline，会发 `ExecutionTimedOut`——但那只在引擎**活着**时成立。
+所以缺口不在「超时没实现」，而在「超时的执行者也会死」。
+
+### 28.2 判据只能是引擎状态，不能是「超时了所以它死了」
+
+控制面手里有两个证据：`deadline_at`（承诺）与投影状态（可能是旧的）。
+单靠这两个，无法区分三种情形：真的死了、投影器卡住了、引擎还在慢慢收尾。
+差别很大——第一种要收口，第二种要**自愈**（把已有的事实抄过来），
+第三种什么都不该做。
+
+所以看护先问引擎：`GET /internal/executions/{id}/state`（§28.4 讲为什么要区分 404）。
+
+| 引擎回答 | 含义 | 动作 |
+|---|---|---|
+| `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT` | 事实已经发生，只是没投递到 | 抄状态 + token/steps（`markTerminal`），审计 `EXECUTION_RECONCILED` |
+| `RUNNING` | 投影漏了 `ExecutionStarted` | `markRunning`（`started_at` 用 `IFNULL` 保留首次） |
+| `SUSPENDED` | 投影漏了 `GateSuspended` | 先 `markRunning` 再 `markSuspended`（挂起必由运行而来） |
+| 与投影一致 | 它真的还在跑 | 什么都不做 |
+| 不认识（404）/ 连不上 | 不会再有事件了 | 收口（见 §28.3） |
+
+「什么都不做」这一行是刻意的：**超期本身由引擎负责收口**，控制面只在「无人收口」时兜底。
+否则一条被引擎正常超时收口的执行，会被控制面抢先写成别的状态，两边打架。
+
+### 28.3 收口的两种归因
+
+同样是「不会再有事件了」，归因不同，用户要做的事也不同：
+
+| 投影状态 | 落的状态 | 错误码 | 用户该做什么 |
+|---|---|---|---|
+| `PENDING` | `FAILED` | `EXEC-DISPATCH-LOST` | 重新运行（引擎从没收到过） |
+| `RUNNING` | `TIMED_OUT` | `EXEC-DEADLINE_EXCEEDED` | 查为什么没收到终态事件 |
+
+两个码都对前端可见（`errors.ts` 有文案），审计记 `EXECUTION_REAPED`，带
+`from/to/errorCode/cause`（`engine-unknown` 或 `engine-unreachable`）——
+「为什么这条被判死了」在审计里能直接读出来，不用去猜当时的网络。
+
+### 28.4 为什么要区分「不认识」与「连不上」
+
+`EngineGatewayClient.executionState` 把 404 也归成 `AGT-UPSTREAM-001`（详情页只需要
+「拿不到结果」这一种语义）。看护需要更细：404 意味着「这条执行在引擎侧不存在」，
+是确定性的事实；网络故障意味着「这次没问出来」，下一次可能就问到了。
+
+于是新增 `findExecutionState` 返回 `Optional`：404 → `empty`，其它故障照旧抛。
+两者的动作此刻相同（都收口），但审计的 `cause` 不同，运维据此判断是「引擎清了数据」
+还是「引擎抖了一下」。
+
+### 28.5 阈值与「宁可错杀」
+
+- `deadline_at + 120s`：给引擎自己的超时事件留投递余量。窗口内引擎通常已经收口，
+  控制面只在它没做到时才补。
+- `PENDING` 超过 `180s`：派发是同步调用（`submitExecution` 返回即代表引擎已受理），
+  三分钟还停在 PENDING 不可能是「排队中」。
+- 候选按 `seq` 升序取，一批最多 50 条（`AF_REAP_BATCH`）：积压时先解决躺得最久的，
+  单轮耗时也有上界（每条候选一次引擎调用）。
+
+两个阈值都可配。把 `grace` 调小会让收口更激进，代价是「引擎慢但活着」的执行可能被判死；
+调大则相反。默认值的选择是：**宁可晚两分钟收口，也不要错杀一条正在跑的执行**——
+但也不能无限等，所以 `grace` 有默认值而不是「等引擎自己好」。
+
+即便如此，仍有错杀的可能：引擎与 MySQL 同时抖动，一条其实还在跑的执行会被写成超时。
+这是有意的取舍（README 已知限制 §15 写明）：一条永远挂着的执行比一条被误判的执行
+更糟——前者没人知道，后者至少有审计可查，事件仍在引擎侧可人工对账。
+
+### 28.6 多副本与幂等
+
+看护用与定时触发同一个 `RedisLease`（本轮顺手把两处重复的租约代码收成一个类）。
+租约只是省重复劳动：真正的安全来自三件事——`markTerminal` 是「写入已知事实」，
+重复执行结果相同；候选查询要求「早该结束」，同一行下一轮仍在候选里也不会造成新伤害；
+审计重复一条，比漏记一条好。
+
+### 28.7 验收
+
+- Java：`ExecutionReaperTest`（引擎四种回答各自的动作、未知状态不动投影、单条坏行不中断整轮、
+  租约被占 / 关闭时不扫表）。
+- 前端：`admin-view.spec.ts`（候选表区分两种归因、时长按人读得懂的单位、巡检后重拉候选、空态）。
+- E2E：`e2e/test_execution_reaper.py`（非管理员 403、终态执行不进候选、
+  `neverStarted` 与状态一致、巡检返回五个计数）。
+- 迁移：`V015__execution_reap_index.sql` 补 `(status, deadline_at)` 与 `(status, created_at)`
+  两条索引——跨租户扫描用不上 `idx_we_tenant_status`，没有索引时每 60 秒一次全表扫描。
+
+## 29. 三个「看得见才算做完」的修补（2026-11-20）
+
+### 29.1 补跑的并发上限：为什么是软限，以及「推迟」不是「跳过」
+
+§27 让 `CATCH_UP_ALL` 一轮最多回放 20 档，但 20 条执行仍然会在同一秒进队列——原来的理由是
+「靠引擎的 `maxParallelism` 与额度钳制收口」，那把闸门在**工作流之外**：一条流水线的
+补跑会把同租户其他流水线的额度一起吃掉。所以上限加在工作流上（`V016`，
+`workflow_definition.max_concurrent`，0 = 不限）。
+
+四个决定值得写下来：
+
+**为什么放在定义上而不是触发器上。** 同一条流水线可能既有 webhook 又有定时，甚至两个
+webhook；「最多几个同时在跑」是流水线的属性。放到触发器上就得回答「两个触发器各有 2 个名额，
+加起来是几个」——这个问题的任何答案都很奇怪。
+
+**为什么只数 `PENDING` / `RUNNING`。** `SUSPENDED` 在等人工审批，不占引擎。把它算进去，
+一个搁置三天的审批就能让这条流水线永远进不来新执行——限流变成了死锁。
+
+**为什么调度器「推迟」而交互式入口「拒绝」。** 两者要的东西不同：
+- 手动 / webhook 的调用方在等一个结果，必须立刻知道「现在不行」，所以 `429 WF-CONCURRENCY-001`；
+- 调度器没有调用方在等，它要的是「最终补完」。所以逐档检查余量，跑满就停，**游标不动**，
+  下一轮从断点继续（最多晚一个扫描间隔）。若把这也做成拒绝，那一档就被永久
+  消费掉了——`CATCH_UP_ALL` 会退化成「补到几个算几个」且没有审计。
+
+**为什么是软限。** 判定是「先 `COUNT` 再 `INSERT`」，两者之间没有锁。同一触发器的并发被
+claim 收窄到 1，但同一工作流的两个入口（手动 + webhook）仍可能同时通过检查，超出 1~2 条。
+要精确就得引入计数表（与执行状态双写，必然不一致）或 `SELECT ... FOR UPDATE`（把派发路径
+串行化）。这个上限的目的是**削峰**，不是配额结算——超出两条不会造成故障，为此牺牲派发吞吐
+不划算。README 已知限制里写明。
+
+**实测补上的一处：游标必须是档位，不能是「两者较大值」。** §27.3 为了让 SKIP 前进，
+把扫描游标定成 `max(last_fired_at, last_slot_at)`。但 `last_fired_at` 记的是**扫描时刻**：
+补跑第 1 档（12:43）发生在 12:46，剩下 12:44~12:46 三档被推迟；取较大值就会把游标推到
+12:46，下一轮直接从 12:47 开始——推迟的三档永久丢失，而审计明明写着 `pending=3`。
+现在 `cursorOf` 优先用 `last_slot_at`（它为空时才退回 `last_fired_at` 兼容 V012 前的历史行）：
+档位游标本来就是「最后消费掉的档位」，`CATCH_UP_LATEST` 每轮仍取最新一档，所以不会退化成
+一档一档慢慢追。真实链路验证：上限 1、把游标拨回 3 分钟 → 一轮 `fired=1, pending=3`，
+下一轮从 12:44 继续补、不再跳档。
+
+首次派发失败与竞态失败走同一条路：`fireSchedule` 抛 `WF-CONCURRENCY-001` 时，调度器把它
+当作「推迟」而不是「这一轮出错」——否则剩下的档位会被 `catch` 吞掉一整轮。
+
+### 29.2 交叉表：透视放在服务端，是因为「两个真源」比「少写几行」贵
+
+「A 租户在 deepseek 上花了多少」这张表有两种做法：后端给最细的 (tenant, model) 行，前端
+自己透视；或者后端直接给出对齐好的矩阵。选了后者，理由是正确性：
+
+- 前端透视意味着**行合计由前端算**，而同一页面的 `totals` 由后端算。两个真源一旦有偏差
+  （浮点、过滤条件、空模型处理），页面上就是「两处加起来不一样」，而且没人知道该信哪个；
+- 「未标注」排最后、列按消费降序、空租户不占行，这些是展示规则；放在服务端，E2E 能直接断言
+  「行合计 == 列合计 == grand == byModel 合计」，四条恒等式一次验完。
+
+代价是响应体大一点（`rows × models` 个格子）。它的上界是租户数 × 模型数，实际是个小表；
+真要几百个模型时该分页的是模型列，而不是把透视推回前端。
+
+已删除租户的消耗仍然列出（`name` 回落到 id）：账对不上比「名字不好看」严重得多。
+
+### 29.3 亚像素的试跑段：0.2% 也要看得见
+
+额度条把「已用」切成执行 / 试跑两段，宽度按百分比。问题是 0.2% 在 300px 的条上只有 0.6px，
+浏览器直接不画；取整到整数百分比时连 0.4% 都会变成 0%——脚注写着「其中试跑 115（占 <1%）」，
+条上却空空如也，读者只能得出「试跑没记账」的结论。
+
+两层修法：
+
+1. 百分比保留一位小数（`Math.round(v * 1000) / 10`），让 0.2% 真的是 0.2% 而不是 0%；
+2. 份额非零且不足 1% 时给这一段挂 `--tick`，CSS `min-width: 2px`。份额真的是 0 时不挂——
+   那时画一条刻度就是在谎报「有一点试跑」。
+
+同样的规则用在租户用量页与管理端额度条上（`.af-usage-bar__fill--tick` / `.af-meter__fill--tick`）：
+同一页面上同一种消耗只有一种画法，两个页面之间也不该有两种。
+
+### 29.4 验收
+
+- Java：`ExecutionServiceTest`（满额拒绝且不插行、0 = 不限、幂等重放不被自己的上一次挡住）、
+  `TriggerSchedulerTest`（满额整批推迟、跑一档后推迟其余、竞态按推迟处理）、
+  `AdminUsageServiceTest`（列排序与未标注置底、格子对齐、行列合计一致、已删除租户不丢）。
+- 前端：`usage-view.spec.ts` / `admin-view.spec.ts`（不足 1% 的段有 tick 类且宽度非零、0 时不挂）、
+  `admin-view.spec.ts`（交叉表列头、空格破折号、空账期）、`triggers-view.spec.ts`（上限改的是
+  工作流、未改时按钮禁用）。
+- E2E：`test_triggers.py`（上限往返 + 越界 400；真实模型下第二个入口 429、额度释放后可再进）、
+  `test_cost_center.py`（交叉表行列合计与 `byModel` 一致）。
+
+## 30. 五条「描述与实现不符」的收口（2026-11-20，v0.5.1）
+
+README 的 15 条已知限制原本都按「有意的设计边界」写。复核时发现其中 5 条不是边界，
+而是描述与实现不符，甚至藏着真 bug。这一节记取舍，不复述 CHANGELOG 的条目。
+
+### 30.1 预算：checkpoint 与在途预占谁说了算
+
+§5.6 把 `BudgetLedger.reconcile` 写成「按事件流 `tokenUsed` 校准」，听起来总是对的。
+但事件流里的 `state.token_used` 只累计**已完成**节点，Redis 键里还含**在途预占**：
+checkpoint 恰好发生在 `reserve` 之后、`settle` 之前时，一次无条件 `SET` 就把在途预占
+抹成已完成量；随后 `settle` 回冲未用额度，键可以变成负数——预算被反向放大，而不是漏记。
+
+修法不是「让 reconcile 更聪明地合并两个数」，那需要逐笔账本才能算准。选了更粗但能收敛的
+方案：给每次 `reserve` 记一个**在途计数**（`af:budget:{executionId}:inflight`），`settle`
+在同一事务里回冲额度并递减计数；`reconcile` 只要计数 > 0 就整段跳过。代价是同一执行内的
+并行节点共享一个计数，粒度粗到执行级；换来零额外存储、Redis 全丢后仍能从事件流重建。
+
+真正麻烦的是重建的触发条件。原来只有崩溃恢复会调 `reconcile`，而 Redis 全丢时执行还在跑、
+没有恢复事件——预算键没了，下一个节点却从 0 基预算重新拿全额。现在两处补位：租约续不上时
+立即按事件流重建（`reset_inflight=True`，旧执行器已不在，未完成节点重放会重新 `reserve`）；
+`start_sweep()` 发现「预算键不在了，但事件流里已经有 `COMMAND_ISSUED`」就删掉
+`af:lease:{eid}`，让恢复扫描接管。判据用「发过 Command」而不是「执行在跑」——前者是事件流
+里的既成事实，后者要靠跨服务探活猜。
+
+### 30.2 审计 outbox：把「永远不会放弃」改成「停止自动重投」
+
+§16.1 的 outbox 纪律是「只追加、不放弃」，实现里却有两个洞：投递失败会每 60s 重投到永远
+（尾部一行坏数据能长期占住 relay，且没有任何告警），`message_json` 反序列化失败时写一条
+骨架后 `markSent`——内容已经丢了，账面却是「已发送」。「不放弃」字面上成立，语义上等于
+静默丢弃。
+
+`V017` 给 `audit_outbox.status` 加 `DEAD`，带 `dead_at` / `dead_reason`。DEAD 不是删除：
+原始 `message_json` 原样留着，`purgeSent()` 只清 `SENT`。管理端可列可重放。水位按固定间隔
+记日志，`dead > 0` 或最老积压超 600s 升 WARN——没有引入 Micrometer / actuator，因为这里要的
+是「有人能看见」，不是新指标维度。语义从「自动无限重试」换成「自动重投有上限，超过转人工
+介入」：既不丢，也不会无限重试。
+
+### 30.3 执行看护：连不上要连续确认，404 不用
+
+§28 写「引擎不认识或连不上，才收口」，但 `inspect()` 对 `BusinessException` 一次就
+`postMortem()`——`EngineGatewayClient` 的注释却写着「得再看一轮」，代码与注释互相矛盾。
+网络抖动和引擎真死是两件事，一次探测分不开。
+
+现在 `af:reap:unreachable:{id}` 记连续失败轮数，达到 `AF_REAP_UNREACHABLE_CONFIRMATIONS`
+（默认 3）才收口；中途探测成功就清零；引擎仍持有 `af:lease:{executionId}` 时继续暂缓
+（租约由引擎自己续，比控制面猜更可信）；404 仍立即收口——「明确不认识」不需要确认。
+Redis 异常时保守返回 `ALIVE`：看护是兜底，不该在自身依赖抖动时动手。
+
+### 30.4 子图 4 层：三处同一口径
+
+§17.2 只对齐了「子图规则」，深度却散在两处：画布能无限下钻，前端即时校验超过 4 层静默
+返回空数组（看起来像通过），引擎发布校验完全没有上限。README 写「画布最多下钻 4 层」，
+实际上只有画布的面包屑有这个习惯，另外两处不认。
+
+现在 `MAX_SUBGRAPH_DEPTH = 4` 在 `engine-api/app/dsl/validate.py`、
+`frontend/src/dsl/validate.ts`、画布 `enterSubgraph()` 三处共用；第 5 层明确报错，而不是
+无限递归（坏数据能把发布请求拖死）或静默跳过校验。到达上限的那一层照常做引用与结构检查——
+「不再往下走」不等于「这一层不查了」。Python 与前端各补 3 个契约测试锁住「4 层通过 /
+5 层报错 / 上限层仍校验」。
+
+### 30.5 推理模型：标记要接进下发参数与预算，不能只停在界面
+
+§21.5 的能力标注只影响界面提示，`deepseek-flash` / `deepseek-v4-pro` 这类名字甚至没被判成
+推理型，于是 1024 的 `maxTokens` 原样下发、正文为空。标记如果只用来显示一个 chip，它就没
+解决任何问题。
+
+现在引擎与前端按同一口径推断（`deepseek` + `flash` / `v4`，避免把 `glm-v4-pro`、
+`acme-v4`、`gpt-4o-mini` 误标），LLM 节点对推理型且 `maxTokens < 4096` 时把下发值抬到
+4096，预算预占也按抬升后的量算——否则 grant 会把抬升后的 `maxTokens` 又钳回 1024。
+DSL 不改写，`COMMAND_ISSUED` 与 `input_snapshot` 留 `reasoningAdjusted` /
+`configuredMaxTokens`：改了请求参数却不留痕，等于让重放与对账都失去依据。上游「思维链与
+正文共用 `max_tokens`」的行为消不掉，这里只是缓解，README 第 10 条照实写。
+
+### 30.6 CI：粗筛与精查分层
+
+四份 Java 基线由 springdoc 运行时生成，全量 `--check` 只能等 `e2e` 起全栈；引擎侧却有
+`contract-drift` 这种秒级独立检查。两边不对称，而且 `e2e` 的 `pull_request.paths` 漏了
+`pom.xml`——只改 springdoc 版本或项目版本时连精查都不触发。
+
+补 `scripts/check-java-routes.py`：不启动 Spring，从 Controller 源码抽路由集合与基线双向
+比对，`contract-drift` 的 `java-route-guard` 在每个 PR 秒级执行；`e2e` 的 paths 补根 pom 与
+子模块 pom。粗筛管「路由集合」，运行时 `--check` 管「请求/响应 schema」，两层不重复。粗筛
+的失效是**显式的**：正则一旦扫不到路由，基线里的所有条目都会变成「基线有但源码已无」，
+CI 立刻红，不会静默放过。
+
+### 30.7 验收
+
+- Python：`test_budget.py`（在途计数、反向超发、Redis 全丢重建、重复 settle）、
+  `test_dsl_validate.py`（4 层通过 / 5 层报错 / 上限层仍校验引用）、
+  `test_model_capabilities.py` 与 `test_llm_node.py`（推理型识别、抬升下发与预算、事件留痕）。
+- Java：`AuditOutboxRelayTest`（载荷损坏只隔离、达到阈值转 DEAD、未达阈值仍退避）、
+  `ExecutionReaperTest`（连续确认、恢复清零、持有租约暂缓）。
+- 前端：`dsl-validate.spec.ts`（深度契约）、`model-capabilities.spec.ts`（推断口径）。
+- CI：`check-java-routes.py` 纳入 `contract-drift`；`verify-all.ps1` 同步纳入两条契约检查。
+
+## 31. 语义检索：pgvector 懒索引与 RRF 融合（2026-11-24）
+
+`retrieval` 节点三模式：`lexical`（控制面 BM25，默认）、`vector`、`hybrid`。
+向量面落在 **engine 侧 PG**（V003 迁移，pgvector 扩展），不破坏 D2「PG 由 Python 独占写」：
+
+- **权威源不变**：切片正文与清单仍在控制面 MySQL；engine 经新增内部端点
+  `POST /internal/knowledge/chunks`（X-Internal-Token，租户归属逐 kb 复核）拉清单。
+- **懒索引**：vector/hybrid 首次查询时按 `sha256(content)` 增量嵌入（批 32），
+  upsert 以 `(chunk_id, model)` 冲突更新；清单中消失的切片做 stale 清理。
+  索引与切片缓存是 engine 侧派生数据，控制面重建文档后哈希变化即自动重嵌。
+- **空间隔离**：谓词 `tenant_id + kb_id + model` 三重过滤；换 embedding 模型即换空间，不混召回。
+- **融合**：hybrid 用 RRF（k=60）融合词法与向量两路名次，不依赖两路分数可比；
+  `minScore` 只作用于词法路。产出形状与 lexical 完全同构（results/citations/text）。
+- **fail-closed**：未配置 `AF_EMBEDDING_*` 时 vector/hybrid 报
+  `RETRIEVAL-VECTOR-NOT_CONFIGURED-001`；超索引上限报 `RETRIEVAL-INDEX-CAP-001`；
+  embedding 错误分类与 LLM provider 同口径（401/403/400/404/422 永久，429/5xx/超时瞬时）。
+- **事件留痕**：`COMMAND_ISSUED/COMPLETED` 带 `retrievalMode` 与 `indexStats`
+  （embedded/cached/deleted），成本与索引行为可对账。

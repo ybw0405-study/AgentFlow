@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,7 +28,7 @@ jobs:
       - name: npm ci
         working-directory: frontend
         run: npm ci
-      # CT-2：OpenAPI 是唯一契约源，前端类型必须由它生成，且生成物不得被手写漂移。
+      # OpenAPI 是唯一契约源，前端类型必须由它生成，且生成物不得被手写漂移。
       - name: 生成 API 类型（OpenAPI 单源）
         working-directory: frontend
         run: npm run gen:api-types

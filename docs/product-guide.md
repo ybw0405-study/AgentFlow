@@ -90,19 +90,19 @@ flowchart LR
 
 画布编排（内置示例「客户工单分诊」：分诊 → 加急判定 → 并行取证 → 人工审批 → 循环润色 → 回复 → 归档回复 → 收口，另有一条驳回支路）：节点是带分类色标题栏的卡片，模型 / 表达式 / 分支 / 超时等高频参数直接写在卡片上，改完即时落进 DSL；端口按类别着色，连线是曲线。工具条提供「模板 / 搜索节点 / 整理布局 / 复制 / 粘贴 / DSL」，完整配置抽屉与 JSON 视图保留为高级模式。
 
-![画布](docs/images/canvas.png)
+![画布](images/canvas.png)
 
 模型不再是让人盲填 id 的裸文本框：点卡片上的「模型」会打开常见模型清单（混元 Hy4 / DeepSeek / 智谱 GLM / Kimi / 通义千问 / MiniMax / 豆包 / 硅基流动 / Step / OpenAI / 本地 Ollama），选一个即弹出端点、模型名与 API Key 的表单，「测试并连接」由服务端真实校验并通过后自动写回节点。清单里的「进程默认端点」走启动脚本注入的 `AF_LLM_*`；清单外的服务走「自定义 OpenAI 兼容端点」，原「连接器」页与完整配置抽屉全部保留。
 
-![模型清单](docs/images/model-picker.png)
+![模型清单](images/model-picker.png)
 
-![模型连接向导](docs/images/model-connect.png)
+![模型连接向导](images/model-connect.png)
 
 知识库页：建库后粘贴文本或选择 `.txt` / `.md` 文件导入，导入即按段落切片并可立即试检索；命中片段带文档标题、片段序号与相关度。也可一键生成引用该知识库的「检索 → 作答」工作流，不必手抄 UUID 进 DSL。画布里的「检索」节点在配置抽屉勾选知识库，命中原文写进 `output.text`，下游 llm 提示词用 `{{ nodes.xxx.output.text }}` 引用即可。
 
 审批中心：`human_gate` 挂起后进入待办收件箱，表格给出提示词、执行短号、节点、超时剩余时间与通过/驳回；审批意见统一填在上方，裁决回执会注明实际走到的分支。
 
-![审批中心](docs/images/approvals.png)
+![审批中心](images/approvals.png)
 
 用量页：本月调用与 token 对着额度画进度条，区间内执行与试跑分色堆叠成每日柱状图，
 按工作流列出各自花了多少，最近 10 次试跑逐条给出节点、模型与耗时——调试吃掉多少额度不再是黑箱。
@@ -113,7 +113,7 @@ flowchart LR
 token / steps / traceId 与最终产出。需要逐个看子节点（如 `gather#kb#kb_hit`、`polish#0#polish_sign`）
 时切到「节点列表」标签，原来的完整列表一栏不少；SSE 实时态对两个视图同时生效。
 
-![执行详情](docs/images/execution.png)
+![执行详情](images/execution.png)
 
 ## 快速开始（Windows）
 
@@ -181,7 +181,7 @@ WSL2：把第 3 步换成 `bash scripts/start-dev.sh`（先 `./scripts/stop-dev.
 
 **接入后怎么确认真的生效**：引擎触发只认版本快照，所以「运行」会先保存画布当前草稿，复用或冻结一份同 checksum 的版本快照并显式带 `versionId` 触发——跑的就是刚改过的那张图，不会执行旧的已发布版本；已发布版本与灰度配置都不受影响，「冻结并发布」才会改动正式版本。内置示例、模板与新建节点默认走真实端点：模型由 `AF_LLM_*` 或模型连接提供，检索读知识库文档。若导入了旧版 DSL（llm 节点仍是已移除的 `provider: mock`），画布顶部会出现提示条，可一键把整层节点切到现有连接；不切的话执行会在该节点明确报错，不会产出示例文本。
 
-![连接失败时的反馈](docs/images/model-connect-error.png)
+![连接失败时的反馈](images/model-connect-error.png)
 
 清单外的服务点「自定义 OpenAI 兼容端点」自行填写端点、模型名与 Key，走同一套校验。「管理已有连接」直达「连接器」页：**高级模式**（连接器页与配置抽屉里的「模型来源 / provider / model」）字段一个没少，仍可手动精调、拉取模型清单、换密钥。
 
@@ -430,7 +430,7 @@ cd engine-api
 
 `eval-nightly`（每日 cron + 手动 dispatch）在离线基线之外，用仓库 secrets `AF_LLM_BASE_URL` / `AF_LLM_API_KEY` / `AF_LLM_MODEL` 注入真实 OpenAI 兼容端点，跑 llm 节点冒烟并由自建 LLM judge 输出 JSON 评分（均分 ≥ 0.8 门禁），报告上传 artifact；未配置密钥时显式失败，不静默跳过。它与平台「评测 / A/B」功能无关：前者回归引擎调度语义，后者评测业务工作流输出。
 
-提交规范、迁移与依赖升级流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；版本变更见 [`CHANGELOG.md`](CHANGELOG.md)。
+提交规范、迁移与依赖升级流程见 [`CONTRIBUTING.md`](../CONTRIBUTING.md)；版本变更见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 引擎侧新增或改动路由、请求/响应模型后，基线必须同步刷新，否则 `contract-drift` 会红：
 
@@ -449,7 +449,7 @@ git add docs/openapi/java-*.json
 
 ## 安全
 
-凭据加密、出网沙箱、多租户隔离等控制的位置与已知限制见 [`SECURITY.md`](SECURITY.md)。漏洞请走私下渠道上报，不要开公开 Issue。
+凭据加密、出网沙箱、多租户隔离等控制的位置与已知限制见 [`SECURITY.md`](../SECURITY.md)。漏洞请走私下渠道上报，不要开公开 Issue。
 
 ## 环境变量
 

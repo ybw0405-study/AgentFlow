@@ -17,13 +17,13 @@ concurrency:
 
 jobs:
   engine-openapi:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version-file: .python-version # G12
+          python-version-file: .python-version
           cache: pip
           cache-dependency-path: engine-api/requirements.lock.txt # 真实锁文件
       - name: install engine (locked + verified hashes)
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version-file: .python-version # G12
+          python-version-file: .python-version
       - name: 静态比对 Controller 路由与入库基线
         run: python scripts/check-java-routes.py
 
@@ -64,6 +64,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version-file: .python-version # G12
+          python-version-file: .python-version
       - name: 迁移表集合 == grants 表集合（含权限语义）
         run: python scripts/check-grants.py

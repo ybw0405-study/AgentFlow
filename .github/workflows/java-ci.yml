@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,6 +26,6 @@ jobs:
           java-version: '17' # 与根目录 .java-version / pom.xml <java.version> 一致
           cache: maven
       - name: mvnw verify (tests + checkstyle + ArchUnit)
-        # 用仓库内 Maven wrapper（.mvn/wrapper/maven-wrapper.properties 固定 3.9.9），
-        # 不依赖 runner 预装的 mvn 版本；bash 调用避开 Windows 文件可执行位差异。
+        # 用仓库内 Maven wrapper（.mvn/wrapper/maven-wrapper.properties 固定版本），
+        # 不依赖 runner 预装的 mvn 版本；与 DocQA 统一使用 ubuntu-latest。
         run: bash ./mvnw -B -ntp verify
