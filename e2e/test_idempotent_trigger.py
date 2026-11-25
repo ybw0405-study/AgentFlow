@@ -1,4 +1,4 @@
-"""E2E-4（US-02 并发触发）：同一 (tenant, idempotencyKey) 并发 10 次 → 恰好 1 个执行。"""
+"""E2E（并发触发）：同一 (tenant, idempotencyKey) 并发 10 次 → 恰好 1 个执行。"""
 
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
 """llm 节点：模板渲染 → PII 第二层 → 预算预占 → LLMCommand。
 
 纪律：
-- PII 第二层（US-05）：渲染后的 prompt 再过一遍 pii-v2 mask；命中只记类别与数量，
+- PII 第二层：渲染后的 prompt 再过一遍 pii-v2 mask；命中只记类别与数量，
   若二次脱敏后仍检出 PII（不应发生）则 PII-BLOCKED-001 永久失败。
-- 预算硬停止（D11）：reserve 失败即 BudgetExhaustedError，Command 绝不发出；
+- 预算硬停止：reserve 失败即 BudgetExhaustedError，Command 绝不发出；
   发出的 Command maxTokens 被钳到预占额度，保证 tokenUsed ≤ budget。
 - 崩溃恢复：callId 确定性派生；外部模型调用是非确定性的，重放需防重复计费，
   重发安全。
@@ -70,7 +70,7 @@ class LlmExecutor:
 
     def _provider_for(self, cfg: Any, authorized: frozenset[str]) -> LLMProvider:
         if cfg.connection_id:
-            # 与 tool 节点同口径（SEC-4）：connectionId 必须在本执行授权集合内，
+            # 与 tool 节点同口径：connectionId 必须在本执行授权集合内，
             # 否则跨空间引用连接器完全依赖 connector-service 内部校验，双路径强度不一致。
             if cfg.connection_id not in authorized:
                 raise PermanentNodeError(
@@ -140,7 +140,7 @@ class LlmExecutor:
                 ctx.node_key,
             )
 
-        # 预算预占（D11）：预留 = promptTokens + maxTokens，生成上限钳到剩余额度
+        # 预算预占：预留 = promptTokens + maxTokens，生成上限钳到剩余额度
         grant: int | None = None
         prompt_tokens = estimate_tokens(prompt + (system or ""))
         if ctx.policy.token_budget is not None and ctx.budget is not None:

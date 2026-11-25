@@ -88,12 +88,12 @@ class Settings(BaseSettings):
     lease_ttl_ms: int = 30_000 # 执行租约 TTL
     lease_renew_ms: int = 10_000 # 续约间隔
     # Redis TCP 半开防护：socket 级超时防止单次调用永久阻塞；
-    # 关停 drain 上限防止某个在途任务卡死整个 lifespan 收尾（B4）。
+    # 关停 drain 上限防止某个在途任务卡死整个 lifespan 收尾。
     redis_socket_timeout_s: float = 2.0
     redis_socket_connect_timeout_s: float = 2.0
     shutdown_drain_timeout_s: float = 15.0
     health_probe_timeout_s: float = 1.0 # readiness 单次依赖探测超时
-    event_payload_max_bytes: int = 256 * 1024 # 溢出转 node_io（D5）
+    event_payload_max_bytes: int = 256 * 1024 # 溢出转 node_io
     default_max_parallelism: int = 4
     event_tail_max_limit: int = 500
 

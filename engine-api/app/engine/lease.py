@@ -3,7 +3,7 @@
 定位：租约只做冲突降级，正确性由 aggregate_version 乐观锁兜底。
 renew / release 用 WATCH/MULTI 把「比对 owner + 改写」变成原子操作：原实现
 GET 与 SET 之间若恰好过期并被新 worker 抢占，SET xx 会把新持有者的租约覆盖
-成自己的，双方都自认持有（CON-3）。WATCH/MULTI 在冲突时重试，兼容 fakeredis
+成自己的，双方都自认持有。WATCH/MULTI 在冲突时重试，兼容 fakeredis
 且不依赖 Lua（与 budget.py 同策略）。acquire 本身已是单条 SET NX PX，天然原子。
 """
 

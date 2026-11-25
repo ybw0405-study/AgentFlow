@@ -121,7 +121,7 @@ class Scheduler:
             raise LeaseLostError(str(execution_id))
         # Redis 故障与查询结果必须分开处理：查询拿到明确结果（租约不在我手上 /
         # 有取消标记）才走对应语义；连接不可达时无法确认租约，按「租约疑似丢失」
-        # 静默停止让恢复扫描接管（与续约循环的 P1-6 语义一致），绝不传播成普通
+        # 静默停止让恢复扫描接管（与续约循环的静默停止语义一致），绝不传播成普通
         # 异常把活执行落成 ExecutionFailed 终态。
         try:
             held = await lease.held_by_me()
@@ -271,7 +271,7 @@ class Scheduler:
                 failures = [r for r in results if isinstance(r, BaseException)]
                 if failures:
                     # gather(return_exceptions=True) 只抛第一个会丢掉其它分支的诊断，
-                    # 先把全部异常记进日志再抛首个（C-8）。
+                    # 先把全部异常记进日志再抛首个。
                     for exc in failures:
                         logger.error("parallel branch failed execution=%s: %r", execution_id, exc)
                     raise failures[0]

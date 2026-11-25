@@ -1,4 +1,4 @@
-"""执行租约的原子性（CON-3）：renew / release 只作用于仍属于自己的租约。"""
+"""执行租约的原子性：renew / release 只作用于仍属于自己的租约。"""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ async def test_release_deletes_own_lease(fake_redis) -> None:
 
 
 class _HangingRedis:
-    """模拟 Redis TCP 半开：调用既不返回也不抛（的故障形态）。"""
+    """模拟 Redis TCP 半开：调用既不返回也不抛（故障形态）。"""
 
     async def get(self, *args, **kwargs):
         await asyncio.Event().wait()

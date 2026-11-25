@@ -459,7 +459,7 @@ async def test_stream_on_delta_is_invoked_per_token_in_order():
     """真实时流式：on_delta 在上游每产出一个 delta 时立即回调，顺序与到达一致。
 
     回调发生在整段流读完之前（_complete_stream 的 aiter_lines 循环内），
-    而非完整响应到达后批量回放——这是 P1-2 修复的核心断言。
+    而非完整响应到达后批量回放——这是此前流式修复的核心断言。
     """
     invocation_log: list[str] = []
     completed_at: list[int] = []  # 记录回调发生时已读到的 delta 数

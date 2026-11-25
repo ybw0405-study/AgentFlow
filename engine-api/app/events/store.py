@@ -2,7 +2,7 @@
 
 纪律（§6.3）：写事件 → 应用状态 → 对外可见；禁止先改状态再补事件。
 并发控制（§8.2.4）：aggregate_version 乐观并发，冲突重读重试 ≤3 次。
-溢出（D5）：NodeCompleted payload 超 256KB 时完整内容落 node_io，事件仅存引用+digest。
+溢出：NodeCompleted payload 超 256KB 时完整内容落 node_io，事件仅存引用+digest。
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class EventStore:
         etype = EventType(event_type)
         raw = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         if len(raw) > self._max_bytes and node_key is not None:
-            # 溢出：完整内容落 node_io(OUT)，事件存引用（D5）
+            # 溢出：完整内容落 node_io(OUT)，事件存引用
             digest = hashlib.sha256(raw).hexdigest()
             node_io_spill = payload
             payload = {"_overflow": True, "digest": digest, "size": len(raw)}
@@ -183,7 +183,7 @@ class EventStore:
         return [self._row_to_event(r) for r in rows]
 
     async def open_executions(self, limit: int = 200) -> list[uuid.UUID]:
-        """恢复扫描（D4）：所有未达终态的执行。
+        """恢复扫描：所有未达终态的执行。
 
         带上限：一次故障可能遗留上万条 OPEN，全量拉回内存既慢又会挤掉正常调度；
         按最近更新时间取前 N 条，剩余部分由下一轮扫描继续。

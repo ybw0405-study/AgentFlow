@@ -174,7 +174,7 @@ async def test_explicit_large_max_tokens_is_not_lowered() -> None:
 
 
 async def test_connection_id_requires_authorization_like_tool_path() -> None:
-    """SEC-4：LLM 走 connectionId 时也必须校验授权集合，与 tool 节点同口径。"""
+    """LLM 走 connectionId 时也必须校验授权集合，与 tool 节点同口径。"""
     node = LlmNode(
         key="draft",
         type="llm",

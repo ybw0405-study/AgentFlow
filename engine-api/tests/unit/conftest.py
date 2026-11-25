@@ -18,7 +18,7 @@ from app.events.types import TERMINAL_EVENTS, Event, EventType
 class InMemoryEventStore:
     """EventStore 的内存替身（单元测试用；PG 行为由集成测试覆盖）。
 
-    max_bytes 非空时模拟真实 EventStore 的 256KB 溢出（D5）：完整 payload 转存
+    max_bytes 非空时模拟真实 EventStore 的 256KB 溢出：完整 payload 转存
     node_io(OUT)，事件只保留 {"_overflow": ...} 引用，用于覆盖「溢出 × 重放/恢复」
     交叉路径。默认 None（不溢出），保证既有测试行为不变。
     """
@@ -65,7 +65,7 @@ class InMemoryEventStore:
         return ev
 
     async def ping(self) -> None:
-        """readiness 探针的内存替身（的 API 层测试用）。"""
+        """readiness 探针的内存替身（API 层测试用）。"""
         return None
 
     async def read_all(self, execution_id):

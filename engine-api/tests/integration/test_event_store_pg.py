@@ -1,7 +1,7 @@
 """事件库集成测试：真实 PostgreSQL（testcontainers 临时实例）。
 
-覆盖：乐观并发冲突（US-04 事件版本冲突）、tail 游标、node_io upsert、
-payload 溢出（D5）、spec 存取、tracker 终态、迁移漂移拒绝。
+覆盖：乐观并发冲突（事件版本冲突）、tail 游标、node_io upsert、
+payload 溢出、spec 存取、tracker 终态、迁移漂移拒绝。
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ async def test_concurrent_appends_have_no_version_gap(store):
     await asyncio.gather(*[worker(i) for i in range(20)])
     events = await store.read_all(eid)
     versions = sorted(e.aggregate_version for e in events)
-    assert versions == list(range(1, 21)) # 无缺口无重复（US-04 事件版本冲突）
+    assert versions == list(range(1, 21)) # 无缺口无重复（事件版本冲突）
 
 
 async def test_terminal_event_marks_tracker(store):

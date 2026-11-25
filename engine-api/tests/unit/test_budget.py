@@ -1,4 +1,4 @@
-"""预算账本（D11）：预占/结算/耗尽；US-05 预算硬停止；§5.6 崩溃对账。"""
+"""预算账本：预占/结算/耗尽；预算硬停止；§5.6 崩溃对账。"""
 
 from __future__ import annotations
 
@@ -123,7 +123,7 @@ async def test_settle_never_drives_inflight_negative(fake_redis):
 
 
 async def test_settle_charges_overspend_instead_of_silently_forgetting(fake_redis):
-    """实际用量超过预占必须追扣，否则预算键被系统性低估（CON-1）。"""
+    """实际用量超过预占必须追扣，否则预算键被系统性低估。"""
     ledger = BudgetLedger(fake_redis)
     eid = uuid.uuid4()
     grant = await ledger.reserve(eid, budget=100, requested=40)

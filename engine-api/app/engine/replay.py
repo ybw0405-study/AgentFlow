@@ -1,7 +1,7 @@
 """确定性重放：按 aggregate_version 折叠事件，重建内存状态（§8.2）。
 
 重放只读事件，不重新执行任何已成功节点、不重发任何 Command。
-溢出事件（D5）的 payload 只是引用，重建聚合前先从 node_io 回填完整内容。
+溢出事件的 payload 只是引用，重建聚合前先从 node_io 回填完整内容。
 """
 
 from __future__ import annotations

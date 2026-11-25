@@ -1,4 +1,4 @@
-"""E2E（P1 / US-03）：condition 分支命中与 SKIPPED 传播（经 gateway 全链路）。"""
+"""E2E：condition 分支命中与 SKIPPED 传播（经 gateway 全链路）。"""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """condition 节点：受限表达式求命中分支（§9 安全约束，禁任意代码执行）。
 
 输出契约：{"branch": <命中的 case.name | else_branch>, "matched": <bool>}。
-调度器读取 branch 与 edge.branch 比对，未命中分支的下游标记 SKIPPED（US-03）。
+调度器读取 branch 与 edge.branch 比对，未命中分支的下游标记 SKIPPED。
 """
 
 from __future__ import annotations

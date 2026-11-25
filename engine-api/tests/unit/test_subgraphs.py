@@ -1,4 +1,4 @@
-"""loop / parallel 子图执行（P1 / US-03）。
+"""loop / parallel 子图执行。
 
 - loop：按数组迭代，独立 nodeKey（loop#i#child），collect 汇总；
 - loop 超限：LOOP_LIMIT_EXCEEDED；

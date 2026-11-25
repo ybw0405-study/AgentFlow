@@ -1,4 +1,4 @@
-"""DSL 校验：US-03 环检测 422 + 结构规则族。"""
+"""DSL 校验：环检测 422 + 结构规则族。"""
 
 from __future__ import annotations
 

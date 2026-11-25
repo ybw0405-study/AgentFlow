@@ -66,7 +66,7 @@ def test_webhook_triggers_real_execution(client, editor_token, admin_token):
     hook = _create_webhook(client, editor_token, wf_id)
     assert hook["token"] and hook["secret"] and hook["enabled"] is True
 
-    # SEC-3：create 一次性回明文，list 只回 hasSecret，不再回传密钥本体
+    # create 一次性回明文，list 只回 hasSecret，不再回传密钥本体
     listed = client.get(f"/api/v1/workflows/{wf_id}/triggers",
                         headers=headers(editor_token, SPACE_A))
     assert listed.status_code == 200, listed.text

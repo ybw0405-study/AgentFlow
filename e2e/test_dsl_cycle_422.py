@@ -1,4 +1,4 @@
-"""E2E-2：DSL 有环 → 422 DSL-CYCLE-001（US-03 环检测）。"""
+"""E2E：DSL 有环 → 422 DSL-CYCLE-001（环检测）。"""
 
 from __future__ import annotations
 

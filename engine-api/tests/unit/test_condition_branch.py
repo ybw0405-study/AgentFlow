@@ -1,4 +1,4 @@
-"""condition 分支与 SKIPPED 传播（P1 / US-03）。
+"""condition 分支与 SKIPPED 传播。
 
 命中分支的下游执行；未命中分支及其下游标记 SKIPPED 且保留在执行树中；
 汇聚节点（多入边）在至少一条激活边时仍执行。

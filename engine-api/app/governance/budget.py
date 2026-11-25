@@ -1,4 +1,4 @@
-"""预算账本（Redis）：预算硬停止机制 D11。
+"""预算账本（Redis）：预算硬停止机制。
 
 - 发出 Command 前 reserve：remaining<=0 → -1（预算耗尽，禁止发出）；
   否则 grant=min(requested, remaining) 并把该 Command 的 maxTokens 钳到 grant。
@@ -95,7 +95,7 @@ class BudgetLedger:
                         pipe.decrby(key, refund)
                     elif refund < 0:
                         # 上游实际用量超过预占时追扣：静默放过会让键系统性低估，
-                        # 后续节点继续按虚高余额预占，tokenUsed <= tokenBudget 失守（CON-1）。
+                        # 后续节点继续按虚高余额预占，tokenUsed <= tokenBudget 失守。
                         pipe.incrby(key, -refund)
                     if pending > 0:
                         pipe.decr(inflight)
