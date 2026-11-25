@@ -32,7 +32,7 @@ class KnowledgeServiceTest {
     @BeforeEach
     void setUp() {
         mapper = mock(KnowledgeMapper.class);
-        service = new KnowledgeService(mapper);
+        service = new KnowledgeService(mapper, mock(DocumentParser.class));
     }
 
     @Test

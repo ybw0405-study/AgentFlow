@@ -54,6 +54,15 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
+        <!-- 文档导入解析：PDF 文本提取（PDFBox 3.x）+ Office Open XML（Word/PPT/Excel） -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

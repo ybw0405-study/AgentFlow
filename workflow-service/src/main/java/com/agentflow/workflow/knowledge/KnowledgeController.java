@@ -1,9 +1,12 @@
 package com.agentflow.workflow.knowledge;
 
 import com.agentflow.common.api.ApiResponse;
+import com.agentflow.common.error.BusinessException;
+import com.agentflow.common.error.ErrorCode;
 import com.agentflow.common.tenant.TenantContext;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import org.springframework.validation.annotation.Validated;
@@ -13,7 +16,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /** 文档知识库的用户侧接口：建库、导入文档、列表、删除、检索自测。 */
 @RestController
@@ -68,6 +73,25 @@ public class KnowledgeController {
             @PathVariable String id, @Validated @RequestBody AddDocumentRequest body) {
         return ApiResponse.ok(service.addDocument(TenantContext.require(), id, body.title(),
                 body.content(), body.source()));
+    }
+
+    /** 文件导入：PDF / Word(docx) / PPT(pptx) / Excel(xlsx) / 纯文本，解析正文后切片入库。 */
+    @PostMapping("/bases/{id}/documents/upload")
+    public ApiResponse<KnowledgeService.DocumentDto> uploadDocument(
+            @PathVariable String id,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "title", required = false) String title) {
+        if (file.isEmpty()) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001, "上传文件为空");
+        }
+        final byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new BusinessException(ErrorCode.COM_VALIDATION_001, "文件读取失败");
+        }
+        return ApiResponse.ok(service.addDocumentFromFile(TenantContext.require(), id, title,
+                file.getOriginalFilename(), bytes));
     }
 
     @DeleteMapping("/documents/{id}")

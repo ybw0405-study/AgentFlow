@@ -377,7 +377,7 @@ export const usageApi = {
   summary: (days = 30) => get<UsageSummary>(`/usage/summary?days=${days}`),
 }
 
-/** 文档知识库：纯文本导入（前端读文件后按 JSON 提交，服务端不开放 multipart）。 */
+/** 文档知识库：纯文本导入（JSON）+ 文件上传（PDF/Office 二进制，multipart）。 */
 export const knowledgeApi = {
   bases: () => get<KnowledgeBaseDto[]>('/knowledge/bases'),
   createBase: (name: string, description?: string) =>
@@ -386,6 +386,12 @@ export const knowledgeApi = {
   documents: (id: string) => get<KnowledgeDocumentDto[]>(`/knowledge/bases/${id}/documents`),
   addDocument: (id: string, body: { title?: string; content: string; source?: string }) =>
     post<KnowledgeDocumentDto>(`/knowledge/bases/${id}/documents`, body),
+  uploadDocument: (id: string, file: File, title?: string) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (title) form.append('title', title)
+    return post<KnowledgeDocumentDto>(`/knowledge/bases/${id}/documents/upload`, form)
+  },
   removeDocument: (id: string) => del<{ ok: boolean }>(`/knowledge/documents/${id}`),
   search: (body: { knowledgeBaseIds: string[]; query: string; topK?: number; minScore?: number }) =>
     post<KnowledgeSearchResult>('/knowledge/search', body),
