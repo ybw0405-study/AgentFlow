@@ -17,6 +17,7 @@ import com.agentflow.workflow.engine.EngineGatewayClient.EngineEvent;
 import com.agentflow.workflow.execution.BudgetLedgerMapper;
 import com.agentflow.workflow.execution.NodeExecutionMapper;
 import com.agentflow.workflow.execution.ProjectorCursorMapper;
+import com.agentflow.workflow.execution.BudgetLedgerSeenMapper;
 import com.agentflow.workflow.execution.WorkflowExecutionMapper;
 import com.agentflow.workflow.gate.GateApprovers;
 import com.agentflow.workflow.gate.GateTaskMapper;
@@ -24,6 +25,7 @@ import com.agentflow.workflow.notification.NotificationMapper;
 import java.util.List;
 import java.util.Map;
 import org.apache.ibatis.annotations.Update;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -34,11 +36,18 @@ class ProjectorWriterTest {
     private final NodeExecutionMapper nodes = mock(NodeExecutionMapper.class);
     private final ProjectorCursorMapper cursors = mock(ProjectorCursorMapper.class);
     private final BudgetLedgerMapper budgets = mock(BudgetLedgerMapper.class);
+    private final BudgetLedgerSeenMapper budgetSeen = mock(BudgetLedgerSeenMapper.class);
     private final GateTaskMapper gateTasks = mock(GateTaskMapper.class);
     private final NotificationMapper notifications = mock(NotificationMapper.class);
     private final GateApprovers approvers = mock(GateApprovers.class);
     private final ProjectorWriter writer = new ProjectorWriter(executions, nodes, cursors, budgets,
-            gateTasks, notifications, approvers, 10_000, 50_000L);
+            budgetSeen, gateTasks, notifications, approvers, 10_000, 50_000L);
+
+    @BeforeEach
+    void stubBudgetSeen() {
+        // 默认每个事件 seq 首次投影成功占位
+        when(budgetSeen.claim(anyLong(), anyString())).thenReturn(1);
+    }
 
     @Test
     void markTerminalSqlGuardsAgainstOverwritingTerminalRows() throws Exception {
@@ -208,5 +217,17 @@ class ProjectorWriterTest {
         writer.writeBatch(List.of(event(3, "ExecutionCancelled", Map.of("reason", "user"))));
 
         verify(gateTasks).cancelByExecution("exec-1");
+    }
+
+    @Test
+    void duplicateEventSeqDoesNotAccrueTwice() {
+        // P1-3 回归：同一事件 seq 被两个副本/重放投影时，INSERT IGNORE 返回 0，不重复计费
+        when(cursors.findLastSeq()).thenReturn(0L);
+        when(budgetSeen.claim(eq(1L), eq("exec-1"))).thenReturn(1, 0); // 首次成功，第二次重复
+
+        writer.writeBatch(List.of(event(1, "NodeCompleted", Map.of("tokenUsed", 100))));
+        writer.writeBatch(List.of(event(1, "NodeCompleted", Map.of("tokenUsed", 100))));
+
+        verify(budgets, times(1)).accrue(eq("exec-1"), anyString(), eq(100), eq(10_000), eq(50_000L));
     }
 }

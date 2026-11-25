@@ -2,6 +2,7 @@ package com.agentflow.workflow.projector;
 
 import com.agentflow.workflow.engine.EngineGatewayClient.EngineEvent;
 import com.agentflow.workflow.execution.BudgetLedgerMapper;
+import com.agentflow.workflow.execution.BudgetLedgerSeenMapper;
 import com.agentflow.workflow.execution.NodeExecutionMapper;
 import com.agentflow.workflow.execution.ProjectorCursorMapper;
 import com.agentflow.workflow.execution.WorkflowExecutionMapper;
@@ -32,6 +33,7 @@ public class ProjectorWriter {
     private final NodeExecutionMapper nodes;
     private final ProjectorCursorMapper cursors;
     private final BudgetLedgerMapper budgets;
+    private final BudgetLedgerSeenMapper budgetSeen;
     private final GateTaskMapper gateTasks;
     private final NotificationMapper notifications;
     private final GateApprovers approvers;
@@ -41,6 +43,7 @@ public class ProjectorWriter {
 
     public ProjectorWriter(WorkflowExecutionMapper executions, NodeExecutionMapper nodes,
                            ProjectorCursorMapper cursors, BudgetLedgerMapper budgets,
+                           BudgetLedgerSeenMapper budgetSeen,
                            GateTaskMapper gateTasks, NotificationMapper notifications,
                            GateApprovers approvers,
                            @Value("${agentflow.tenant.monthly-call-limit:10000}") int callLimit,
@@ -50,6 +53,7 @@ public class ProjectorWriter {
         this.nodes = nodes;
         this.cursors = cursors;
         this.budgets = budgets;
+        this.budgetSeen = budgetSeen;
         this.gateTasks = gateTasks;
         this.notifications = notifications;
         this.approvers = approvers;
@@ -96,9 +100,13 @@ public class ProjectorWriter {
             case "NodeStarted" -> upsertNode(e, "RUNNING", p, null, null, null);
             case "NodeCompleted" -> {
                 upsertNode(e, "SUCCEEDED", p, (String) p.get("outputDigest"), null, null);
-                // 成本中心：节点完成的 token 消耗累加到租户月度账本（同事务，重放不重复计）
-                budgets.accrue(e.executionId(), BudgetLedgerMapper.currentPeriod(),
-                        asInt(p.get("tokenUsed")), monthlyCallLimit, monthlyTokenLimit);
+                // 成本中心：节点完成的 token 消耗累加到租户月度账本。
+                // 事件 seq 唯一键保证多副本/重放时只累加一次（P1-3 修复）；
+                // Redis 租约 fail-open 时也不再重复计费。
+                if (budgetSeen.claim(e.seq(), e.executionId()) == 1) {
+                    budgets.accrue(e.executionId(), BudgetLedgerMapper.currentPeriod(),
+                            asInt(p.get("tokenUsed")), monthlyCallLimit, monthlyTokenLimit);
+                }
             }
             case "NodeFailed" -> upsertNode(e, "FAILED", p, null,
                     (String) p.get("errorCode"), (String) p.get("message"));
