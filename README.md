@@ -101,8 +101,8 @@ GitHub Actions 全链路门禁。
 ## 文档
 
 - [产品与界面完整指南](docs/product-guide.md)（功能矩阵、画布交互、模型清单、用量页）
-- [架构设计](docs/architecture.md)（含决策表 D1–D11）
-- [迁移注释代号索引](docs/migration-comment-codes.md)
+- [文档索引](docs/README.md)（分册导航与路径约定）
+- [架构设计](docs/architecture.md)（一页总览、关键链路与设计原则）
 - [OpenAPI 契约基线](docs/openapi/)
 - [贡献指南](CONTRIBUTING.md) / [安全策略](SECURITY.md) / [变更日志](CHANGELOG.md)
 

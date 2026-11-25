@@ -1,12 +1,12 @@
 # CODEOWNERS
 #
 # 本文件列出各目录的负责人，供 PR 审查自动请求复核使用。
-# 路径均经 `git ls-files` 核实为仓库中真实存在的顶层目录 / 文件（G10）。
+# 路径均经 `git ls-files` 核实为仓库中真实存在的顶层目录 / 文件。
 # 语法：<path> <owner...>
 # 文档：https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 #
-# 现状（2026-11-21 实测）：main 分支保护已启用（strict=true、enforce_admins=true、
-# 线性历史、required_status_checks 4 项、dismiss_stale_reviews=true）。
+# 现状（2026-11-25 复核）：main 分支保护已启用（strict=true、enforce_admins=true、
+# 线性历史、required_status_checks 13 项、dismiss_stale_reviews=true、会话必须解决）。
 # required_pull_request_reviews 在 Y-super000 接受 write 协作者邀请后设为
 # count=1 + require_code_owner_reviews=true，启用步骤见 CONTRIBUTING.md「分支与评审」。
 #
