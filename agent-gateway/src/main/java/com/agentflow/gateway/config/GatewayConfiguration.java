@@ -17,7 +17,7 @@ public class GatewayConfiguration {
 
     @Bean
     public JwtService jwtService(@Value("${agentflow.jwt.secret}") String secret) {
-        return new JwtService(secret, 0);  // 网关只验签，不签发；ttl 无意义
+        return new JwtService(secret, 0); // 网关只验签，不签发；ttl 无意义
     }
 
     @Bean

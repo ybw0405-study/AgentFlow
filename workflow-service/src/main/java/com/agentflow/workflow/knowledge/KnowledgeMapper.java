@@ -19,10 +19,10 @@ public interface KnowledgeMapper {
     /** 列表与单条查询共用同一组列：record 有 8 个字段，构造器映射要求列数一致。 */
     String BASE_SELECT = "SELECT " + BASE_COLUMNS + ","
             + " (SELECT COUNT(*) FROM knowledge_document d"
-            + "   WHERE d.kb_id = b.id AND d.tenant_id = b.tenant_id AND d.deleted_at IS NULL)"
-            + "     AS documentCount,"
+            + " WHERE d.kb_id = b.id AND d.tenant_id = b.tenant_id AND d.deleted_at IS NULL)"
+            + " AS documentCount,"
             + " (SELECT COUNT(*) FROM knowledge_chunk c"
-            + "   WHERE c.kb_id = b.id AND c.tenant_id = b.tenant_id) AS chunkCount"
+            + " WHERE c.kb_id = b.id AND c.tenant_id = b.tenant_id) AS chunkCount"
             + " FROM knowledge_base b";
 
     @Insert("INSERT INTO knowledge_base (id, tenant_id, name, description, created_by)"
@@ -44,7 +44,7 @@ public interface KnowledgeMapper {
     @Insert("INSERT INTO knowledge_document (id, tenant_id, kb_id, title, source, char_count,"
             + " chunk_count, created_by)"
             + " VALUES (#{id}, #{tenantId}, #{kbId}, #{title}, #{source}, #{charCount},"
-            + "  #{chunkCount}, #{createdBy})")
+            + " #{chunkCount}, #{createdBy})")
     int insertDocument(DocumentRow row);
 
     @Select("SELECT id, tenant_id AS tenantId, kb_id AS kbId, title, source,"
@@ -70,7 +70,7 @@ public interface KnowledgeMapper {
     @Insert("INSERT INTO knowledge_chunk (id, tenant_id, kb_id, document_id, ordinal,"
             + " document_title, content, token_count)"
             + " VALUES (#{id}, #{tenantId}, #{kbId}, #{documentId}, #{ordinal},"
-            + "  #{documentTitle}, #{content}, #{tokenCount})")
+            + " #{documentTitle}, #{content}, #{tokenCount})")
     int insertChunk(ChunkRow row);
 
     /** 切片随文档软删硬删：检索 SQL 因此无需 JOIN 软删状态，过滤条件可完全下推。 */
@@ -94,7 +94,7 @@ public interface KnowledgeMapper {
             + " content, token_count AS tokenCount FROM knowledge_chunk"
             + " WHERE tenant_id = #{tenantId} AND kb_id IN"
             + " <foreach item='kb' collection='kbIds' open='(' separator=',' close=')'>"
-            + "   #{kb}</foreach>"
+            + " #{kb}</foreach>"
             + " ORDER BY kb_id, document_id, ordinal LIMIT #{limit}</script>")
     List<ChunkRow> listChunksForSearch(@Param("tenantId") String tenantId,
                                        @Param("kbIds") List<String> kbIds,

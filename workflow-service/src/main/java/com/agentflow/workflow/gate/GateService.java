@@ -24,10 +24,10 @@ import org.springframework.stereotype.Service;
  *
  * <p>失败语义：
  * <ul>
- *   <li>执行/待办不存在或跨租户 → 404（不泄露存在性）</li>
- *   <li>非审批人且非本空间 ADMIN → 403</li>
- *   <li>引擎明确拒绝（gate 已裁决）→ 409 WF-STATE-001</li>
- *   <li>引擎不可达 → 落 outbox，返回 DEFERRED（用户动作不丢）</li>
+ * <li>执行/待办不存在或跨租户 → 404（不泄露存在性）</li>
+ * <li>非审批人且非本空间 ADMIN → 403</li>
+ * <li>引擎明确拒绝（gate 已裁决）→ 409 WF-STATE-001</li>
+ * <li>引擎不可达 → 落 outbox，返回 DEFERRED（用户动作不丢）</li>
  * </ul>
  */
 @Service

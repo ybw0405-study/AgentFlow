@@ -14,11 +14,11 @@ import java.util.stream.Collectors;
  *
  * <p>规则（架构 §5.2「沙箱」）：
  * <ul>
- *   <li>scheme 只允许 https；本地回环 + 显式 allowInsecureHttp 时才允许 http（仅测试/自建内网网关）；</li>
- *   <li>host 必须命中 {@code allowedHosts}（支持 {@code *.example.com} 通配，仅匹配一层以上子域）；</li>
- *   <li>DNS 解析结果不得为环回/私网/链路本地/组播/保留地址 —— 挡住 {@code http://169.254.169.254}
- *       这类云元数据 SSRF；</li>
- *   <li>默认禁止环回（allowLoopback 仅供单测指向本地 stub server）。</li>
+ * <li>scheme 只允许 https；本地回环 + 显式 allowInsecureHttp 时才允许 http（仅测试/自建内网网关）；</li>
+ * <li>host 必须命中 {@code allowedHosts}（支持 {@code *.example.com} 通配，仅匹配一层以上子域）；</li>
+ * <li>DNS 解析结果不得为环回/私网/链路本地/组播/保留地址 —— 挡住 {@code http://169.254.169.254}
+ * 这类云元数据 SSRF；</li>
+ * <li>默认禁止环回（allowLoopback 仅供单测指向本地 stub server）。</li>
  * </ul>
  *
  * <p>DNS rebinding 防护：{@link #validate} 返回时携带已解析并校验过的 IP 快照，
@@ -100,8 +100,8 @@ public final class SandboxPolicy {
      * 连接前复核：再次解析同一 host，若出现被封禁地址、或解析集合与校验时漂移
      * （DNS rebinding 特征）则拒绝。缩小校验与出网之间的 TOCTOU 窗口。
      *
-     * @param host     目标主机名（来自已校验 URI）
-     * @param approved {@link #validateWithDns}  captured 的地址快照
+     * @param host 目标主机名（来自已校验 URI）
+     * @param approved {@link #validateWithDns} captured 的地址快照
      */
     public void assertNoRebinding(String host, List<InetAddress> approved) {
         InetAddress[] current = resolveHost(host);
@@ -129,7 +129,7 @@ public final class SandboxPolicy {
             }
             String normalized = rule.trim().toLowerCase(Locale.ROOT);
             if (normalized.startsWith("*.")) {
-                String suffix = normalized.substring(1);           // ".example.com"
+                String suffix = normalized.substring(1); // ".example.com"
                 if (candidate.endsWith(suffix) && candidate.length() > suffix.length()) {
                     return true;
                 }
@@ -154,7 +154,7 @@ public final class SandboxPolicy {
         }
         int b0 = raw[0] & 0xff;
         int b1 = raw[1] & 0xff;
-        return b0 == 0 || (b0 == 100 && b1 >= 64 && b1 <= 127);  // 0.0.0.0/8 + CGNAT 100.64/10
+        return b0 == 0 || (b0 == 100 && b1 >= 64 && b1 <= 127); // 0.0.0.0/8 + CGNAT 100.64/10
     }
 
     private InetAddress[] resolveHost(String host) {

@@ -12,7 +12,7 @@ class Dag:
     nodes: dict[str, AnyNode]
     out_edges: dict[str, list[Edge]] = field(default_factory=dict)
     in_edges: dict[str, list[Edge]] = field(default_factory=dict)
-    layers: list[list[str]] = field(default_factory=list)  # 拓扑分层
+    layers: list[list[str]] = field(default_factory=list) # 拓扑分层
 
     def end_keys(self) -> list[str]:
         """全部 end 节点（DSL 声明顺序）。分支场景下 end 可以有多个，收口要挑真正跑到的那个。"""
@@ -43,6 +43,6 @@ def compile_dag(dsl: WorkflowDsl) -> Dag:
                 if in_degree[e.to] == 0:
                     nxt.append(e.to)
         current = nxt
-    if sum(len(layer) for layer in layers) != len(nodes):  # 防御：校验期已排除
+    if sum(len(layer) for layer in layers) != len(nodes): # 防御：校验期已排除
         raise ValueError("DSL-CYCLE-001: cycle detected at compile time")
     return Dag(nodes=nodes, out_edges=out_edges, in_edges=in_edges, layers=layers)

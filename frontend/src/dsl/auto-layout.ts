@@ -1,7 +1,7 @@
 import type { FlowEdgeLike, FlowNodeLike } from './flow-convert'
 
 /** 按拓扑层级整理节点位置：同一层纵向排开，层与层之间横向留够卡片宽度。
- *  有环或孤立节点时兜底放到最后一层，不会死循环，也不改动 key / config / 边。 */
+ * 有环或孤立节点时兜底放到最后一层，不会死循环，也不改动 key / config / 边。 */
 const LAYER_GAP = 280
 const ROW_GAP = 190
 const ORIGIN_X = 60

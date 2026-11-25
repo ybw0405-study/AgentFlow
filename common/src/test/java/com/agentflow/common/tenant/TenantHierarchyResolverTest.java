@@ -59,7 +59,7 @@ class TenantHierarchyResolverTest {
     void orgOwnerInheritsAsAdminAcrossTeamLayer() {
         port.member("org", "u2", "OWNER");
         var r = resolver.resolve("space-a", "u2").orElseThrow();
-        assertThat(r.role()).isEqualTo("ADMIN");  // OWNER 降级，避免子空间被组织所有者删除
+        assertThat(r.role()).isEqualTo("ADMIN"); // OWNER 降级，避免子空间被组织所有者删除
         assertThat(r.source()).isEqualTo(TenantHierarchyResolver.Resolved.Source.INHERITED);
         assertThat(r.inheritedFrom()).isEqualTo("org");
         assertThat(r.atLeast("ADMIN")).isTrue();

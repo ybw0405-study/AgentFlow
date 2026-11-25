@@ -62,7 +62,7 @@ class ConnectorServiceTest {
                 inMemoryRedis());
     }
 
-    /** 内存版 StringRedisTemplate：支撑 OAuth state nonce 的 SETNX/GETDEL 往返（P1-1 测试用）。 */
+    /** 内存版 StringRedisTemplate：支撑 OAuth state nonce 的 SETNX/GETDEL 往返。 */
     @SuppressWarnings("unchecked")
     private static StringRedisTemplate inMemoryRedis() {
         Map<String, String> store = new HashMap<>();
@@ -360,7 +360,7 @@ class ConnectorServiceTest {
 
     @Test
     void oauthCallbackRejectsReplayedState() {
-        // P1-1 回归：同一 state 只能用一次（Redis GETDEL 原子消费），重放必须失败
+        // 同一 state 只能用一次（Redis GETDEL 原子消费），重放必须失败
         when(repo.findById("oauth-conn")).thenReturn(Optional.of(oauthRow()));
         Map<String, String> data = service.oauthAuthorizeUrl(
                 tenant("space-a", "u-admin", "ADMIN"), "oauth-conn");

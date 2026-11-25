@@ -16,14 +16,14 @@ V005~V017 新增的表一条 GRANT 都没有——照它部署，连接器/审�
       - 其余业务表：af_app 必须全 DML
 
 用法：
-    python scripts/check-grants.py        # 比对，任何不一致 exit 1；全部一致 exit 0
+    python scripts/check-grants.py # 比对，任何不一致 exit 1；全部一致 exit 0
 
 CI 接入（.github/ 由主审维护，此处给出可直接粘贴的步骤）：
     # java-ci.yml / 任一常驻 job 的 steps 中，检出代码后加一步即可，无需起 MySQL：
     - name: Check DB grants coverage
       run: python scripts/check-grants.py
     # 或在 scripts/verify-all.sh 的 java 段之前加：
-    #   python "$ROOT/scripts/check-grants.py" || FAILED+=('db-grants')
+    # python "$ROOT/scripts/check-grants.py" || FAILED+=('db-grants')
     # 该脚本只用标准库，不依赖 runner 预装任何第三方包。
 
 只依赖标准库：与 check-java-routes.py 一样可在任何 python3 环境直接跑。
@@ -108,7 +108,7 @@ def main() -> int:
                     )
             continue
         # 其余表（含 outbox）：只应授权给 af_app，且必须是全 DML
-        #   —— outbox 的 relay 要改状态/清行、失败降级要 INSERT，缺一不可
+        # —— outbox 的 relay 要改状态/清行、失败降级要 INSERT，缺一不可
         if "af_app" not in by_account:
             errors.append(f"[缺账号] 表 {name} 未授权给业务账号 af_app")
         for account, privs in by_account.items():
@@ -122,9 +122,9 @@ def main() -> int:
     if errors:
         print(f"FAIL: least-privilege.sql 与迁移不一致（{len(errors)} 项）", file=sys.stderr)
         for e in errors:
-            print(f"  - {e}", file=sys.stderr)
+            print(f" - {e}", file=sys.stderr)
         print(
-            "  修法：按迁移版本补齐/修正 db/mysql/grants/least-privilege.sql 的 GRANT。",
+            " 修法：按迁移版本补齐/修正 db/mysql/grants/least-privilege.sql 的 GRANT。",
             file=sys.stderr,
         )
         return 1

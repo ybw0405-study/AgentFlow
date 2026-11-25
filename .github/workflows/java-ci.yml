@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
-          java-version: '17'  # 与根目录 .java-version / pom.xml <java.version> 一致
+          java-version: '17' # 与根目录 .java-version / pom.xml <java.version> 一致
           cache: maven
       - name: mvnw verify (tests + checkstyle + ArchUnit)
         # 用仓库内 Maven wrapper（.mvn/wrapper/maven-wrapper.properties 固定 3.9.9），

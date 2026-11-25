@@ -117,13 +117,13 @@ public class AuthController {
                     com.agentflow.common.error.ErrorCode.USR_TOKEN_001,
                     "refresh token missing");
         }
-        var rotated = refreshTokenService.rotate(raw);  // 非法/重用在此抛出
+        var rotated = refreshTokenService.rotate(raw); // 非法/重用在此抛出
         var user = userMapper.findById(rotated.userId());
         if (user == null || !"ACTIVE".equals(user.status())) {
             throw new com.agentflow.common.error.BusinessException(
                     com.agentflow.common.error.ErrorCode.USR_TOKEN_001, "account unavailable");
         }
-        var login = authService.issueFor(user);  // 不走登录限流
+        var login = authService.issueFor(user); // 不走登录限流
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie(rotated.rawToken()).toString())
                 .body(ApiResponse.ok(
@@ -134,7 +134,7 @@ public class AuthController {
     public ResponseEntity<Void> logout(HttpServletRequest request) {
         String raw = readRefreshCookie(request);
         if (raw != null) {
-            refreshTokenService.revoke(raw);  // 静默：已失效也不报错
+            refreshTokenService.revoke(raw); // 静默：已失效也不报错
         }
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, clearCookie().toString())

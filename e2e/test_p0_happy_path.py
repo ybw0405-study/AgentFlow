@@ -33,7 +33,7 @@ def test_full_lifecycle(client, editor_token, admin_token):
 
     resp = client.post(f"/api/v1/workflows/{wf_id}/publish",
                        json={"versionId": version_id},
-                       headers=headers(admin_token, SPACE_A))  # 发布须 ADMIN
+                       headers=headers(admin_token, SPACE_A)) # 发布须 ADMIN
     assert resp.status_code == 200, resp.text
 
     # 4. 触发（变量含手机号，验证双层脱敏）

@@ -208,7 +208,7 @@ public class WorkflowService {
     @Transactional
     public void rollback(TenantInfo tenant, String id, String versionId) {
         requireRole(tenant, "ADMIN", null);
-        load(tenant, id);  // 租户隔离校验：跨租户 404
+        load(tenant, id); // 租户隔离校验：跨租户 404
         var version = versions.findById(versionId);
         if (version == null || !version.definitionId().equals(id)) {
             throw new BusinessException(ErrorCode.WF_NOT_FOUND_001, "resource not found");

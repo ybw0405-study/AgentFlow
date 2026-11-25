@@ -267,7 +267,7 @@ public class EvalService {
         for (ResultRow result : evals.openResults(run.id())) {
             var execution = executions.findForEval(result.executionId());
             if (execution == null) {
-                continue;  // 投影尚未追上，下一轮再试
+                continue; // 投影尚未追上，下一轮再试
             }
             if (!TERMINAL.contains(execution.status())) {
                 evals.updateResult(result.id(), "RUNNING", null, null, null, null, null);

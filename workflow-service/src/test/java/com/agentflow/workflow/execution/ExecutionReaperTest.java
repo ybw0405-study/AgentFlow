@@ -109,11 +109,11 @@ class ExecutionReaperTest {
                 .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"))
                 .thenThrow(new BusinessException(ErrorCode.AGT_UPSTREAM_001, "down"));
 
-        reaper.sweep();  // 1
-        reaper.sweep();  // 2
-        reaper.sweep();  // 引擎恢复：计数清零，本轮不动手
-        reaper.sweep();  // 重新从 1 开始
-        var last = reaper.sweep();  // 2，仍不该收口
+        reaper.sweep(); // 1
+        reaper.sweep(); // 2
+        reaper.sweep(); // 引擎恢复：计数清零，本轮不动手
+        reaper.sweep(); // 重新从 1 开始
+        var last = reaper.sweep(); // 2，仍不该收口
 
         assertEquals(0, last.reaped());
         verify(executions, never()).markTerminal(any(), any(), anyInt(), anyInt(), any());

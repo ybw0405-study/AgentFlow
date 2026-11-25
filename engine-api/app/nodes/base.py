@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from ..governance.budget import BudgetLedger
     from .subgraph import SubgraphRunner
 
-EmitFn = Callable[..., Awaitable["Event"]]  # (event_type, payload, *, node_key=None)
+EmitFn = Callable[..., Awaitable["Event"]] # (event_type, payload, *, node_key=None)
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class NodeContext:
     trace_id: str
     variables: dict[str, Any]
     variables_spec: dict[str, VariableSpec]
-    outputs: dict[str, dict[str, Any]]  # 已完成节点 key → output
+    outputs: dict[str, dict[str, Any]] # 已完成节点 key → output
     node_statuses: dict[str, str]
     policy: Policy
     budget: BudgetLedger | None
@@ -67,4 +67,4 @@ class NodeContext:
         return hashlib.sha256(f"{self.seed}|{self.node_key}|{self.attempt}".encode()).hexdigest()
 
     def rng(self) -> random.Random:
-        return random.Random(self.derived_seed())  # noqa: S311
+        return random.Random(self.derived_seed()) # noqa: S311

@@ -156,7 +156,7 @@ def validate_dsl(raw: dict[str, Any], settings: Settings) -> ValidationResult:
             )
 
     # 4.1) 审批只能出现在主图：子图（loop/parallel 体内）无法在挂起后原地续跑，
-    #      放进子图会导致裁决后整段子图重跑（重复副作用）。编译期就拒绝。
+    # 放进子图会导致裁决后整段子图重跑（重复副作用）。编译期就拒绝。
     for key, node in _nested_nodes(dsl):
         if node.type == "human_gate":
             errors.append(
@@ -170,9 +170,9 @@ def validate_dsl(raw: dict[str, Any], settings: Settings) -> ValidationResult:
             )
 
     # 4.2) EXPRESSION 审批人：文法必须在发布期判定。
-    #      运行期由控制面按候选用户求值（user/space 属性来自租户体系，引擎侧拿不到），
-    #      所以这里只做「能否被 GateExpression 解析」的静态校验；放过去的下场是
-    #      「发布成功 → 挂起后审批人快照为空 → 审批永远卡住」，属于最难排查的一类。
+    # 运行期由控制面按候选用户求值（user/space 属性来自租户体系，引擎侧拿不到），
+    # 所以这里只做「能否被 GateExpression 解析」的静态校验；放过去的下场是
+    # 「发布成功 → 挂起后审批人快照为空 → 审批永远卡住」，属于最难排查的一类。
     for n in dsl.nodes:
         if n.type == "human_gate" and n.config.approvers.type == "EXPRESSION":
             errors.extend(_approver_expression_errors(n))

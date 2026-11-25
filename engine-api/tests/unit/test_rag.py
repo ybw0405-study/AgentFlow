@@ -180,10 +180,10 @@ async def test_vector_mode_indexes_lazily_and_reuses_cache() -> None:
     executor = RetrievalExecutor(client, embedding, store)
     result = await executor.execute(_node("vector"), _Ctx())
     assert result.output["retrievalMode"] == "vector"
-    assert len(embedding.calls) == 2  # 一批索引 + 一次查询
+    assert len(embedding.calls) == 2 # 一批索引 + 一次查询
     assert len(store.rows) == 2
     again = await executor.execute(_node("vector"), _Ctx())
-    assert len(embedding.calls) == 3  # 第二次只嵌查询，索引命中缓存
+    assert len(embedding.calls) == 3 # 第二次只嵌查询，索引命中缓存
     assert again.output["results"]
 
 

@@ -27,7 +27,7 @@ class CredentialCipherTest {
         byte[] first = cipher.seal("same".getBytes(StandardCharsets.UTF_8), aad);
         byte[] second = cipher.seal("same".getBytes(StandardCharsets.UTF_8), aad);
         assertThat(new String(first, StandardCharsets.UTF_8)).doesNotContain("same");
-        assertThat(first).isNotEqualTo(second);   // 每次随机 IV
+        assertThat(first).isNotEqualTo(second); // 每次随机 IV
     }
 
     @Test
@@ -69,7 +69,7 @@ class CredentialCipherTest {
     @Test
     void keyringDecryptsCiphertextSealedByPreviousKey() {
         // 用「旧密钥」封装密文，记录其 keyId；再用「新密钥 + 旧密钥入 ring」解密
-        String oldKey = "ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM=";   // dev-only-cred-master-key-32bytes
+        String oldKey = "ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM="; // dev-only-cred-master-key-32bytes
         String newKey = java.util.Base64.getEncoder().encodeToString(
                 "ABCD1234EFGH5678IJKL9012MNOP3456".getBytes(StandardCharsets.UTF_8));
         CredentialCipher oldCipher = new CredentialCipher(oldKey);

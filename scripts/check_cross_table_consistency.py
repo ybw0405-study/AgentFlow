@@ -15,7 +15,7 @@
     AF_MYSQL_DATABASE=agentflow \
       python scripts/check_cross_table_consistency.py
     python scripts/check_cross_table_consistency.py --self-test
-    python scripts/check_cross_table_consistency.py --require-db   # CI 强制真库
+    python scripts/check_cross_table_consistency.py --require-db # CI 强制真库
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_migrations_idempotent import build_executor, migration_files  # noqa: E402
+from check_migrations_idempotent import build_executor, migration_files # noqa: E402
 
 # (子表, 子列, 父表, 父列)。与 db/mysql/migration 的列定义逐条核对过。
 REFERENCES: list[tuple[str, str, str, str]] = [
@@ -59,13 +59,13 @@ def orphan_query(ref: tuple[str, str, str, str]) -> str:
 def fk_query() -> str:
     return (
         "SELECT kcu.CONSTRAINT_NAME, kcu.TABLE_NAME, kcu.COLUMN_NAME, "
-        "       kcu.REFERENCED_TABLE_NAME, rc.DELETE_RULE "
+        " kcu.REFERENCED_TABLE_NAME, rc.DELETE_RULE "
         "FROM information_schema.KEY_COLUMN_USAGE kcu "
         "JOIN information_schema.REFERENTIAL_CONSTRAINTS rc "
-        "  ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA "
+        " ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA "
         " AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME "
         "WHERE kcu.TABLE_SCHEMA = DATABASE() "
-        "  AND kcu.REFERENCED_TABLE_NAME IS NOT NULL "
+        " AND kcu.REFERENCED_TABLE_NAME IS NOT NULL "
         "ORDER BY kcu.TABLE_NAME, kcu.COLUMN_NAME"
    )
 
@@ -130,7 +130,7 @@ def main() -> int:
         if orphans:
             print(" 一致性校验 FAIL（存在孤儿行）:")
             for line in orphans:
-                print("  - " + line)
+                print(" - " + line)
             return 1
 
         fk_rows = [
@@ -142,7 +142,7 @@ def main() -> int:
         if bad_rules:
             print(" FAIL：已有 FK 的 DELETE_RULE 会静默扩大删除面:")
             for r in bad_rules:
-                print("  - " + "\t".join(r))
+                print(" - " + "\t".join(r))
             return 1
 
         fk_pairs = {(r[1], r[2]) for r in fk_rows if len(r) >= 5}

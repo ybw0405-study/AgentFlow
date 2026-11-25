@@ -14,10 +14,10 @@ public interface GateTaskMapper {
 
     @Insert("INSERT INTO gate_task"
             + " (id, execution_id, node_key, tenant_id, definition_id, prompt,"
-            + "  approvers_json, approver_rule_json, status, timeout_at, default_branch)"
+            + " approvers_json, approver_rule_json, status, timeout_at, default_branch)"
             + " VALUES (#{id}, #{executionId}, #{nodeKey}, #{tenantId}, #{definitionId},"
-            + "  #{prompt}, #{approversJson}, #{approverRuleJson}, 'PENDING',"
-            + "  #{timeoutAt}, #{defaultBranch})"
+            + " #{prompt}, #{approversJson}, #{approverRuleJson}, 'PENDING',"
+            + " #{timeoutAt}, #{defaultBranch})"
             + " ON DUPLICATE KEY UPDATE prompt = VALUES(prompt)")
     int insert(GateRow row);
 

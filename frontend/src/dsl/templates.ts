@@ -1,7 +1,7 @@
 import type { WorkflowDsl } from './types'
 
 /** 常用流程骨架。模板只作用于草稿，已发布版本不受影响；
- *  每个模板都在 templates.spec.ts 里过一遍本地校验，保证拖进来就能发布。 */
+ * 每个模板都在 templates.spec.ts 里过一遍本地校验，保证拖进来就能发布。 */
 export interface WorkflowTemplate {
   id: string
   name: string

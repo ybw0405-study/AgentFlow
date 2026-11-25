@@ -23,7 +23,7 @@
   * 本文件为新增脚手架；**不碰 AgentFlow 任何业务文件**，不改现有源码/脚本/配置。
 
 运行：
-  python drill_e2e_crossprocess.py                        # dry-run（默认，安全）
+  python drill_e2e_crossprocess.py # dry-run（默认，安全）
   python drill_e2e_crossprocess.py --execute \
       --gateway-url http://127.0.0.1:8080 --engine-url http://127.0.0.1:8000 \
       --internal-token <token> --tenant <uuid> --report out.json
@@ -39,19 +39,19 @@ import urllib.request
 from dataclasses import dataclass, field
 
 # TODO(校准)：按真实 OpenAPI / EnginePathPolicy 白名单替换
-PATH_SUBMIT = "/api/workflows/{definition_id}/executions"   # 控制面提交
-PATH_EXECUTION = "/api/executions/{execution_id}"          # 控制面投影查询
-PATH_ENGINE_READY = "/internal/health"                     # 引擎 liveness/readiness
-PATH_GATEWAY_PROBE = "/engine/internal/executions"         # 应被白名单 404
+PATH_SUBMIT = "/api/workflows/{definition_id}/executions" # 控制面提交
+PATH_EXECUTION = "/api/executions/{execution_id}" # 控制面投影查询
+PATH_ENGINE_READY = "/internal/health" # 引擎 liveness/readiness
+PATH_GATEWAY_PROBE = "/engine/internal/executions" # 应被白名单 404
 
 STAGES = [
-    "preflight",             # 网关 / 控制面 / 引擎可达，内部凭据注入校验
-    "gateway_whitelist",     # 未授权 /engine/** 路径返回 404，客户端令牌被剥离
-    "submit_execution",      # 提交，断言返回体语义（202 != 成功）
-    "engine_event_stream",   # 事件流写入、单调 last_seq
-    "projection_terminal",   # MySQL 投影终态与事件流一致
-    "terminal_immutable",    # 乱序/重放事件不改回非终态（I1）
-    "preview_no_resume",     # preview 超时/重启不续跑
+    "preflight", # 网关 / 控制面 / 引擎可达，内部凭据注入校验
+    "gateway_whitelist", # 未授权 /engine/** 路径返回 404，客户端令牌被剥离
+    "submit_execution", # 提交，断言返回体语义（202 != 成功）
+    "engine_event_stream", # 事件流写入、单调 last_seq
+    "projection_terminal", # MySQL 投影终态与事件流一致
+    "terminal_immutable", # 乱序/重放事件不改回非终态（I1）
+    "preview_no_resume", # preview 超时/重启不续跑
     "report",
 ]
 
@@ -74,7 +74,7 @@ class Result:
 
     def add(self, stage: str, ok: bool, detail: str) -> None:
         self.checks.append({"stage": stage, "ok": ok, "detail": detail})
-        print(f"  [{'PASS' if ok else 'FAIL'}] {stage}: {detail}")
+        print(f" [{'PASS' if ok else 'FAIL'}] {stage}: {detail}")
 
     def dump(self, path: str | None) -> dict:
         passed = sum(1 for c in self.checks if c["ok"])
@@ -104,7 +104,7 @@ def http_json(method: str, url: str, body: dict | None, headers: dict, timeout: 
             return resp.status, (json.loads(raw) if raw.strip().startswith(("{", "[")) else {"raw": raw})
     except urllib.error.HTTPError as exc:
         return exc.code, {"error": exc.read().decode("utf-8", "replace")}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc: # noqa: BLE001
         return -1, {"error": repr(exc)}
 
 
@@ -118,7 +118,7 @@ def run(args: argparse.Namespace) -> int:
     print("阶段:", " -> ".join(STAGES))
     print("断言:")
     for a in ASSERTIONS:
-        print("  -", a)
+        print(" -", a)
 
     if not args.execute:
         for s in STAGES:
@@ -145,9 +145,9 @@ def run(args: argparse.Namespace) -> int:
           f"HTTP {code}, executionId={eid!r}（TODO: 校验 status/note，202 不算成功）")
 
     # TODO(engine_event_stream / projection_terminal / terminal_immutable / preview_no_resume)：
-    #   真实实现需：查 PG 事件流 last_seq 单调、查 MySQL workflow_execution 终态、
-    #   重放一条迟到事件断言终态不变、注入 preview 超时后重启断言不续跑。
-    #   骨架不内嵌 PG/MySQL 客户端，标记为待接线（按 FAIL 计，接线后重跑）。
+    # 真实实现需：查 PG 事件流 last_seq 单调、查 MySQL workflow_execution 终态、
+    # 重放一条迟到事件断言终态不变、注入 preview 超时后重启断言不续跑。
+    # 骨架不内嵌 PG/MySQL 客户端，标记为待接线（按 FAIL 计，接线后重跑）。
     for stage, detail in [
         ("engine_event_stream", "TODO: 接真实 PG 事件流，断言 last_seq 单调"),
         ("projection_terminal", "TODO: 接真实 MySQL 投影，断言终态与事件流一致"),

@@ -145,5 +145,5 @@ def evaluate(expression: str, names: dict[str, Any]) -> Any:
         return unwrap_value(evaluator.eval(expression))
     except ExpressionError:
         raise
-    except Exception as exc:  # simpleeval 各类拒绝统一归一
+    except Exception as exc: # simpleeval 各类拒绝统一归一
         raise ExpressionError(f"expression {expression!r} rejected: {exc}") from exc

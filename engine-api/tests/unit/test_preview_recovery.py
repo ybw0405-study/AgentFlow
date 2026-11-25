@@ -89,7 +89,7 @@ async def test_non_preview_execution_still_goes_through_normal_recovery(
 
     assert len(seen) == 1
     assert seen[0].preview is False
-    assert await mem_store.get_spec(eid) is not None  # 业务执行的 spec 不能被清掉
+    assert await mem_store.get_spec(eid) is not None # 业务执行的 spec 不能被清掉
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_finalize_preview_is_idempotent_when_already_terminal(
 
     await dispatcher.finalize_preview(eid)
 
-    assert len(await mem_store.read_all(eid)) == 2  # 不重复追加终态事件
+    assert len(await mem_store.read_all(eid)) == 2 # 不重复追加终态事件
     assert await mem_store.get_spec(eid) is None
 
 
@@ -125,7 +125,7 @@ async def test_finalize_keeps_the_preview_marker_when_terminal_write_fails(
     await dispatcher.finalize_preview(eid)
 
     spec = await mem_store.get_spec(eid)
-    assert spec is not None and spec["preview"] is True  # 下一轮扫描仍能识别
+    assert spec is not None and spec["preview"] is True # 下一轮扫描仍能识别
 
 
 @pytest.mark.asyncio

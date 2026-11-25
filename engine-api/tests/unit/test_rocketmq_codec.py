@@ -16,20 +16,20 @@ def _v1_message(topic: str, payload: bytes, props: str) -> bytes:
     topic_b = topic.encode()
     props_b = props.encode()
     buf = bytearray()
-    buf += struct.pack(">i", 0)  # totalSize，最后回填
+    buf += struct.pack(">i", 0) # totalSize，最后回填
     buf += struct.pack(">i", remoting.MAGIC_CODE_V1)
-    buf += struct.pack(">i", 0)  # bodyCRC
-    buf += struct.pack(">i", 3)  # queueId
-    buf += struct.pack(">i", 0)  # flag
-    buf += struct.pack(">q", 7)  # queueOffset
-    buf += struct.pack(">q", 1024)  # physicOffset
-    buf += struct.pack(">i", 0)  # sysFlag
-    buf += struct.pack(">q", 0)  # bornTimestamp
-    buf += b"\x00" * 8  # bornHost
-    buf += struct.pack(">q", 0)  # storeTimestamp
-    buf += b"\x00" * 8  # storeHost
-    buf += struct.pack(">i", 0)  # reconsumeTimes
-    buf += struct.pack(">q", 0)  # preparedTransactionOffset
+    buf += struct.pack(">i", 0) # bodyCRC
+    buf += struct.pack(">i", 3) # queueId
+    buf += struct.pack(">i", 0) # flag
+    buf += struct.pack(">q", 7) # queueOffset
+    buf += struct.pack(">q", 1024) # physicOffset
+    buf += struct.pack(">i", 0) # sysFlag
+    buf += struct.pack(">q", 0) # bornTimestamp
+    buf += b"\x00" * 8 # bornHost
+    buf += struct.pack(">q", 0) # storeTimestamp
+    buf += b"\x00" * 8 # storeHost
+    buf += struct.pack(">i", 0) # reconsumeTimes
+    buf += struct.pack(">q", 0) # preparedTransactionOffset
     buf += struct.pack(">i", len(payload))
     assert len(buf) == 88, "V1 定长头必须是 88 字节"
     buf += payload
@@ -75,7 +75,7 @@ def test_parse_messages_handles_multiple_and_properties():
 
 def test_parse_messages_rejects_unknown_magic():
     raw = bytearray(_v1_message("t", b"{}", ""))
-    raw[4:8] = struct.pack(">i", -626843479)  # V2：不猜格式，直接报错
+    raw[4:8] = struct.pack(">i", -626843479) # V2：不猜格式，直接报错
     with pytest.raises(ValueError):
         remoting.parse_messages(bytes(raw))
 

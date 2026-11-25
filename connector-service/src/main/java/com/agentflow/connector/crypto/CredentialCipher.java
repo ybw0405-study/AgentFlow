@@ -29,9 +29,9 @@ public final class CredentialCipher {
     private static final int TAG_BITS = 128;
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private final SecretKey key;               // 当前密钥（用于 seal）
-    private final String keyId;                // 当前密钥 keyId
-    private final Map<String, SecretKey> keyring;  // keyId → 密钥（含旧密钥，用于 open）
+    private final SecretKey key; // 当前密钥（用于 seal）
+    private final String keyId; // 当前密钥 keyId
+    private final Map<String, SecretKey> keyring; // keyId → 密钥（含旧密钥，用于 open）
 
     public CredentialCipher(String base64Key) {
         this(base64Key, java.util.List.of());

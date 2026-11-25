@@ -207,7 +207,7 @@ class LlmExecutor:
             if grant is not None and ctx.budget is not None:
                 await ctx.budget.settle(ctx.execution_id, grant, 0)
             raise
-        except Exception as exc:  # provider 未分类异常按瞬时处理（网络/5xx 类）
+        except Exception as exc: # provider 未分类异常按瞬时处理（网络/5xx 类）
             await self._command_failed(ctx, call_id, "LLM-UPSTREAM-001")
             if grant is not None and ctx.budget is not None:
                 await ctx.budget.settle(ctx.execution_id, grant, 0)
@@ -216,7 +216,7 @@ class LlmExecutor:
             # asyncio.timeout 超时在 await provider.complete() 处抛 CancelledError，
             # 它继承 BaseException 而非 Exception，上面的分支都捕获不到。若不回冲，
             # 每次超时都会泄漏一笔 grant、:inflight +1，导致同执行后续节点被虚减的
-            # 余额提前触发预算硬停止（P1-2 修复）。注意此处只回冲、不吞异常。
+            # 余额提前触发预算硬停止。注意此处只回冲、不吞异常。
             if grant is not None and ctx.budget is not None:
                 await ctx.budget.settle(ctx.execution_id, grant, 0)
             raise

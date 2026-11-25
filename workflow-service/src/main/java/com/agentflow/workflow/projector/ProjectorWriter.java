@@ -101,7 +101,7 @@ public class ProjectorWriter {
             case "NodeCompleted" -> {
                 upsertNode(e, "SUCCEEDED", p, (String) p.get("outputDigest"), null, null);
                 // 成本中心：节点完成的 token 消耗累加到租户月度账本。
-                // 事件 seq 唯一键保证多副本/重放时只累加一次（P1-3 修复）；
+                // 事件 seq 唯一键保证多副本/重放时只累加一次；
                 // Redis 租约 fail-open 时也不再重复计费。
                 if (budgetSeen.claim(e.seq(), e.executionId()) == 1) {
                     budgets.accrue(e.executionId(), BudgetLedgerMapper.currentPeriod(),

@@ -17,7 +17,7 @@ contract-drift 这种秒级独立检查，两边不对称。
 `dump-openapi-java.py --check`（运行时全量 spec）负责——粗筛与精查是互补关系。
 
 用法：
-    python scripts/check-java-routes.py        # 比对，不一致 exit 1
+    python scripts/check-java-routes.py # 比对，不一致 exit 1
 
 只依赖标准库：contract-drift 的镜像不用为此装东西。
 """
@@ -180,16 +180,16 @@ def main() -> int:
         )
 
         for m, p in missing:
-            failures.append(f"{service}: 源码有但基线缺  {m.upper():<6} {p}")
+            failures.append(f"{service}: 源码有但基线缺 {m.upper():<6} {p}")
         for p in missing_any:
-            failures.append(f"{service}: 源码有但基线缺  ANY    {p}")
+            failures.append(f"{service}: 源码有但基线缺 ANY {p}")
         for m, p in stale:
             failures.append(f"{service}: 基线有但源码已无 {m.upper():<6} {p}")
 
         total += len(specific) + len(any_paths)
         if not (missing or missing_any or stale or problems):
             print(
-                f"ok  {service}: {len(specific)} 条方法路由 + "
+                f"ok {service}: {len(specific)} 条方法路由 + "
                 f"{len(any_paths)} 条通配路由与基线一致"
             )
 

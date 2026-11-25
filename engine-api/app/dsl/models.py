@@ -129,7 +129,7 @@ class ToolConfig(CamelModel):
     connector_id: str = Field(min_length=1)
     operation: str = Field(min_length=1)
     params_mapping: dict[str, str] = Field(default_factory=dict)
-    idempotent: bool = True  # False 时禁止重试
+    idempotent: bool = True # False 时禁止重试
 
 
 class McpConfig(CamelModel):
@@ -140,7 +140,7 @@ class McpConfig(CamelModel):
     uri: str | None = None
     prompt_name: str | None = None
     arguments_mapping: dict[str, str] = Field(default_factory=dict)
-    idempotent: bool = True  # False 时禁止重试
+    idempotent: bool = True # False 时禁止重试
 
     @model_validator(mode="after")
     def _locator_matches_capability(self) -> McpConfig:

@@ -95,7 +95,7 @@ async def test_text_completion_constructs_request_and_maps_usage():
     assert seen["headers"]["authorization"] == f"Bearer {KEY}"
     assert seen["headers"]["x-trace-id"] == "trace-unit-1"
     body = seen["body"]
-    assert body["model"] == "deepseek-chat"  # mock-* 占位名回落
+    assert body["model"] == "deepseek-chat" # mock-* 占位名回落
     assert body["messages"] == [{"role": "user", "content": "请回答：什么是事件溯源？"}]
     assert body["temperature"] == 0.7
     assert body["max_tokens"] == 1024
@@ -222,7 +222,7 @@ async def test_network_error_is_transient():
 
 
 async def test_empty_and_oversized_content_are_permanent():
-    empty = _provider(_static(200, {"choices": [{"message": {"content": "  "}}]}))
+    empty = _provider(_static(200, {"choices": [{"message": {"content": " "}}]}))
     r1 = await _complete(empty)
     await empty.aclose()
     assert r1.error_code == "LLM-RESPONSE-001"
@@ -244,7 +244,7 @@ async def test_multimodal_content_parts_are_joined():
     await provider.aclose()
     assert result.ok is True
     assert result.data["text"] == "AB"
-    assert result.token_usage > 0  # 上游无 usage 时回落估算
+    assert result.token_usage > 0 # 上游无 usage 时回落估算
 
 
 def _unreachable(request: httpx.Request) -> httpx.Response:
@@ -277,7 +277,7 @@ def test_production_guard_rejects_plain_http_endpoint(monkeypatch):
     monkeypatch.setenv("AF_PRODUCTION", "true")
     settings = Settings(
         internal_token="strong-production-token",
-        engine_token="distinct-engine-token",  # 生产入站凭据须与控制面分离
+        engine_token="distinct-engine-token", # 生产入站凭据须与控制面分离
         llm_base_url="http://internal-llm.local/v1",
         llm_api_key=KEY,
     )
@@ -289,7 +289,7 @@ def test_production_guard_allows_https(monkeypatch):
     monkeypatch.setenv("AF_PRODUCTION", "true")
     settings = Settings(
         internal_token="strong-production-token",
-        engine_token="distinct-engine-token",  # 生产入站凭据须与控制面分离
+        engine_token="distinct-engine-token", # 生产入站凭据须与控制面分离
         llm_base_url="https://api.deepseek.com/v1",
         llm_api_key=KEY,
     )
@@ -360,7 +360,7 @@ async def test_list_models_reads_upstream_catalog() -> None:
                 "data": [
                     {"id": "deepseek-reasoner", "owned_by": "x"},
                     {"id": "deepseek-chat"},
-                    {"id": "deepseek-chat"},  # 上游重复项不应重复出现
+                    {"id": "deepseek-chat"}, # 上游重复项不应重复出现
                 ],
             },
         )
@@ -462,7 +462,7 @@ async def test_stream_disabled_by_default_is_non_streaming():
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=_ok_body())
 
-    provider = _provider(handler)  # 未传 stream=True，默认关闭
+    provider = _provider(handler) # 未传 stream=True，默认关闭
     result = await _complete(provider)
     await provider.aclose()
 
@@ -525,7 +525,7 @@ async def test_stream_empty_result_is_permanent_error():
 
 
 async def test_stream_prefers_upstream_usage_when_present():
-    """P1-4 回归：SSE 末帧携带 usage 时必须用真实值，而非本地字符估算。"""
+    """SSE 末帧携带 usage 时必须用真实值，而非本地字符估算。"""
     usage_frame = {
         "choices": [{"delta": {}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},

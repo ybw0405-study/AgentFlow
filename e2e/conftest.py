@@ -18,7 +18,7 @@ REAL_LLM = os.environ.get("AF_E2E_REAL_LLM", "") == "1"
 REAL_LLM_MODEL = os.environ.get("AF_LLM_MODEL", "deepseek-chat")
 # 引擎内部端点（/internal/**）不经网关：探针类断言直接打 8000，带内部令牌
 ENGINE_URL = os.environ.get("AF_E2E_ENGINE_URL", "http://127.0.0.1:8000")
-INTERNAL_TOKEN = os.environ.get("AF_INTERNAL_TOKEN", "dev-internal-token")  # noqa: S105
+INTERNAL_TOKEN = os.environ.get("AF_INTERNAL_TOKEN", "dev-internal-token") # noqa: S105
 
 
 ADMIN_EMAIL = "admin@agentflow.dev"

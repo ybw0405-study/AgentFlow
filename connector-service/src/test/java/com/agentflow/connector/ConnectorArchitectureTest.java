@@ -14,9 +14,9 @@ import com.tngtech.archunit.lang.ArchRule;
  * 规则聚焦三条真实红线，而非空泛的「禁止循环依赖」：
  *
  * <ul>
- *   <li>web 层不得直连 domain 的持久化接口（controller 只经 service 编排）；</li>
- *   <li>凭据密钥材料只允许出现在 crypto 包内，禁止 web/service/domain 直接操作明文密钥；</li>
- *   <li>包之间无循环依赖（slices 按顶层子包切分）。</li>
+ * <li>web 层不得直连 domain 的持久化接口（controller 只经 service 编排）；</li>
+ * <li>凭据密钥材料只允许出现在 crypto 包内，禁止 web/service/domain 直接操作明文密钥；</li>
+ * <li>包之间无循环依赖（slices 按顶层子包切分）。</li>
  * </ul>
  */
 @AnalyzeClasses(packages = "com.agentflow.connector")

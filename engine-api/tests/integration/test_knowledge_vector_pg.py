@@ -20,7 +20,7 @@ def _docker_available() -> bool:
     if not shutil.which("docker"):
         return False
     try:
-        subprocess.run(  # noqa: S603 —— 固定命令探测本机 docker，非外部输入
+        subprocess.run( # noqa: S603 —— 固定命令探测本机 docker，非外部输入
             [shutil.which("docker") or "docker", "info"],
             capture_output=True,
             check=True,

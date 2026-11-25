@@ -1,5 +1,5 @@
 /** DSL TypeScript 类型（与 engine-api app/dsl/models.py 一一对应）。
- *  CT-1：所有枚举联合类型从 contract-enums.ts 派生，避免与取值数组各写一份。 */
+ * CT-1：所有枚举联合类型从 contract-enums.ts 派生，避免与取值数组各写一份。 */
 import type { LlmProvider, NodeType, OutputMode, VariableType } from './contract-enums'
 
 export type { LlmProvider, NodeType, OutputMode, VariableType } from './contract-enums'

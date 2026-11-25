@@ -9,10 +9,10 @@ import java.util.Set;
  * <p>本地开发与单元测试无需任何设置，保证演示与测试可运行；但「未显式声明」不等于
  * 「可以裸奔」。以下任一信号出现即进入守护模式：
  * <ol>
- *   <li>{@code AF_PRODUCTION=true} 环境变量；</li>
- *   <li>{@code -Dagentflow.production=true} JVM 参数；</li>
- *   <li>{@code AF_ENV} 为 {@code production} / {@code prod} / {@code staging}；</li>
- *   <li>{@code SPRING_PROFILES_ACTIVE} 含 {@code prod}（Spring 部署的通行约定）。</li>
+ * <li>{@code AF_PRODUCTION=true} 环境变量；</li>
+ * <li>{@code -Dagentflow.production=true} JVM 参数；</li>
+ * <li>{@code AF_ENV} 为 {@code production} / {@code prod} / {@code staging}；</li>
+ * <li>{@code SPRING_PROFILES_ACTIVE} 含 {@code prod}（Spring 部署的通行约定）。</li>
  * </ol>
  *
  * <p>进入守护后，任何仍在使用仓库内 dev 默认值的敏感配置都会在启动期直接拒绝启动，

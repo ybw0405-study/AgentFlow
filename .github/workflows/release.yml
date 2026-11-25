@@ -186,12 +186,12 @@ jobs:
             esac
             echo "${image}@${digest}" | tee -a digests.txt
           }
-          build_one java-service workflow-service   workflow-service
-          build_one java-service agent-gateway      agent-gateway
-          build_one java-service audit-service      audit-service
+          build_one java-service workflow-service workflow-service
+          build_one java-service agent-gateway agent-gateway
+          build_one java-service audit-service audit-service
           build_one java-service connector-service connector-service
-          build_one engine-api    ""                engine-api
-          build_one frontend      ""                frontend
+          build_one engine-api "" engine-api
+          build_one frontend "" frontend
           test -s digests.txt
           {
             echo '### 镜像 digest 清单'

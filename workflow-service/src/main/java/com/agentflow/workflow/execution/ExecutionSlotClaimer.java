@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 执行派发的并发上限领取器（AF-P2-2）。
+ * 执行派发的并发上限领取器。
  *
  * <p>把「锁定义行 + 重查幂等 + 数活跃 + 插入」收进一个短事务：先对 workflow_definition
  * 行加 FOR UPDATE 锁，同一 definition 的并发派发因此在锁上串行——后到者拿到锁时前一

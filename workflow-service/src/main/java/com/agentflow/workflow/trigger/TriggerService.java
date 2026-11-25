@@ -550,7 +550,7 @@ public class TriggerService {
             return;
         }
         // 带签名必须带时间戳，且时间戳参与 HMAC：否则抓包后去掉 X-AF-Timestamp
-        // 即可绕过 300s 防重放窗口，同一签名永久有效（P1-8）。
+        // 即可绕过 300s 防重放窗口，同一签名永久有效。
         if (timestampHeader == null || timestampHeader.isBlank()) {
             throw new BusinessException(ErrorCode.WF_FORBIDDEN_001,
                     "X-AF-Timestamp is required when a signature is provided");

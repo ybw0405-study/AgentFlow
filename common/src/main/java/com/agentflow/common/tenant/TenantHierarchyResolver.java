@@ -12,11 +12,11 @@ import java.util.Set;
  * <p>租户树形如 {@code ORG → TEAM → SPACE}，成员关系可以直接挂在任意一层。
  * 解析顺序：
  * <ol>
- *   <li>直接成员：角色原样使用，source=DIRECT；</li>
- *   <li>祖先成员：沿 parent_id 由近及远查找，命中即继承，source=INHERITED，
- *       其中 OWNER 降级为 ADMIN —— 组织所有者不应在子空间同样拥有「所有者」
- *       语义（子空间可被删除/移交）；</li>
- *   <li>平台 ADMIN：无任何成员关系时兜底 ADMIN，source=PLATFORM。</li>
+ * <li>直接成员：角色原样使用，source=DIRECT；</li>
+ * <li>祖先成员：沿 parent_id 由近及远查找，命中即继承，source=INHERITED，
+ * 其中 OWNER 降级为 ADMIN —— 组织所有者不应在子空间同样拥有「所有者」
+ * 语义（子空间可被删除/移交）；</li>
+ * <li>平台 ADMIN：无任何成员关系时兜底 ADMIN，source=PLATFORM。</li>
  * </ol>
  *
  * <p>向上遍历最多 {@value #MAX_DEPTH} 层并做环检测；任何一步查不到节点即视为

@@ -65,7 +65,7 @@ public class EventProjector {
                     page = engine.tailEvents(cursor, pageSize, spaceId);
                 } catch (Exception e) {
                     log.debug("engine tail unavailable: {}", e.getMessage());
-                    return;  // 下一轮再试；游标不动
+                    return; // 下一轮再试；游标不动
                 }
                 if (page == null || page.events() == null || page.events().isEmpty()) {
                     return;

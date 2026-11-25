@@ -13,7 +13,7 @@ public interface WorkflowExecutionMapper {
 
     @Insert("INSERT INTO workflow_execution"
             + " (id, definition_id, version_id, tenant_id, triggered_by, status,"
-            + "  idempotency_key, trace_id, token_budget, max_steps, deadline_at)"
+            + " idempotency_key, trace_id, token_budget, max_steps, deadline_at)"
             + " VALUES (#{id}, #{definitionId}, #{versionId}, #{tenantId}, #{triggeredBy},"
             + " 'PENDING', #{idempotencyKey}, #{traceId}, #{tokenBudget}, #{maxSteps},"
             + " #{deadlineAt})")
@@ -65,7 +65,7 @@ public interface WorkflowExecutionMapper {
     int markRunning(@Param("id") String id, @Param("status") String status);
 
     /** 终态不可逆：与 markRunning/markSuspended/markResumed 一样带前置状态条件，
-     *  乱序/重放事件不得把 CANCELLED 改回 SUCCEEDED，Reaper postMortem 也不得覆盖已成功行。 */
+     * 乱序/重放事件不得把 CANCELLED 改回 SUCCEEDED，Reaper postMortem 也不得覆盖已成功行。 */
     @Update("UPDATE workflow_execution SET status = #{status}, token_used = #{tokenUsed},"
             + " steps_used = #{stepsUsed}, error_code = #{errorCode}, finished_at = NOW(3)"
             + " WHERE id = #{id}"
@@ -118,7 +118,7 @@ public interface WorkflowExecutionMapper {
             + " FROM workflow_execution"
             + " WHERE status IN ('PENDING', 'RUNNING')"
             + " AND ((deadline_at IS NOT NULL AND deadline_at < #{deadlineCutoff})"
-            + "   OR (status = 'PENDING' AND created_at < #{pendingCutoff}))"
+            + " OR (status = 'PENDING' AND created_at < #{pendingCutoff}))"
             + " ORDER BY seq ASC LIMIT #{limit}")
     List<ExecutionRow> findStale(@Param("deadlineCutoff") Timestamp deadlineCutoff,
                                  @Param("pendingCutoff") Timestamp pendingCutoff,

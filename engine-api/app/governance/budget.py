@@ -74,7 +74,7 @@ class BudgetLedger:
                     return grant
                 except WatchError:
                     continue
-        return -1  # 冲突过多时按耗尽处理（保守方向，宁停不超）
+        return -1 # 冲突过多时按耗尽处理（保守方向，宁停不超）
 
     async def settle(self, execution_id: uuid.UUID | str, grant: int, actual: int) -> None:
         """结算一笔预占：回冲未用额度，并注销对应的在途登记。

@@ -46,8 +46,8 @@ class KnowledgeServiceTest {
     @Test
     void normaliseCollapsesWhitespaceAndKeepsParagraphs() {
         assertEquals("第一段\n第二段 词语",
-                KnowledgeService.normalise("  第一段  \r\n\r\n  第二段   词语  "));
-        assertEquals("", KnowledgeService.normalise("  \n \t "));
+                KnowledgeService.normalise(" 第一段 \r\n\r\n 第二段 词语 "));
+        assertEquals("", KnowledgeService.normalise(" \n \t "));
     }
 
     @Test
@@ -87,7 +87,7 @@ class KnowledgeServiceTest {
         assertThrows(BusinessException.class,
                 () -> service.addDocument(viewer, "kb-1", "t", "内容", "TEXT"));
         assertThrows(BusinessException.class,
-                () -> service.addDocument(editor, "kb-1", "t", "  ", "TEXT"));
+                () -> service.addDocument(editor, "kb-1", "t", " ", "TEXT"));
         assertThrows(BusinessException.class,
                 () -> service.addDocument(editor, "kb-1", "t",
                         "x".repeat(KnowledgeService.MAX_DOCUMENT_CHARS + 1), "TEXT"));
@@ -148,7 +148,7 @@ class KnowledgeServiceTest {
     void emptyQueryReturnsNoHitsWithoutScanning() {
         baseExists("kb-1", "space-1");
         KnowledgeService.SearchResult result =
-                service.search(editor, List.of("kb-1"), "   ", 5, 0.0);
+                service.search(editor, List.of("kb-1"), " ", 5, 0.0);
         assertTrue(result.results().isEmpty());
         verify(mapper, never()).listChunksForSearch(any(), anyList(), anyInt());
     }

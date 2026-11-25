@@ -9,8 +9,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BS = chr(92)  # 反斜杠
-SQ = chr(39)  # 单引号
+BS = chr(92) # 反斜杠
+SQ = chr(39) # 单引号
 
 
 def sql_literal(meta: dict) -> tuple[str, str]:
@@ -40,10 +40,10 @@ header = """-- 演示种子（P0 验收）：1 Org + 2 Space + 4 用户（密码
 -- 幂等：可重复执行。
 
 INSERT IGNORE INTO tenant (id, name, type, parent_id) VALUES
-  ('t-org-demo',   'Demo Org',    'ORG',   NULL),
-  ('t-team-core',  'Core Team',   'TEAM',  't-org-demo'),
-  ('t-space-a',    'Space Alpha', 'SPACE', 't-team-core'),
-  ('t-space-beta', 'Space Beta',  'SPACE', 't-org-demo');
+  ('t-org-demo', 'Demo Org', 'ORG', NULL),
+  ('t-team-core', 'Core Team', 'TEAM', 't-org-demo'),
+  ('t-space-a', 'Space Alpha', 'SPACE', 't-team-core'),
+  ('t-space-beta', 'Space Beta', 'SPACE', 't-org-demo');
 
 -- 幂等升级：把 Alpha 从 ORG 直挂迁到 Core Team 下（三级：ORG → TEAM → SPACE）
 UPDATE tenant SET parent_id = 't-team-core'
@@ -51,21 +51,21 @@ UPDATE tenant SET parent_id = 't-team-core'
 
 -- bcrypt("agentflow123", cost 12)
 INSERT IGNORE INTO app_user (id, email, password_hash, display_name, platform_role) VALUES
-  ('u-admin',  'admin@agentflow.dev',  '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Demo Admin',  'ADMIN'),
+  ('u-admin', 'admin@agentflow.dev', '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Demo Admin', 'ADMIN'),
   ('u-editor', 'editor@agentflow.dev', '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Demo Editor', 'USER'),
   ('u-viewer', 'viewer@agentflow.dev', '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Demo Viewer', 'USER'),
-  ('u-beta',   'beta@agentflow.dev',   '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Beta Editor', 'USER'),
+  ('u-beta', 'beta@agentflow.dev', '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Beta Editor', 'USER'),
   ('u-orgadm', 'orgadmin@agentflow.dev', '$2b$12$L/O9.uhIGyula1GE4bDm1.d94fbkK6ALxdCVE2VGmTNKSMAZLrFOG', 'Org Admin', 'USER');
 
 -- 三级继承验证：u-orgadm 只在 ORG 上是 ADMIN，可继承进入 Core Team 与 Space Alpha/Beta
 INSERT IGNORE INTO tenant_member (tenant_id, user_id, role, inherited) VALUES
-  ('t-org-demo',   'u-admin',  'OWNER',  0),
-  ('t-space-a',    'u-admin',  'OWNER',  0),
-  ('t-space-beta', 'u-admin',  'OWNER',  0),
-  ('t-space-a',    'u-editor', 'EDITOR', 0),
-  ('t-space-a',    'u-viewer', 'VIEWER', 0),
-  ('t-space-beta', 'u-beta',   'EDITOR', 0),
-  ('t-org-demo',   'u-orgadm', 'ADMIN',  0);
+  ('t-org-demo', 'u-admin', 'OWNER', 0),
+  ('t-space-a', 'u-admin', 'OWNER', 0),
+  ('t-space-beta', 'u-admin', 'OWNER', 0),
+  ('t-space-a', 'u-editor', 'EDITOR', 0),
+  ('t-space-a', 'u-viewer', 'VIEWER', 0),
+  ('t-space-beta', 'u-beta', 'EDITOR', 0),
+  ('t-org-demo', 'u-orgadm', 'ADMIN', 0);
 
 INSERT IGNORE INTO budget_ledger (tenant_id, period, calls_used, tokens_used, limit_calls, limit_tokens)
 SELECT id, DATE_FORMAT(NOW(3), '%Y-%m'), 0, 0, 10000, 50000 FROM tenant;
@@ -80,7 +80,7 @@ DOC_CHUNKS = [
 CHAR_COUNT = sum(len(c) for c in DOC_CHUNKS)
 
 chunk_values = ",\n".join(
-    f"  ('kc-demo-{i + 1}', 't-space-a', 'kb-demo', 'kd-demo-1', {i}, '{DOC_TITLE}', "
+    f" ('kc-demo-{i + 1}', 't-space-a', 'kb-demo', 'kd-demo-1', {i}, '{DOC_TITLE}', "
     f"'{c}', {max(1, len(c) // 3)})"
     for i, c in enumerate(DOC_CHUNKS)
 )

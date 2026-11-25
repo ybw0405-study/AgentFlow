@@ -84,7 +84,7 @@ def build_chat_payload(
         "max_tokens": max_tokens,
         "stream": stream,
     }
-    # 让兼容端点在 SSE 末帧返回真实 usage，供成本中心精确计量（P1-4 修复）。
+    # 让兼容端点在 SSE 末帧返回真实 usage，供成本中心精确计量。
     # 部分端点不接受该字段，默认关闭、由 AF_LLM_STREAM_INCLUDE_USAGE 显式开启。
     if stream and os.getenv("AF_LLM_STREAM_INCLUDE_USAGE", "").lower() in {"1", "true", "yes"}:
         payload["stream_options"] = {"include_usage": True}
@@ -493,7 +493,7 @@ class OpenAICompatibleProvider:
                 return self._failure("LLM-RESPONSE-001", False, started, f"invalid json: {exc}")
 
         fallback_prompt_tokens = estimate_tokens(prompt + (system or ""))
-        # 优先用上游 SSE 末帧的 usage（与非流式 _complete 同口径），无则回退估算（P1-4 修复）。
+        # 优先用上游 SSE 末帧的 usage（与非流式 _complete 同口径），无则回退估算。
         usage_raw = upstream_usage or {}
         prompt_tokens = int_or(usage_raw.get("prompt_tokens"), fallback_prompt_tokens)
         completion_tokens = int_or(usage_raw.get("completion_tokens"), estimate_tokens(text))

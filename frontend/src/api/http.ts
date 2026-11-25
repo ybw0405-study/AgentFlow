@@ -79,7 +79,7 @@ http.interceptors.response.use(
 )
 
 /** 五个封装都透传可选 `AbortSignal`：调用方（如执行详情卸载）可取消在途 REST，
- *  省略时行为与原来完全一致，现有调用点不需要改动。 */
+ * 省略时行为与原来完全一致，现有调用点不需要改动。 */
 
 export async function get<T>(url: string, params?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const resp = await http.get<{ data: T }>(url, { params, signal })

@@ -52,7 +52,7 @@ public class RefreshTokenService {
         }
         if (!"ACTIVE".equals(row.status())) {
             // 重用检测：整个族吊销。必须在独立事务提交，否则紧接着抛出的
-            // BusinessException(RuntimeException) 会让本方法事务回滚、吊销失效（P0-2 修复）。
+            // BusinessException(RuntimeException) 会让本方法事务回滚、吊销失效。
             revocationService.revokeFamily(row.familyId());
             throw new BusinessException(ErrorCode.USR_TOKEN_001, "refresh token reuse detected");
         }

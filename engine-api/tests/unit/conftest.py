@@ -147,7 +147,7 @@ class NullPublisher:
 
 @pytest.fixture
 def settings() -> Settings:
-    #  后入站 /internal/** 认 engine_token；本地测试里显式设为同值，
+    # 后入站 /internal/** 认 engine_token；本地测试里显式设为同值，
     # 让既有「带 X-Internal-Token」的用例继续覆盖 API 行为（生产必须不同）。
     return Settings(internal_token="test-token", engine_token="test-token")
 

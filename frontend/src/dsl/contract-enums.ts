@@ -6,11 +6,11 @@
  * 修 P1-1 时只钉住了 2 个常量，其余副本继续静默漂移，重现「选完保存 422」。
  *
  * 纪律：
- *  1. 任何下拉 / 校验 / 类型都从这里 import，模板一律 v-for，不再抄字面量；
- *  2. tests/contract-enums.spec.ts 把每个数组与权威源对账：
- *     engine-api/app/dsl/models.py（Pydantic Literal）、db/mysql/migration
- *     V006 的 status ENUM、workflow-service MisfirePolicy.java 的枚举常量；
- *  3. 新增枚举必须同时补 contract-enums.ts 与一条对账用例。
+ * 1. 任何下拉 / 校验 / 类型都从这里 import，模板一律 v-for，不再抄字面量；
+ * 2. tests/contract-enums.spec.ts 把每个数组与权威源对账：
+ * engine-api/app/dsl/models.py（Pydantic Literal）、db/mysql/migration
+ * V006 的 status ENUM、workflow-service MisfirePolicy.java 的枚举常量；
+ * 3. 新增枚举必须同时补 contract-enums.ts 与一条对账用例。
  */
 
 // ---- 引擎 Pydantic Literal（models.py）----

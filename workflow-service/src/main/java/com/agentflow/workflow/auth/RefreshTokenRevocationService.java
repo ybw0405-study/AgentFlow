@@ -10,7 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>单独成 Bean 的原因：{@code @Transactional} 必须通过 Spring 代理生效，
  * 同类内部方法自调用不会走代理、事务注解会被忽略。吊销必须在独立事务里提交，
  * 才能保证调用方（RefreshTokenService.rotate）因抛出 BusinessException 回滚时，
- * 「令牌重用即吊销全族」已经落库——这是失效防护能生效的关键（P0-2 修复）。
+ * 「令牌重用即吊销全族」已经落库——这是失效防护能生效的关键。
  */
 @Service
 public class RefreshTokenRevocationService {

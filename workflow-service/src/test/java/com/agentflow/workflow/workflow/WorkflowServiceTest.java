@@ -107,7 +107,7 @@ class WorkflowServiceTest {
     void viewerCannotFreeze() {
         var ex = assertThrows(BusinessException.class, () -> service.freeze(viewer, "d1"));
         assertEquals(ErrorCode.WF_FORBIDDEN_001, ex.errorCode());
-        verify(audit).publish(any());  // 越权尝试进审计
+        verify(audit).publish(any()); // 越权尝试进审计
     }
 
     @Test

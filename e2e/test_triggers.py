@@ -101,7 +101,7 @@ def test_webhook_verifies_signature_when_present(client, editor_token, admin_tok
 
     ts = str(int(time.time()))
     digest = hmac.new(hook["secret"].encode(), f"{ts}.{body}".encode(), hashlib.sha256).hexdigest()
-    # 签名覆盖时间戳：剥离 X-AF-Timestamp 后同一签名必然验签失败（P1-8）。
+    # 签名覆盖时间戳：剥离 X-AF-Timestamp 后同一签名必然验签失败。
     no_ts = client.post(url, content=body, headers={
         "X-AF-Signature": f"sha256={digest}",
         "Content-Type": "application/json",

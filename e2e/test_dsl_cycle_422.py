@@ -15,7 +15,7 @@ def test_cycle_rejected_with_422(client, editor_token):
     wf_id = resp.json()["data"]["id"]
 
     dsl = copy.deepcopy(DEMO_DSL)
-    dsl["edges"].append({"from": "final", "to": "draft"})  # draft→final→draft
+    dsl["edges"].append({"from": "final", "to": "draft"}) # draft→final→draft
 
     resp = client.put(f"/api/v1/workflows/{wf_id}/draft", json=dsl, headers=hdrs)
     assert resp.status_code == 422, resp.text

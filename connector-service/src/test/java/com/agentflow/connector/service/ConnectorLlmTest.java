@@ -231,7 +231,7 @@ class ConnectorLlmTest {
         String longId = "m".repeat(400);
         var body = Map.<String, Object>of("data", List.of(
                 Map.of("id", longId),
-                Map.of("id", "m2", "supported_parameters", List.of("  REASONING  ", "x", "x"),
+                Map.of("id", "m2", "supported_parameters", List.of(" REASONING ", "x", "x"),
                         "input_modalities", List.of("TEXT", "IMAGE"))));
 
         var items = ConnectorInvoker.modelItems(body);

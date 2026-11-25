@@ -12,9 +12,9 @@ import java.util.Set;
  *
  * <p>支持的语法子集：
  * <pre>
- *   user.id == "u-1" and user.rank >= 2
- *   user.id in ["u-1", "u-2"] or user.platformAdmin
- *   not (space.id == "t-space-b")
+ * user.id == "u-1" and user.rank >= 2
+ * user.id in ["u-1", "u-2"] or user.platformAdmin
+ * not (space.id == "t-space-b")
  * </pre>
  *
  * <p>可用属性：{@code user.id / user.role / user.rank / user.platformAdmin}、

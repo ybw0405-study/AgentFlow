@@ -78,7 +78,7 @@ async function load(): Promise<void> {
 }
 
 /** 必须取执行冻结时的版本，不能用当前草稿，否则图上的节点与执行记录对不上。
- *  取不到时自动回退到节点列表，不让页面留白，也不丢任何执行信息。 */
+ * 取不到时自动回退到节点列表，不让页面留白，也不丢任何执行信息。 */
 async function loadDsl(): Promise<void> {
   const exec = detail.value?.execution
   if (!exec) return
@@ -162,7 +162,7 @@ function handleLiveEvent(e: EngineEvent): void {
     case 'ExecutionFailed':
     case 'ExecutionCancelled':
     case 'ExecutionTimedOut':
-      void load()  // 终态：拉全量对齐投影
+      void load() // 终态：拉全量对齐投影
       return
     case 'OutputDelta':
       // 逐 token 增量：按 nodeKey 累加，展示打字机效果。payload.text 为增量片段。

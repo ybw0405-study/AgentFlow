@@ -25,7 +25,7 @@ def _docker_available() -> bool:
     if not shutil.which("docker"):
         return False
     try:
-        subprocess.run(  # noqa: S603 —— 固定命令探测本机 docker，非外部输入
+        subprocess.run( # noqa: S603 —— 固定命令探测本机 docker，非外部输入
             [shutil.which("docker") or "docker", "info"],
             capture_output=True,
             check=True,
@@ -51,11 +51,11 @@ def pg_dsn():
 
 @pytest.fixture
 async def store(pg_dsn):
-    s = EventStore(pg_dsn, payload_max_bytes=1024)  # 小阈值便于测溢出
+    s = EventStore(pg_dsn, payload_max_bytes=1024) # 小阈值便于测溢出
     await s.connect()
     settings = Settings()
     await run_migrations(s.pool, settings.pg_migrations_path)
-    async with s.pool.acquire() as conn:  # 测试间隔离
+    async with s.pool.acquire() as conn: # 测试间隔离
         await conn.execute("TRUNCATE execution_event, execution_tracker, execution_spec, node_io")
     yield s
     await s.close()
@@ -79,12 +79,12 @@ async def test_concurrent_appends_have_no_version_gap(store):
     await asyncio.gather(*[worker(i) for i in range(20)])
     events = await store.read_all(eid)
     versions = sorted(e.aggregate_version for e in events)
-    assert versions == list(range(1, 21))  # 无缺口无重复（US-04 事件版本冲突）
+    assert versions == list(range(1, 21)) # 无缺口无重复（US-04 事件版本冲突）
 
 
 async def test_terminal_event_marks_tracker(store):
     eid = uuid.uuid4()
-    assert eid not in await store.open_executions() or True
+    assert eid not in await store.open_executions()
     await store.append(eid, "ExecutionCreated", {"traceId": "t"})
     assert eid in await store.open_executions()
     await store.append(eid, "ExecutionCompleted", {"result": {}})
@@ -127,7 +127,7 @@ async def test_tail_cursor(store):
 async def test_node_io_upsert_and_read(store):
     eid = uuid.uuid4()
     await store.put_node_io(eid, "n1", "IN", {"v": 1})
-    await store.put_node_io(eid, "n1", "IN", {"v": 2})  # upsert 覆盖
+    await store.put_node_io(eid, "n1", "IN", {"v": 2}) # upsert 覆盖
     await store.put_node_io(eid, "n1", "OUT", {"r": 3})
     io = await store.get_node_io(eid, "n1")
     assert io["in"]["payload"] == {"v": 2}
@@ -137,17 +137,17 @@ async def test_node_io_upsert_and_read(store):
 
 async def test_overflow_spills_to_node_io(store):
     eid = uuid.uuid4()
-    big = "x" * 5000  # 超过测试阈值的 1024B
+    big = "x" * 5000 # 超过测试阈值的 1024B
     ev = await store.append(eid, "NodeCompleted", {"output": {"text": big}}, node_key="n1")
     assert ev.payload["_overflow"] is True
     io = await store.get_node_io(eid, "n1")
-    assert io["out"]["payload"]["output"]["text"] == big  # 完整内容在 node_io
+    assert io["out"]["payload"]["output"]["text"] == big # 完整内容在 node_io
 
 
 async def test_spec_roundtrip(store):
     eid = uuid.uuid4()
     await store.put_spec(eid, {"a": 1})
-    await store.put_spec(eid, {"a": 2})  # ON CONFLICT DO NOTHING
+    await store.put_spec(eid, {"a": 2}) # ON CONFLICT DO NOTHING
     assert await store.get_spec(eid) == {"a": 1}
     assert await store.get_spec(uuid.uuid4()) is None
 

@@ -8,18 +8,18 @@
 -- status 只有 PENDING / SENT：审计不允许「放弃投递」，重试次数只用于退避与告警，
 -- 不做终态收敛（与 gate_resolve_outbox 不同——那边超时后审批本身已失效，重投无意义）。
 CREATE TABLE audit_outbox (
-  seq             BIGINT AUTO_INCREMENT UNIQUE,
-  id              CHAR(36)     NOT NULL,
-  tenant_id       CHAR(36)     NOT NULL,
-  event_type      VARCHAR(64)  NOT NULL,
+  seq BIGINT AUTO_INCREMENT UNIQUE,
+  id CHAR(36) NOT NULL,
+  tenant_id CHAR(36) NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
   -- 完整 AuditMessage JSON：relay 不重新组装，避免字段漂移
-  message_json    JSON         NOT NULL,
-  status          ENUM('PENDING','SENT') NOT NULL DEFAULT 'PENDING',
-  attempts        INT          NOT NULL DEFAULT 0,
-  next_attempt_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  last_error      VARCHAR(500) NULL,
-  created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  sent_at         DATETIME(3)  NULL,
+  message_json JSON NOT NULL,
+  status ENUM('PENDING','SENT') NOT NULL DEFAULT 'PENDING',
+  attempts INT NOT NULL DEFAULT 0,
+  next_attempt_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  last_error VARCHAR(500) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  sent_at DATETIME(3) NULL,
   PRIMARY KEY (id),
   KEY idx_ao_due (status, next_attempt_at),
   KEY idx_ao_sent (status, sent_at)

@@ -30,17 +30,17 @@ def test_id_card_15_masked():
 def test_email_masked_first_in_category_order():
     r = mask_text("邮箱 a@b.com，手机 13812345678")
     assert r.categories == ("EMAIL", "PHONE")
-    assert r.masked == "邮箱 [EMAIL],手机 [PHONE]"  # NFKC：全角逗号→半角
+    assert r.masked == "邮箱 [EMAIL],手机 [PHONE]" # NFKC：全角逗号→半角
     assert r.count == 2
 
 
 def test_fullwidth_digits_normalized():
-    r = mask_text("电话１３８１２３４５６７８")  # 全角数字
+    r = mask_text("电话１３８１２３４５６７８") # 全角数字
     assert "[PHONE]" in r.masked
 
 
 def test_zero_width_injection_still_detected():
-    r = mask_text("138​1234‍5678")  # 号码中插入零宽字符
+    r = mask_text("138​1234‍5678") # 号码中插入零宽字符
     assert "[PHONE]" in r.masked
 
 

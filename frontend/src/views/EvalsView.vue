@@ -33,7 +33,7 @@ let pollFailures = 0
 const datasetForm = reactive({ name: '', description: '' })
 const caseForm = reactive({
   name: '',
-  input: '{\n  "question": "AgentFlow 如何保证恰好一次？"\n}',
+  input: '{\n "question": "AgentFlow 如何保证恰好一次？"\n}',
   expected: '',
   mode: 'EXISTS',
   path: 'answer',

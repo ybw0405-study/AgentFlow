@@ -37,7 +37,7 @@ public interface EvalMapper {
     @Insert("INSERT INTO eval_case (id, dataset_id, tenant_id, name, input_json,"
             + " expected_json, assertion_json, enabled)"
             + " VALUES (#{id}, #{datasetId}, #{tenantId}, #{name}, #{inputJson},"
-            + "  #{expectedJson}, #{assertionJson}, #{enabled})")
+            + " #{expectedJson}, #{assertionJson}, #{enabled})")
     int insertCase(CaseRow row);
 
     @Select("SELECT id, dataset_id AS datasetId, tenant_id AS tenantId, name,"
@@ -62,7 +62,7 @@ public interface EvalMapper {
     @Insert("INSERT INTO eval_run (id, dataset_id, tenant_id, definition_id, version_id,"
             + " status, total, passed, failed, experiment_id, variant, created_by, started_at)"
             + " VALUES (#{id}, #{datasetId}, #{tenantId}, #{definitionId}, #{versionId},"
-            + "  'RUNNING', #{total}, 0, 0, #{experimentId}, #{variant}, #{createdBy}, NOW(3))")
+            + " 'RUNNING', #{total}, 0, 0, #{experimentId}, #{variant}, #{createdBy}, NOW(3))")
     int insertRun(RunRow row);
 
     String RUN_COLUMNS = "id, dataset_id AS datasetId, tenant_id AS tenantId,"
@@ -101,7 +101,7 @@ public interface EvalMapper {
     @Insert("INSERT INTO eval_case_result (id, run_id, case_id, case_name, execution_id,"
             + " status, passed, error_message)"
             + " VALUES (#{id}, #{runId}, #{caseId}, #{caseName}, #{executionId},"
-            + "  #{status}, #{passed}, #{errorMessage})")
+            + " #{status}, #{passed}, #{errorMessage})")
     int insertResult(ResultRow row);
 
     @Select("SELECT id, run_id AS runId, case_id AS caseId, case_name AS caseName,"
@@ -135,7 +135,7 @@ public interface EvalMapper {
     @Select("SELECT COUNT(*) AS total,"
             + " COALESCE(SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END), 0) AS passed,"
             + " COALESCE(SUM(CASE WHEN passed = 0 OR passed IS NULL THEN 1 ELSE 0 END), 0)"
-            + "   AS failed,"
+            + " AS failed,"
             + " AVG(latency_ms) AS avgLatency, AVG(token_used) AS avgTokens"
             + " FROM eval_case_result WHERE run_id = #{runId}")
     RunStats stats(@Param("runId") String runId);
@@ -145,7 +145,7 @@ public interface EvalMapper {
     @Insert("INSERT INTO ab_experiment (id, tenant_id, definition_id, dataset_id, name,"
             + " version_a, version_b, run_a, run_b, status, created_by)"
             + " VALUES (#{id}, #{tenantId}, #{definitionId}, #{datasetId}, #{name},"
-            + "  #{versionA}, #{versionB}, #{runA}, #{runB}, 'RUNNING', #{createdBy})")
+            + " #{versionA}, #{versionB}, #{runA}, #{runB}, 'RUNNING', #{createdBy})")
     int insertExperiment(ExperimentRow row);
 
     @Update("UPDATE ab_experiment SET run_a = #{runA}, run_b = #{runB} WHERE id = #{id}")

@@ -23,9 +23,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version-file: .python-version  # 与根目录版本文件对齐
+          python-version-file: .python-version # 与根目录版本文件对齐
           cache: pip
-          cache-dependency-path: engine-api/requirements.lock.txt  # 绑定真实锁文件
+          cache-dependency-path: engine-api/requirements.lock.txt # 绑定真实锁文件
       - name: install (locked + verified hashes)
         working-directory: engine-api
         # --require-hashes 强制每个依赖都匹配锁文件里的真实 sha256；

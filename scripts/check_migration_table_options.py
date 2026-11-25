@@ -8,8 +8,8 @@
     JOIN 会报 Illegal mix of collations，或触发隐式转换让索引失效。
 
 用法（CI）：
-    python scripts/check_migration_table_options.py           # 门禁，失败 exit 1
-    python scripts/check_migration_table_options.py --self-test  # 自带回归用例
+    python scripts/check_migration_table_options.py # 门禁，失败 exit 1
+    python scripts/check_migration_table_options.py --self-test # 自带回归用例
 
 零依赖，标准库即可。CI 接线建议见最终报告。
 """
@@ -107,7 +107,7 @@ def main() -> int:
     if errors:
         print(" 守卫 FAIL:")
         for err in errors:
-            print("  - " + err)
+            print(" - " + err)
         return 1
     tables = [
         name

@@ -31,7 +31,7 @@ class ParallelExecutor:
                         cfg.branches[name], key_prefix=f"{node.key}#{name}"
                     )
                     return name, out, None
-                except Exception as exc:  # 分支失败作为结果处理，由 join 策略裁决
+                except Exception as exc: # 分支失败作为结果处理，由 join 策略裁决
                     return name, {}, exc
 
         tasks = [asyncio.create_task(one(name)) for name in cfg.branches]

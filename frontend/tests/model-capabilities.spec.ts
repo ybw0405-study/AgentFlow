@@ -53,7 +53,7 @@ describe('模型能力标注', () => {
   it('模型名为空时返回 null，界面不出空标签', () => {
     expect(modelFacts('')).toBeNull()
     expect(modelFacts(undefined)).toBeNull()
-    expect(modelFacts('   ')).toBeNull()
+    expect(modelFacts(' ')).toBeNull()
   })
 
   it('推理型给出 maxTokens 建议，普通模型不给', () => {

@@ -168,7 +168,7 @@ function setName(value: string): void {
 }
 
 /** 节点超时是引擎 NodeBase 的顶层字段，不能写进 config（extra=forbid）；
- *  human_gate 的审批超时才是 config.timeoutMs，在那个模板里单独用 setCfg 维护。 */
+ * human_gate 的审批超时才是 config.timeoutMs，在那个模板里单独用 setCfg 维护。 */
 function setTimeoutMs(value: string): void {
   if (!props.node) return
   const n = Number(value)

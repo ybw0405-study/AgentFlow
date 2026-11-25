@@ -3,12 +3,12 @@ version: 2
 # 依赖更新策略（与 CONTRIBUTING「依赖升级」一致）
 # - 每个生态按月检查，最多同时 5 个「版本更新」PR（open-pull-requests-limit: 5）。
 # - 主版本升级由维护者手工评估：下面的 ignore 把 semver-major 全部排除，
-#   次版本 / 补丁版本按生态聚合成一个 PR（groups），便于集中评审后合入。
+# 次版本 / 补丁版本按生态聚合成一个 PR（groups），便于集中评审后合入。
 # - 安全更新（Dependabot security updates / alerts）是**仓库级开关**，需在
-#   GitHub Settings → Code security 单独启用，本文件只管「版本更新」，不再声称
-#   「只自动提安全更新」。旧配置三处 open-pull-requests-limit: 0 实际会关闭全部
-#   版本更新 PR（并非「只关大版本」），且缺 pip / docker 生态，文件头注释与实配
-#   不符，均已纠正。
+# GitHub Settings → Code security 单独启用，本文件只管「版本更新」，不再声称
+# 「只自动提安全更新」。旧配置三处 open-pull-requests-limit: 0 实际会关闭全部
+# 版本更新 PR（并非「只关大版本」），且缺 pip / docker 生态，文件头注释与实配
+# 不符，均已纠正。
 updates:
   - package-ecosystem: "maven"
     directory: "/"

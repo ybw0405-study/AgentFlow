@@ -6,9 +6,9 @@ import java.util.function.LongSupplier;
  * /engine 上游熔断器：CLOSED / OPEN / HALF_OPEN 三态状态机（对齐 Resilience4j 的简化语义）。
  *
  * <ul>
- *   <li>CLOSED：正常放行，连续失败达到 {@code failureThreshold} 后转 OPEN；</li>
- *   <li>OPEN：快速失败（不再调用上游），冷却 {@code cooldownMillis} 后转 HALF_OPEN；</li>
- *   <li>HALF_OPEN：只放行一个探测请求，成功转 CLOSED、失败转 OPEN。</li>
+ * <li>CLOSED：正常放行，连续失败达到 {@code failureThreshold} 后转 OPEN；</li>
+ * <li>OPEN：快速失败（不再调用上游），冷却 {@code cooldownMillis} 后转 HALF_OPEN；</li>
+ * <li>HALF_OPEN：只放行一个探测请求，成功转 CLOSED、失败转 OPEN。</li>
  * </ul>
  *
  * <p>线程安全：状态切换频率低，用 synchronized 保证「状态判定 + 计数更新」原子，
@@ -59,7 +59,7 @@ public final class EngineCircuitBreaker {
             case OPEN:
                 if (clock.getAsLong() - openedAtMillis >= cooldownMillis) {
                     state = State.HALF_OPEN;
-                    halfOpenProbeInFlight = true;  // 本次放行的请求即探测请求
+                    halfOpenProbeInFlight = true; // 本次放行的请求即探测请求
                     return true;
                 }
                 return false;

@@ -84,7 +84,7 @@ def test_no_capability_fields_means_no_tags() -> None:
 
 def test_skips_entries_without_id() -> None:
     assert describe_model({"owned_by": "x"}) is None
-    assert describe_model({"id": "   "}) is None
+    assert describe_model({"id": " "}) is None
 
 
 def test_long_context_tag_ignores_small_windows() -> None:

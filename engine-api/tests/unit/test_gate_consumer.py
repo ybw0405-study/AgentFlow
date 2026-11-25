@@ -125,7 +125,7 @@ async def test_busy_exhausts_retries_and_records_failure():
     await consumer._handle(_payload())
 
     stats = consumer.status()
-    assert len(dispatcher.calls) == 3  # 首轮 + 2 次重试
+    assert len(dispatcher.calls) == 3 # 首轮 + 2 次重试
     assert stats["failed"] == 1
     assert "BUSY" in (stats["lastError"] or "")
 

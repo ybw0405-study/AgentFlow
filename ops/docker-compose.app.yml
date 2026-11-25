@@ -1,6 +1,6 @@
 # AgentFlow 应用层（全容器交付）。与 infra 叠加启动：
-#   AF_CONTAINERS=1 scripts/start-dev.sh          # 推荐：脚本注入 env 并预建 topic
-#   docker compose -f ops/docker-compose.infra.yml -f ops/docker-compose.app.yml up -d
+# AF_CONTAINERS=1 scripts/start-dev.sh # 推荐：脚本注入 env 并预建 topic
+# docker compose -f ops/docker-compose.infra.yml -f ops/docker-compose.app.yml up -d
 # 直接 compose 时进程环境需自带 AF_* （密钥类），或先复制 ops/env/local.env.example
 # 为 ops/env/local.env 填写后经 env_file 注入（required: false，缺文件不报错）。
 #
@@ -64,7 +64,7 @@ services:
     container_name: agentflow-mq-init
     # 共享 broker 网络栈：broker 向 namesrv 广播的 brokerIP1 是 127.0.0.1:10911
     # （宿主机端口映射依赖它）。独立容器里 127.0.0.1 指向自己，mqadmin 连不上 broker
-    # → updateTopic 必然失败（P0-4 回归）。共享网络后 localhost 即 broker。
+    # → updateTopic 必然失败。共享网络后 localhost 即 broker。
     network_mode: "service:rocketmq-broker"
     environment:
       HOME: /tmp
@@ -124,7 +124,7 @@ services:
       args:
         JAR_PATH: /out/workflow-service.jar
     container_name: agentflow-workflow
-    # 覆盖 java-base 镜像内置的 8080 探针：本服务实际监听 8084（P0-1 修复）
+    # 覆盖 java-base 镜像内置的 8080 探针：本服务实际监听 8084
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8084/health || exit 1"]
       interval: 15s
@@ -153,7 +153,7 @@ services:
       args:
         JAR_PATH: /out/connector-service.jar
     container_name: agentflow-connector
-    # 覆盖镜像内置 8080 探针：本服务实际监听 8085（P0-1 修复）
+    # 覆盖镜像内置 8080 探针：本服务实际监听 8085
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8085/health || exit 1"]
       interval: 15s
@@ -179,7 +179,7 @@ services:
       args:
         JAR_PATH: /out/audit-service.jar
     container_name: agentflow-audit
-    # 覆盖镜像内置 8080 探针：本服务实际监听 8086（P0-1 修复）
+    # 覆盖镜像内置 8080 探针：本服务实际监听 8086
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8086/health || exit 1"]
       interval: 15s

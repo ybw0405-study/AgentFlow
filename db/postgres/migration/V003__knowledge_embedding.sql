@@ -4,17 +4,17 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunk_embedding (
-  chunk_id      TEXT        NOT NULL,
-  tenant_id     TEXT        NOT NULL,
-  kb_id         TEXT        NOT NULL,
-  document_id   TEXT        NOT NULL,
+  chunk_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  kb_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
   document_title VARCHAR(256) NOT NULL,
-  ordinal       INT          NOT NULL,
-  content       TEXT         NOT NULL,
-  content_hash  TEXT        NOT NULL,
-  model         VARCHAR(64)  NOT NULL,
-  embedding     vector(1024) NOT NULL,
-  updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  ordinal INT NOT NULL,
+  content TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  model VARCHAR(64) NOT NULL,
+  embedding vector(1024) NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (chunk_id, model)
 );
 

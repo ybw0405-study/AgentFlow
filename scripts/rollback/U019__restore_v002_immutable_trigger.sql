@@ -6,7 +6,7 @@
 --
 -- 场景：V019 升级后需要回退到旧定义，或 CREATE TRIGGER 失败导致保护丢失。
 -- 顺序仍是「先建后删」：先把 V002 的原名触发器建回来（IF NOT EXISTS 幂等），
--- 再删  版触发器，全程至少有一条不可变保护存在 —— 零空窗。
+-- 再删 版触发器，全程至少有一条不可变保护存在 —— 零空窗。
 DELIMITER $$
 CREATE TRIGGER IF NOT EXISTS trg_wv_no_update BEFORE UPDATE ON workflow_version
 FOR EACH ROW

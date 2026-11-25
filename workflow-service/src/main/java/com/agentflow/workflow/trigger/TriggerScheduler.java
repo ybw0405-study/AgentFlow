@@ -17,11 +17,11 @@ import org.springframework.stereotype.Component;
  * <p>分钟级精度（Spring CronExpression 最小粒度也是分钟）。多副本下有三层防线，从外到内：
  *
  * <ol>
- *   <li><b>扫描租约</b>：同一时刻只让一个副本扫表，省掉 N 份重复 SELECT 与重复日志。
- *       这是「尽力而为」的优化，不是正确性依赖——租约丢失时下面两层仍然成立。</li>
- *   <li><b>分钟 claim</b>：每个触发器每分钟只有一个副本能拿到 Redis 键，其余直接跳过。</li>
- *   <li><b>幂等键</b>：{@code sched-{triggerId}-{分钟}}，最终由
- *       {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一分钟也只会有一条执行。</li>
+ * <li><b>扫描租约</b>：同一时刻只让一个副本扫表，省掉 N 份重复 SELECT 与重复日志。
+ * 这是「尽力而为」的优化，不是正确性依赖——租约丢失时下面两层仍然成立。</li>
+ * <li><b>分钟 claim</b>：每个触发器每分钟只有一个副本能拿到 Redis 键，其余直接跳过。</li>
+ * <li><b>幂等键</b>：{@code sched-{triggerId}-{分钟}}，最终由
+ * {@code workflow_execution} 的唯一约束兜底。即使前两层同时失效，同一分钟也只会有一条执行。</li>
  * </ol>
  *
  * <p>到点判断以「档位游标」为基准（{@code last_slot_at}；为空时退回 {@code last_fired_at}）：

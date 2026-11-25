@@ -18,7 +18,7 @@ async def test_reserve_clamps_to_remaining(fake_redis):
     ledger = BudgetLedger(fake_redis)
     eid = uuid.uuid4()
     assert await ledger.reserve(eid, budget=100, requested=60) == 60
-    assert await ledger.reserve(eid, budget=100, requested=60) == 40  # 钳到剩余
+    assert await ledger.reserve(eid, budget=100, requested=60) == 40 # 钳到剩余
     assert await ledger.used(eid) == 100
 
 
@@ -67,7 +67,7 @@ async def test_reconcile_never_exceeds_event_total(fake_redis):
     ledger = BudgetLedger(fake_redis)
     eid = uuid.uuid4()
     await ledger.reserve(eid, budget=100, requested=10)
-    await ledger.reconcile(eid, used=25, reset_inflight=True)  # 事件流为准
+    await ledger.reconcile(eid, used=25, reset_inflight=True) # 事件流为准
     assert await ledger.used(eid) == 25
 
 
@@ -95,9 +95,9 @@ async def test_inflight_protects_parallel_reservations(fake_redis):
     eid = uuid.uuid4()
     first = await ledger.reserve(eid, budget=100, requested=40)
     second = await ledger.reserve(eid, budget=100, requested=40)
-    assert await ledger.reconcile(eid, used=5) == 0  # 两笔都还在途
+    assert await ledger.reconcile(eid, used=5) == 0 # 两笔都还在途
     await ledger.settle(eid, first, actual=10)
-    assert await ledger.reconcile(eid, used=5) == 0  # 还有一笔在途
+    assert await ledger.reconcile(eid, used=5) == 0 # 还有一笔在途
     await ledger.settle(eid, second, actual=10)
     assert await ledger.reconcile(eid, used=20) == 0
     assert await ledger.used(eid) == 20
@@ -107,7 +107,7 @@ async def test_reconcile_reset_clears_stale_inflight(fake_redis):
     ledger = BudgetLedger(fake_redis)
     eid = uuid.uuid4()
     await ledger.reserve(eid, budget=100, requested=60)
-    assert await ledger.reconcile(eid, used=10) == 0  # 被在途挡住
+    assert await ledger.reconcile(eid, used=10) == 0 # 被在途挡住
     assert await ledger.reconcile(eid, used=10, reset_inflight=True) == 50
     assert await ledger.used(eid) == 10
 
@@ -117,9 +117,9 @@ async def test_settle_never_drives_inflight_negative(fake_redis):
     eid = uuid.uuid4()
     grant = await ledger.reserve(eid, budget=100, requested=30)
     await ledger.settle(eid, grant, actual=30)
-    await ledger.settle(eid, grant, actual=30)  # 重复结算不能把计数减成负数
+    await ledger.settle(eid, grant, actual=30) # 重复结算不能把计数减成负数
     assert await ledger.reserve(eid, budget=100, requested=50) == 50
-    assert await ledger.reconcile(eid, used=0) == 0  # 新预占仍在途
+    assert await ledger.reconcile(eid, used=0) == 0 # 新预占仍在途
 
 
 async def test_settle_charges_overspend_instead_of_silently_forgetting(fake_redis):

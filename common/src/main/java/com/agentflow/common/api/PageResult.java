@@ -24,7 +24,7 @@ public record PageResult<T>(List<T> items, String nextCursor) {
         try {
             return Long.parseLong(new String(
                     Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8));
-        } catch (IllegalArgumentException e) {  // 含 NumberFormatException
+        } catch (IllegalArgumentException e) { // 含 NumberFormatException
             return 0L;
         }
     }

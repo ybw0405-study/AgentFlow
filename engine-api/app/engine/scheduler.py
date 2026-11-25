@@ -122,7 +122,7 @@ class Scheduler:
         # Redis 故障与查询结果必须分开处理：查询拿到明确结果（租约不在我手上 /
         # 有取消标记）才走对应语义；连接不可达时无法确认租约，按「租约疑似丢失」
         # 静默停止让恢复扫描接管（与续约循环的 P1-6 语义一致），绝不传播成普通
-        # 异常把活执行落成 ExecutionFailed 终态（P1-7）。
+        # 异常把活执行落成 ExecutionFailed 终态。
         try:
             held = await lease.held_by_me()
         except Exception as exc:
@@ -218,7 +218,7 @@ class Scheduler:
                 for key in layer:
                     nr = state.nodes.get(key)
                     if nr is not None and nr.status in ("SUCCEEDED", "SKIPPED"):
-                        continue  # 重放：已完成节点直接注入输出，不重新执行（§8.2.1）
+                        continue # 重放：已完成节点直接注入输出，不重新执行（§8.2.1）
                     in_edges = dag.in_edges.get(key, [])
                     # 无入边（start）：直接就绪
                     if not in_edges:
@@ -232,7 +232,7 @@ class Scheduler:
                         for e in in_edges
                     )
                     if not all_settled:
-                        continue  # 理论不发生：分层保证上游已处理；防御性等待
+                        continue # 理论不发生：分层保证上游已处理；防御性等待
                     # 任一入边激活（来源成功且分支命中）→ 执行；否则整节点 SKIPPED
                     if any(_edge_active(e, state) for e in in_edges):
                         ready.append(key)
@@ -301,7 +301,7 @@ class Scheduler:
             return "SUCCEEDED"
         except LeaseLostError:
             logger.error("lease lost mid-run for %s; stopped writing events", execution_id)
-            return "LEASE_LOST"  # 不落任何事件；接管方负责续跑
+            return "LEASE_LOST" # 不落任何事件；接管方负责续跑
         except ExecutionCancelledError as exc:
             await self._emit(
                 execution_id, state, None, EventType.EXECUTION_CANCELLED, {"reason": exc.message}

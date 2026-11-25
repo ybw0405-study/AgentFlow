@@ -35,7 +35,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "FakeOpenAI/1.0"
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
+    def log_message(self, fmt: str, *args: Any) -> None: # noqa: A003
         # 静默：CI 日志里只关心引擎与服务，不需要每条代理请求。
         pass
 
@@ -47,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 约定
+    def do_GET(self) -> None: # noqa: N802 - BaseHTTPRequestHandler 约定
         path = self.path.split("?", 1)[0].rstrip("/")
         if path.endswith("/models"):
             self._send(200, {"object": "list", "data": [{"id": self.server.model_name}]})
@@ -57,7 +57,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(404, {"error": {"message": f"no route {path}"}})
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 约定
+    def do_POST(self) -> None: # noqa: N802 - BaseHTTPRequestHandler 约定
         path = self.path.split("?", 1)[0].rstrip("/")
         if path.endswith("/embeddings"):
             try:
@@ -156,7 +156,7 @@ def main() -> None:
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
-    server.model_name = args.model  # type: ignore[attr-defined]
+    server.model_name = args.model # type: ignore[attr-defined]
     print(f"fake openai-compatible endpoint on http://127.0.0.1:{args.port}/v1", flush=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:

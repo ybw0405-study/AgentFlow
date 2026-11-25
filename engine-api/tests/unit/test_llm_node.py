@@ -77,7 +77,7 @@ def _node(model: str) -> LlmNode:
 def _ctx(emitted: list[tuple[str, dict[str, Any]]]) -> NodeContext:
     async def emit(event_type: Any, payload: dict[str, Any], *, node_key: str | None = None):
         emitted.append((str(event_type), payload))
-        return None  # 返回值不被节点使用
+        return None # 返回值不被节点使用
 
     return NodeContext(
         execution_id=uuid.uuid4(),
@@ -185,7 +185,7 @@ async def test_connection_id_requires_authorization_like_tool_path() -> None:
         ),
     )
     # connector_llms 传入但授权集合为空 → 必须在取 provider 前就被拒
-    executor = LlmExecutor({}, connector_llms=object())  # type: ignore[arg-type]
+    executor = LlmExecutor({}, connector_llms=object()) # type: ignore[arg-type]
 
     with pytest.raises(PermanentNodeError) as exc:
         await executor.execute(node, _ctx([]))
@@ -200,7 +200,7 @@ async def test_reasoning_raise_is_included_in_budget_reservation() -> None:
     budget = _RecordingBudget()
     ctx = _ctx(emitted)
     ctx.policy = Policy(token_budget=10_000)
-    ctx.budget = budget  # type: ignore[assignment]
+    ctx.budget = budget # type: ignore[assignment]
     executor = LlmExecutor({"openai-compatible": provider})
 
     await executor.execute(_node("deepseek-flash"), ctx)
@@ -236,7 +236,7 @@ async def test_settles_grant_when_provider_raises(
     budget = _RecordingBudget()
     ctx = _ctx([])
     ctx.policy = Policy(token_budget=10_000)
-    ctx.budget = budget  # type: ignore[assignment]
+    ctx.budget = budget # type: ignore[assignment]
     executor = LlmExecutor({"openai-compatible": _RaisingProvider(error)})
 
     with pytest.raises((app_errors.TransientNodeError, RuntimeError)) as exc:
@@ -299,7 +299,7 @@ async def test_no_deltas_emits_no_output_delta_events() -> None:
 
 
 async def test_cancelled_provider_settles_reserved_budget() -> None:
-    """P1-2 回归：provider 被取消（CancelledError）时预占必须回冲。
+    """provider 被取消（CancelledError）时预占必须回冲。
 
     CancelledError 继承 BaseException，不被 except Exception 捕获；若不显式处理，
     grant 泄漏、:inflight +1，同执行后续节点会被虚减余额提前触发预算硬停止。
