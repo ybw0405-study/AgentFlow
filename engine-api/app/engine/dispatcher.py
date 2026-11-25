@@ -251,6 +251,22 @@ class Dispatcher:
                 except Exception as exc:
                     logger.warning("budget rebuild on lease loss failed: %s", exc)
                 return
+            try:
+                cancelled = await self._redis.get(f"af:cancel:{state.execution_id}")
+            except Exception:
+                cancelled = None # 查询失败不误伤：节点边界的取消检查仍是兜底
+            if cancelled:
+                # 取消不再等当前节点跑完才生效：硬中断在途外呼（120s 的 LLM 调用
+                # 也立刻停），调度器把 CancelledError 转成与节点边界取消一致的
+                # CANCELLED 终态（scheduler.run 捕获后落 EXECUTION_CANCELLED）。
+                task = self._tasks.get(state.execution_id)
+                if task is not None and not task.done():
+                    logger.info(
+                        "cancel flag seen in renew loop for %s; interrupting in-flight node",
+                        state.execution_id,
+                    )
+                    task.cancel()
+                return
 
     async def cancel(self, execution_id: uuid.UUID) -> dict[str, Any]:
         try:

@@ -302,6 +302,24 @@ class Scheduler:
         except LeaseLostError:
             logger.error("lease lost mid-run for %s; stopped writing events", execution_id)
             return "LEASE_LOST" # 不落任何事件；接管方负责续跑
+        except asyncio.CancelledError:
+            # 续约循环发现取消标志后硬中断在途外呼（task.cancel()）：把取消转成
+            # 与节点边界取消一致的 CANCELLED 终态，而不是让事件流悬在 OPEN 等恢复扫描。
+            # 非 取消-意图 的外部取消（shutdown 等）原样上抛，保持既有清理语义。
+            try:
+                cancelled = await self._redis.get(f"af:cancel:{execution_id}")
+            except Exception:
+                cancelled = None
+            if cancelled:
+                await self._emit(
+                    execution_id,
+                    state,
+                    None,
+                    EventType.EXECUTION_CANCELLED,
+                    {"reason": "cancelled while node in flight"},
+                )
+                return "CANCELLED"
+            raise
         except ExecutionCancelledError as exc:
             await self._emit(
                 execution_id, state, None, EventType.EXECUTION_CANCELLED, {"reason": exc.message}

@@ -4,7 +4,7 @@
       "attempts": {
         "end": 1,
         "finalize": 1,
-        "nap": 1,
+        "nap": 2,
         "prepare": 1,
         "start": 1
       },
