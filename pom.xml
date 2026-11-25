@@ -36,7 +36,7 @@
         <!-- 10.x 为 Java 11 基线；14.x 要求 Java 21，与本项目 Java 17 不兼容 -->
         <checkstyle.version>10.26.1</checkstyle.version>
         <!-- 2.10.x 是 Spring Boot 3.5.x 线（该版本即构建于 3.5.16）；3.x 对应 Boot 4，不适用 -->
-        <springdoc.version>2.10.0</springdoc.version>
+        <springdoc.version>2.10.1</springdoc.version>
         <!-- 文档导入解析：PDFBox 3.0.x 用 Loader.loadPDF（3.x 起废弃 PDDocument.load） -->
         <pdfbox.version>3.0.8</pdfbox.version>
         <!-- POI 5.5.x 为 Java 8 基线的维护线；6.0.0 起要求 JDK 17+，暂留 5.5.x 降低迁移面 -->
