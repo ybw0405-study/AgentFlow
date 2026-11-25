@@ -144,7 +144,7 @@ class ProjectorWriterTest {
 
     @Test
     void nodeWithoutOutputModelLeavesModelEmpty() {
-        // 非 LLM 节点、或输出溢出（D5）时 payload 里没有 output.model：留空而不是编一个
+        // 非 LLM 节点、或输出溢出时 payload 里没有 output.model：留空而不是编一个
         writer.writeBatch(List.of(event(5, "NodeCompleted", Map.of(
                 "attempt", 1, "tokenUsed", 4, "outputDigest", "d"))));
 

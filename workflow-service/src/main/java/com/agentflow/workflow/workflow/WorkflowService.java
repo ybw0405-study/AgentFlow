@@ -17,7 +17,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 工作流定义/草稿/版本/发布。版本不可变由触发器 + 应用层双重保证（US-01）。 */
+/** 工作流定义/草稿/版本/发布。版本不可变由触发器 + 应用层双重保证。 */
 @Service
 public class WorkflowService {
 
@@ -200,7 +200,7 @@ public class WorkflowService {
     }
 
     /**
-     * 回滚 = 只把 current 指针移回历史版本（US-01）；历史版本本身不动。
+     * 回滚 = 只把 current 指针移回历史版本；历史版本本身不动。
      *
      * <p>不能委派 {@link #publish}：publish 会 markPublished 覆盖原发布人/时间，
      * 且审计类型恒为 WORKFLOW_PUBLISHED，导致发布历史被回滚者篡改、审计失真。

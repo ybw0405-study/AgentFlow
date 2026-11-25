@@ -79,7 +79,7 @@ public class TriggerService {
     private final StringRedisTemplate redis;
     private final ObjectMapper json = new ObjectMapper();
     private final SecureRandom random = new SecureRandom();
-    /** 触发器默认时区（ARCH-6）：生产由配置注入，单测 new 时保持历史默认值兼容。 */
+    /** 触发器默认时区：生产由配置注入，单测 new 时保持历史默认值兼容。 */
     @Value("${agentflow.trigger.default-timezone:Asia/Shanghai}")
     private String defaultTimezone = "Asia/Shanghai";
 
@@ -106,7 +106,7 @@ public class TriggerService {
      */
     /**
      * 触发器视图。{@code secret} 仅在 create/rotate 的一次性响应里回明文，其余端点为 null；
-     * {@code hasSecret} 告诉前端「密钥已设置，需轮换才能再次查看」（SEC-3）。
+     * {@code hasSecret} 告诉前端「密钥已设置，需轮换才能再次查看」。
      */
     public record TriggerView(String id, String type, String token, String secret,
                               boolean hasSecret, String cron,

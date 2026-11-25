@@ -438,7 +438,7 @@ export interface TriggerDto {
   id: string
   type: TriggerType
   token: string
-  /** 仅 create/rotate 的一次性响应回明文；list/patch 为 null（后端 SEC-3）。 */
+  /** 仅 create/rotate 的一次性响应回明文；list/patch 为 null（后端约定）。 */
   secret: string | null
   /** 密钥是否已设置；为 false 表示从未生成，需先创建密钥。 */
   hasSecret: boolean

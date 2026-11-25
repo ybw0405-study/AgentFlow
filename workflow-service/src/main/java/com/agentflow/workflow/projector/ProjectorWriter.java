@@ -194,7 +194,7 @@ public class ProjectorWriter {
      * 节点真正用的模型：LLM 节点把 provider 解析后的模型名放在 output 里
      * （占位名会被回落到服务端默认模型，所以要记回落后的那个）。
      *
-     * <p>非 LLM 节点没有这个字段；输出超过 256KB 时 payload 只剩引用与摘要（D5），
+     * <p>非 LLM 节点没有这个字段；输出超过 256KB 时 payload 只剩引用与摘要，
      * 同样取不到——这两种情况都返回 null，用量页归到「未标注」，不猜。
      */
     private static String modelOf(Map<String, Object> payload) {

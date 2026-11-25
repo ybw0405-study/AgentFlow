@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Kill Switch（US-05）：Redis 开关 + 30s 本地缓存 + Redis 故障 fail-open。
+ * Kill Switch：Redis 开关 + 30s 本地缓存 + Redis 故障 fail-open。
  * 生效时执行类请求 503 AGT-UPSTREAM-003；非 AI 功能不受影响。
  */
 @Component

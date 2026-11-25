@@ -47,7 +47,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final StringRedisTemplate redis;
     private final int triggerMax;
     private final int loginMax;
-    /** 固定窗口宽度（C-16）：生产由配置注入，与 {@code Retry-After} 保持一致；单测默认 60。 */
+    /** 固定窗口宽度：生产由配置注入，与 {@code Retry-After} 保持一致；单测默认 60。 */
     @Value("${agentflow.rate-limit.trigger-window-seconds:60}")
     private long triggerWindowSeconds = 60;
     @Value("${agentflow.rate-limit.login-window-seconds:60}")

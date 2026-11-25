@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * SSE 扇出（D2）：订阅 Redis 频道 af:exec-events，把事件推给本实例上的订阅者。
+ * SSE 扇出：订阅 Redis 频道 af:exec-events，把事件推给本实例上的订阅者。
  * 断线重连由客户端带 afterSeq 追平，本组件只做 at-most-once 实时推送。
  *
  * <p>直接实现 {@link MessageListener}：容器注册即生效，不依赖

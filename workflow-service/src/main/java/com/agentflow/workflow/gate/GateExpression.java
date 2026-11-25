@@ -366,7 +366,7 @@ public final class GateExpression {
                 case IDENT -> {
                     next();
                     // 关键字大小写不敏感（true / TRUE 都认）；user / space 与属性名区分大小写，
-                    // 与发布期 ast 白名单、画布体检保持同一口径。
+                    // 与发布期 ast 白名单、画布即时校验保持同一口径。
                     String raw = token.text();
                     switch (raw.toLowerCase(Locale.ROOT)) {
                         case "true" -> {

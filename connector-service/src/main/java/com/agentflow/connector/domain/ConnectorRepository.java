@@ -45,7 +45,7 @@ public class ConnectorRepository {
             String raw = rs.getString("config_json");
             config = raw == null ? MAPPER.createObjectNode() : MAPPER.readTree(raw);
         } catch (Exception e) {
-            // 脏 config_json 静默变空配置会把排查方向引向"没配"，至少留一条告警（C-13）。
+            // 脏 config_json 静默变空配置会把排查方向引向"没配"，至少留一条告警。
             // 仍返回空对象以免一条脏数据让整个列表接口 500。
             // 绝不把原文打进日志：config_json 含 headers / auth.headerName，可能携带
             // 静态 API key / token。只留 id + 异常类型 + 长度供排查。
@@ -105,7 +105,7 @@ public class ConnectorRepository {
                                  byte[] oauthToken, String keyId, Timestamp expiresAt,
                                  String scope) {
         // 单条 UPSERT 替代 SELECT-then-INSERT：并发 authorize + OAuth callback 不再
-        // 双双通过存在性检查后撞唯一键 uq_tcr_conn(connector_id) 抛 500（C-14）。
+        // 双双通过存在性检查后撞唯一键 uq_tcr_conn(connector_id) 抛 500。
         jdbc.update("INSERT INTO tool_credential (id, connector_id, tenant_id,"
                         + " encrypted_secret, oauth_token_enc, key_id, expires_at, scope)"
                         + " VALUES (?,?,?,?,?,?,?,?)"
