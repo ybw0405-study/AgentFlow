@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 /**
@@ -62,17 +63,19 @@ public class ConnectorService {
     private final SandboxPolicy sandbox;
     private final ConnectorAudit audit;
     private final ConnectorInvoker invoker;
+    private final StringRedisTemplate redis;
 
     public ConnectorService(ConnectorRepository repo, CredentialCipher cipher,
                             com.agentflow.connector.tenant.JdbcTenantTreePort treePort,
                             SandboxPolicy sandbox, ConnectorAudit audit,
-                            ConnectorInvoker invoker) {
+                            ConnectorInvoker invoker, StringRedisTemplate redis) {
         this.repo = repo;
         this.cipher = cipher;
         this.resolver = new TenantHierarchyResolver(treePort);
         this.sandbox = sandbox;
         this.audit = audit;
         this.invoker = invoker;
+        this.redis = redis;
     }
 
     public List<ConnectorView> list(TenantInfo tenant) {
@@ -169,7 +172,7 @@ public class ConnectorService {
         List<String> authHosts = stringList(oauth.path("allowedHosts").isMissingNode()
                 ? row.config().path("allowedHosts") : oauth.path("allowedHosts"));
         sandbox.validate(authorizationUrl, authHosts);
-        String state = issueState(row.id(), tenant.tenantId());
+        String state = issueState(row.id(), tenant.tenantId(), tenant.userId());
         String url = authorizationUrl + (authorizationUrl.contains("?") ? "&" : "?")
                 + "response_type=code"
                 + "&client_id=" + enc(clientId)
@@ -186,7 +189,7 @@ public class ConnectorService {
         // 原先的 requireVisible 允许子租户用自身 state 覆写祖先连接器的凭据。
         ConnectorRow row = requireOwned(tenant, id);
         requireAdmin(tenant);
-        verifyState(state, row.id(), tenant.tenantId());
+        verifyState(state, row.id(), tenant.tenantId(), tenant.userId());
         JsonNode oauth = row.config().path("oauth");
         String tokenUrl = oauth.path("tokenUrl").asText("");
         if (tokenUrl.isBlank()) {
@@ -438,38 +441,65 @@ public class ConnectorService {
                 row.authType(), config, row.enabled(), hasCredential, inherited);
     }
 
-    private String issueState(String connectorId, String tenantId) {
+    /**
+     * 签发 OAuth state：签名串携带 connector|tenant|userId|expires|nonce，
+     * 并在 Redis 登记 nonce（SETNX + TTL）。nonce 绑定发起用户，回调时原子消费，
+     * 做到一次性 + 防重放 + 防跨用户冒用（P1-1 修复）。
+     */
+    private String issueState(String connectorId, String tenantId, String userId) {
+        String nonce = UUID.randomUUID().toString();
         long expires = System.currentTimeMillis() / 1000 + OAUTH_STATE_TTL.toSeconds();
-        String payload = connectorId + "|" + tenantId + "|" + expires;
+        String payload = connectorId + "|" + tenantId + "|" + userId + "|" + expires + "|" + nonce;
         byte[] signature = cipher.sign(payload.getBytes(StandardCharsets.UTF_8));
-        byte[] trimmed = new byte[16];
-        System.arraycopy(signature, 0, trimmed, 0, 16);
-        return base64(payload.getBytes(StandardCharsets.UTF_8)) + "." + base64(trimmed);
+        byte[] trimmed = java.util.Arrays.copyOf(signature, 16);
+        String state = base64(payload.getBytes(StandardCharsets.UTF_8)) + "." + base64(trimmed);
+        // SETNX EX 600：nonce 只能登记一次；TTL 与 state 有效期一致，失败不影响签发（签名串本身仍带 nonce）
+        try {
+            redis.opsForValue().setIfAbsent(oauthStateKey(nonce), userId, OAUTH_STATE_TTL);
+        } catch (RuntimeException ex) {
+            // Redis 不可用时 verifyState 会 fail-closed 拒绝，不会放行不安全请求
+            org.slf4j.LoggerFactory.getLogger(ConnectorService.class)
+                    .warn("oauth state nonce store unavailable at issue", ex);
+        }
+        return state;
     }
 
-    private void verifyState(String state, String connectorId, String tenantId) {
+    private void verifyState(String state, String connectorId, String tenantId, String currentUserId) {
         try {
             String[] parts = state.split("\\.");
+            if (parts.length != 2) {
+                throw new BusinessException(ErrorCode.COM_VALIDATION_001, "invalid oauth state");
+            }
             String payload = new String(Base64.getUrlDecoder().decode(parts[0]),
                     StandardCharsets.UTF_8);
             byte[] signature = Base64.getUrlDecoder().decode(parts[1]);
-            byte[] expected = cipher.sign(payload.getBytes(StandardCharsets.UTF_8));
-            byte[] trimmed = java.util.Arrays.copyOf(expected, 16);
-            if (!java.security.MessageDigest.isEqual(trimmed, signature)) {
+            byte[] expected = java.util.Arrays.copyOf(
+                    cipher.sign(payload.getBytes(StandardCharsets.UTF_8)), 16);
+            if (!java.security.MessageDigest.isEqual(expected, signature)) {
                 throw new BusinessException(ErrorCode.COM_VALIDATION_001, "invalid oauth state");
             }
             String[] fields = payload.split("\\|");
-            if (!fields[0].equals(connectorId) || !fields[1].equals(tenantId)) {
+            if (fields.length != 5 || !fields[0].equals(connectorId) || !fields[1].equals(tenantId)
+                    || !fields[2].equals(currentUserId)) {
                 throw new BusinessException(ErrorCode.COM_VALIDATION_001, "oauth state mismatch");
             }
-            if (Long.parseLong(fields[2]) < System.currentTimeMillis() / 1000) {
+            if (Long.parseLong(fields[3]) < System.currentTimeMillis() / 1000) {
                 throw new BusinessException(ErrorCode.COM_VALIDATION_001, "oauth state expired");
+            }
+            // 原子消费：GETDEL 保证同一 state 只能用一次；重放时返回 null
+            String owner = redis.opsForValue().getAndDelete(oauthStateKey(fields[4]));
+            if (owner == null || !owner.equals(currentUserId)) {
+                throw new BusinessException(ErrorCode.COM_VALIDATION_001, "oauth state replayed or unknown");
             }
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.COM_VALIDATION_001, "invalid oauth state");
         }
+    }
+
+    private static String oauthStateKey(String nonce) {
+        return "oauth:state:" + nonce;
     }
 
     /** 签名截断为 16 字节后随 state 传输，校验时以完整签名截断比较。 */

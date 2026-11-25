@@ -1,6 +1,8 @@
 ﻿# AgentFlow 一键启动（Windows PowerShell）。
 # 顺序：基础设施(docker) → 迁移/授权/种子 → engine-api → Java 三服务 → 前端 dev server。
 # 日志：logs/*.log。停止：scripts/stop-dev.ps1。
+# P0-4：-Containers 切换为全容器模式（镜像内构建，不依赖本机 JDK/Maven）。
+param([switch]$Containers)
 $ErrorActionPreference = 'Continue'
 # 说明：保持 Continue 而非 Stop。PowerShell 5.1 会把 native 命令（docker/mysql 等）
 # 写到 stderr 的普通警告（如 mysql 的“命令行密码不安全”）当成终止错误，导致脚本中断。
@@ -44,6 +46,21 @@ Get-Content (Join-Path $root 'db/mysql/grants/least-privilege.sql') -Raw -Encodi
 Get-Content (Join-Path $root 'scripts/seed-demo.sql') -Raw -Encoding UTF8 |
   docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -proot agentflow 2>$null
 Write-Host '    grants + seed applied (duplicate key 可忽略)'
+
+# P0-4：全容器模式——jar 由 Dockerfile 的 java-build stage 构建，topic 由 mq-init 预建，
+# 不依赖本机 JDK/Maven/Java，也不需要下面的宿主机 jar 构建与服务启动。
+if ($Containers) {
+  if ($null -eq $env:AF_INTERNAL_TOKEN) { $env:AF_INTERNAL_TOKEN = 'dev-internal-token' }
+  if ($null -eq $env:AF_JWT_SECRET) { $env:AF_JWT_SECRET = 'dev-only-secret-key-0123456789abcdef' }
+  if ($null -eq $env:AF_COOKIE_SECURE) { $env:AF_COOKIE_SECURE = 'false' }
+  if ($null -eq $env:AF_DEMO_ACCOUNTS) { $env:AF_DEMO_ACCOUNTS = 'true' }
+  Write-Host '==> [4/5] -Containers：全容器模式，compose 起应用层'
+  docker compose -f (Join-Path $root 'ops/docker-compose.infra.yml') `
+                 -f (Join-Path $root 'ops/docker-compose.app.yml') up -d
+  if ($LASTEXITCODE -ne 0) { throw 'docker compose up (app) failed' }
+  Write-Host '==> 网关 http://127.0.0.1:8080 / 前端 http://127.0.0.1:8081'
+  return
+}
 
 # 先停掉上一次的服务：Windows 上运行中的 jar 是独占打开的，spring-boot:repackage 要把
 # 旧 jar 改名成 *.jar.original 时会被拒，构建直接失败（旧脚本因此每次重跑都要手动停服）。

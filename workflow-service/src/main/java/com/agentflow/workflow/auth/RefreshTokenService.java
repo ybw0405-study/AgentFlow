@@ -26,11 +26,14 @@ public class RefreshTokenService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final RefreshTokenMapper mapper;
+    private final RefreshTokenRevocationService revocationService;
     private final long refreshTtlDays;
 
     public RefreshTokenService(RefreshTokenMapper mapper,
+                               RefreshTokenRevocationService revocationService,
                                @Value("${agentflow.jwt.refresh-ttl-days}") long refreshTtlDays) {
         this.mapper = mapper;
+        this.revocationService = revocationService;
         this.refreshTtlDays = refreshTtlDays;
     }
 
@@ -48,16 +51,17 @@ public class RefreshTokenService {
             throw new BusinessException(ErrorCode.USR_TOKEN_001, "refresh token invalid");
         }
         if (!"ACTIVE".equals(row.status())) {
-            // 重用检测：整个族吊销
-            mapper.revokeFamily(row.familyId());
+            // 重用检测：整个族吊销。必须在独立事务提交，否则紧接着抛出的
+            // BusinessException(RuntimeException) 会让本方法事务回滚、吊销失效（P0-2 修复）。
+            revocationService.revokeFamily(row.familyId());
             throw new BusinessException(ErrorCode.USR_TOKEN_001, "refresh token reuse detected");
         }
         if (row.expiresAt().toInstant().isBefore(Instant.now())) {
-            mapper.revokeFamily(row.familyId());
+            revocationService.revokeFamily(row.familyId());
             throw new BusinessException(ErrorCode.USR_TOKEN_001, "refresh token expired");
         }
         if (mapper.consumeActive(row.id()) != 1) {
-            mapper.revokeFamily(row.familyId());
+            revocationService.revokeFamily(row.familyId());
             throw new BusinessException(ErrorCode.USR_TOKEN_001, "refresh token conflict");
         }
         return issue(row.userId(), row.familyId());

@@ -124,3 +124,27 @@ def test_gate_consumer_normalizes_decision_case():
     payload = consumer._decode({"body": body})
     assert payload is not None
     assert payload["decision"] == "APPROVED"
+
+
+# ---- broker host 重写：容器部署修 127.0.0.1 回环地址，非容器行为不变 ----
+
+
+def test_rewrite_broker_host_replaces_host_keeps_port():
+    from app.messaging.client import rewrite_broker_host
+
+    assert rewrite_broker_host("127.0.0.1:10911", "rocketmq-broker") == "rocketmq-broker:10911"
+
+
+def test_rewrite_broker_host_empty_host_is_noop():
+    from app.messaging.client import rewrite_broker_host
+
+    # 非容器部署不设覆盖：namesrv 广播的地址逐字节不变
+    assert rewrite_broker_host("127.0.0.1:10911", None) == "127.0.0.1:10911"
+    assert rewrite_broker_host("127.0.0.1:10911", "") == "127.0.0.1:10911"
+
+
+def test_rewrite_broker_host_without_port_is_noop():
+    from app.messaging.client import rewrite_broker_host
+
+    # 无端口的地址不猜端口，原样返回（RemotingConnection 会用默认 10911）
+    assert rewrite_broker_host("127.0.0.1", "rocketmq-broker") == "127.0.0.1"

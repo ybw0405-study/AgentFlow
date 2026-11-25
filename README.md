@@ -45,12 +45,19 @@ flowchart LR
 前置：Docker Desktop（`docker info` 可用）；开发模式另需 JDK 17、Node 22、Python 3.13。
 
 ```bash
-# 全容器一条命令（中间件 + 5 服务 + 前端；镜像不在本地时自动从源码构建）
+# 全容器一条命令（中间件 + 5 服务 + 前端；镜像不在本地时自动从源码构建，无需本机 JDK/Maven）
 AF_CONTAINERS=1 scripts/start-dev.sh
 # 网关 http://127.0.0.1:8080 / 前端 http://127.0.0.1:8081
 
 # 开发模式（宿主机进程，改代码热迭代）
 scripts/start-dev.sh
+```
+
+Windows PowerShell 对应命令：
+
+```powershell
+.\scripts\start-dev.ps1 -Containers   # 全容器模式
+.\scripts\start-dev.ps1               # 开发模式
 ```
 
 真实模型：注入 `AF_LLM_BASE_URL` / `AF_LLM_API_KEY` / `AF_LLM_MODEL`（OpenAI 兼容端点），

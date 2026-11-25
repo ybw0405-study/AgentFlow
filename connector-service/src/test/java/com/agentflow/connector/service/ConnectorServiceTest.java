@@ -22,11 +22,15 @@ import com.agentflow.connector.dto.ConnectorDtos.CreateRequest;
 import com.agentflow.connector.dto.ConnectorDtos.IdSummary;
 import com.agentflow.connector.dto.ConnectorDtos.UpdateRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 /** 连接器生命周期：继承可见性、写权限、跨租户 404、配置前置校验。 */
 class ConnectorServiceTest {
@@ -54,7 +58,21 @@ class ConnectorServiceTest {
         when(port.find("org")).thenReturn(new TenantNode("org", null, "ORG"));
         service = new ConnectorService(repo, new CredentialCipher(KEY), port,
                 new SandboxPolicy(false, false, h -> new java.net.InetAddress[]{
-                        java.net.InetAddress.getByName("93.184.216.34")}), audit, invoker);
+                        java.net.InetAddress.getByName("93.184.216.34")}), audit, invoker,
+                inMemoryRedis());
+    }
+
+    /** 内存版 StringRedisTemplate：支撑 OAuth state nonce 的 SETNX/GETDEL 往返（P1-1 测试用）。 */
+    @SuppressWarnings("unchecked")
+    private static StringRedisTemplate inMemoryRedis() {
+        Map<String, String> store = new HashMap<>();
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> ops = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(ops);
+        when(ops.setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenAnswer(inv -> store.putIfAbsent(inv.getArgument(0), inv.getArgument(1)) != null);
+        when(ops.getAndDelete(anyString())).thenAnswer(inv -> store.remove(inv.getArgument(0)));
+        return redis;
     }
 
     private static ConnectorRow row(String id, String tenantId, boolean enabled) {
@@ -338,5 +356,25 @@ class ConnectorServiceTest {
                 row("on", "space-a", true), row("off", "space-a", false)));
         assertThat(service.visibleEnabled("space-a")).extracting(IdSummary::id)
                 .containsExactly("on");
+    }
+
+    @Test
+    void oauthCallbackRejectsReplayedState() {
+        // P1-1 回归：同一 state 只能用一次（Redis GETDEL 原子消费），重放必须失败
+        when(repo.findById("oauth-conn")).thenReturn(Optional.of(oauthRow()));
+        Map<String, String> data = service.oauthAuthorizeUrl(
+                tenant("space-a", "u-admin", "ADMIN"), "oauth-conn");
+        String state = data.get("state");
+        // 第一次回调会走到换 token（会因 fake HTTP 失败），但 state 已被消费
+        try {
+            service.oauthCallback(tenant("space-a", "u-admin", "ADMIN"), "oauth-conn", "code", state, "t");
+        } catch (Exception ignored) {
+            // 换 token 阶段的异常无所谓，关键是 state 已消费
+        }
+        // 第二次用同一 state：必须在 state 校验阶段就被拒（replayed/unknown）
+        assertThatThrownBy(() -> service.oauthCallback(
+                tenant("space-a", "u-admin", "ADMIN"), "oauth-conn", "code", state, "t"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("oauth state replayed");
     }
 }

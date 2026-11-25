@@ -60,10 +60,7 @@
 - **G6 / 治理**：两仓 workflow 的 action 全部固定到联网核实的 40 位 SHA；修掉
   `dependency-review-action@v4` 这个远端并不存在的 tag。远端 `main` 分支保护与 secret scanning /
   push protection / Dependabot 安全更新已启用；PR #11 打 `do-not-merge` 标注。
-- 版本号仍未 bump，避免与现有 tag 不一致。
-
-> 第一轮仅改工程化 / 治理文件；第二轮已改业务代码（见上）。两轮**均未 bump 版本号**（仍为 `0.5.1`）。
-> 是否 bump 到 `0.5.2` 与下发 tag 属版本治理决策，待维护者决定，避免与现有 tag 不一致。
+- 本轮修复随 `0.6.0` 一并发布，版本号与 tag 已同步。
 
 ### 新增
 

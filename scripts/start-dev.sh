@@ -19,8 +19,12 @@ for c in agentflow-mysql agentflow-rmq-broker; do
 done
 docker exec -i agentflow-mysql mysql --default-character-set=utf8mb4 -uroot -p"${AF_MYSQL_ROOT_PASSWORD:-root}" agentflow < "$ROOT/scripts/seed-demo.sql" || true
 
-echo '==> [3/5] 构建 Java 服务'
-(cd "$ROOT" && mvn -q -DskipTests -Dcheckstyle.skip package)
+# 全容器模式下 jar 由 Dockerfile 的 java-build stage 打包，宿主机 mvn 产物根本不被使用；
+# 移入开发模式分支，避免只装了 Docker 的机器因缺 mvn 直接退出（P0-4 修复）。
+if [ "${AF_CONTAINERS:-0}" != "1" ]; then
+  echo '==> [3/5] 构建 Java 服务'
+  (cd "$ROOT" && mvn -q -DskipTests -Dcheckstyle.skip package)
+fi
 
 export AF_INTERNAL_TOKEN="${AF_INTERNAL_TOKEN:-dev-internal-token}"
 export AF_JWT_SECRET="${AF_JWT_SECRET:-dev-only-secret-key-0123456789abcdef}"
@@ -48,6 +52,8 @@ if [ -z "${AF_LLM_API_KEY:-}" ] && [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   export AF_LLM_MODEL="${AF_LLM_MODEL:-deepseek-chat}"
 fi
 
+# 全容器模式下 topic 由 compose 的 mq-init 服务预建，宿主机无需重复（P0-4 修复）
+if [ "${AF_CONTAINERS:-0}" != "1" ]; then
 echo '==> [3.5/5] 预建 MQ topic（避免消费端等首条消息才拿到路由）'
 # autoCreateTopicEnable 只在「第一次发送」时建 topic；消费端在消息到来前查路由会拿到 17。
 # 两个坑：
@@ -71,6 +77,7 @@ for t in af-audit-event af-gate-decision; do
     exit 1
   fi
 done
+fi
 
 if [ "${AF_CONTAINERS:-0}" = "1" ]; then
   echo '==> [4/5] AF_CONTAINERS=1：全栈 compose 起应用层'

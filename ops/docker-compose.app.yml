@@ -24,38 +24,48 @@ x-java-env: &java-env
 # 凭据/配置透传：值来自进程环境（start-dev.sh 导出），替换结果为字面量。
 # 刻意不用 env_file：compose 会对 env_file 内容做二次插值，含 $ 的凭据会被吞段。
 x-java-secrets: &java-secrets
-  AF_MYSQL_USER: ${AF_MYSQL_USER:-}
-  AF_MYSQL_USE_TLS: ${AF_MYSQL_USE_TLS:-}
-  AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL: ${AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:-}
-  AF_CRED_MASTER_KEY: ${AF_CRED_MASTER_KEY:-}
+  AF_MYSQL_USER: ${AF_MYSQL_USER:-root}
+  # 这两个布尔值会直接拼进 JDBC URL（requireSSL= / allowPublicKeyRetrieval=）：
+  # 空串不是合法布尔值 → MySQL 驱动抛 WrongArgumentException → Flyway/Tomcat 启动失败。
+  AF_MYSQL_USE_TLS: ${AF_MYSQL_USE_TLS:-false}
+  AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL: ${AF_MYSQL_ALLOW_PUBLIC_KEY_RETRIEVAL:-true}
+  # 默认值必须与 connector-service application.yml 的 32 字节 dev key 一致：
+  # 写成空串会覆盖 application.yml 的默认值 → CredentialCipher 解码为 0 字节 → 启动崩溃。
+  AF_CRED_MASTER_KEY: ${AF_CRED_MASTER_KEY:-ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM=}
   AF_CRED_MASTER_KEY_PREVIOUS: ${AF_CRED_MASTER_KEY_PREVIOUS:-}
-  AF_DEMO_ACCOUNTS: ${AF_DEMO_ACCOUNTS:-}
-  AF_JWT_TTL_SECONDS: ${AF_JWT_TTL_SECONDS:-}
-  AF_BCRYPT_STRENGTH: ${AF_BCRYPT_STRENGTH:-}
-  AF_RATE_LIMIT_TRIGGER_MAX: ${AF_RATE_LIMIT_TRIGGER_MAX:-}
-  AF_RATE_LIMIT_LOGIN_MAX: ${AF_RATE_LIMIT_LOGIN_MAX:-}
-  AF_DEFAULT_TOKEN_BUDGET: ${AF_DEFAULT_TOKEN_BUDGET:-}
-  AF_MONTHLY_TOKEN_LIMIT: ${AF_MONTHLY_TOKEN_LIMIT:-}
-  AF_MONTHLY_CALL_LIMIT: ${AF_MONTHLY_CALL_LIMIT:-}
+  AF_DEMO_ACCOUNTS: ${AF_DEMO_ACCOUNTS:-false}
+  # 数值型变量不能注入空串：会覆盖 application.yml 的 ${...:默认值}，
+  # 导致 @Value long/int 解析 "" 抛 NumberFormatException 使服务启动失败。
+  # 以下默认值与各模块 application.yml 保持一致。
+  AF_JWT_TTL_SECONDS: ${AF_JWT_TTL_SECONDS:-900}
+  AF_BCRYPT_STRENGTH: ${AF_BCRYPT_STRENGTH:-12}
+  AF_RATE_LIMIT_TRIGGER_MAX: ${AF_RATE_LIMIT_TRIGGER_MAX:-20}
+  AF_RATE_LIMIT_LOGIN_MAX: ${AF_RATE_LIMIT_LOGIN_MAX:-10}
+  AF_DEFAULT_TOKEN_BUDGET: ${AF_DEFAULT_TOKEN_BUDGET:-50000}
+  AF_MONTHLY_TOKEN_LIMIT: ${AF_MONTHLY_TOKEN_LIMIT:-50000}
+  AF_MONTHLY_CALL_LIMIT: ${AF_MONTHLY_CALL_LIMIT:-10000}
   AF_LANGFUSE_BASE_URL: ${AF_LANGFUSE_BASE_URL:-}
   AF_AUDIT_SINK: ${AF_AUDIT_SINK:-}
   AF_ENV: ${AF_ENV:-}
   AF_PRODUCTION: ${AF_PRODUCTION:-}
 
 x-engine-secrets: &engine-secrets
-  AF_LLM_STREAM: ${AF_LLM_STREAM:-}
-  AF_LLM_ALLOW_INSECURE_HTTP: ${AF_LLM_ALLOW_INSECURE_HTTP:-}
+  # 布尔变量不能注入空串：Pydantic 的 bool 解析不接受 ''，会覆盖 config.py 的默认值
+  # 直接让 Settings() 校验失败（engine-api 启动即崩）。默认值与 config.py 保持一致。
+  AF_LLM_STREAM: ${AF_LLM_STREAM:-false}
+  AF_LLM_ALLOW_INSECURE_HTTP: ${AF_LLM_ALLOW_INSECURE_HTTP:-false}
   AF_ENV: ${AF_ENV:-}
   AF_PRODUCTION: ${AF_PRODUCTION:-}
-  AF_MQ_CONSUME: ${AF_MQ_CONSUME:-}
+  AF_MQ_CONSUME: ${AF_MQ_CONSUME:-true}
 
 services:
   mq-init:
     image: apache/rocketmq:5.3.1@sha256:d2b231c1b9204129e4f4dd65ec1521c81b8d6826e5f1fe8daa521dab0db5bf16
     container_name: agentflow-mq-init
-    depends_on:
-      rocketmq-broker:
-        condition: service_healthy
+    # 共享 broker 网络栈：broker 向 namesrv 广播的 brokerIP1 是 127.0.0.1:10911
+    # （宿主机端口映射依赖它）。独立容器里 127.0.0.1 指向自己，mqadmin 连不上 broker
+    # → updateTopic 必然失败（P0-4 回归）。共享网络后 localhost 即 broker。
+    network_mode: "service:rocketmq-broker"
     environment:
       HOME: /tmp
     # mqadmin 失败仍返回 0，按 topicRoute 有无 brokerDatas 判定；注册周期 ~30s 带重试。
@@ -89,6 +99,9 @@ services:
       AF_GATEWAY_BASE_URL: http://agent-gateway:8080
       AF_MQ_ENABLED: "true"
       AF_MQ_NAMESRV: rocketmq-namesrv:9876
+      # namesrv 广播的 brokerIP1=127.0.0.1 在引擎容器里指向自己；用 compose 网络服务名
+      # 覆盖 host（端口 10911 不变），走容器内网直连 broker，不暴露端口到局域网。
+      AF_MQ_BROKER_HOST: rocketmq-broker
       AF_INTERNAL_TOKEN: ${AF_INTERNAL_TOKEN:-dev-internal-token}
       AF_ENGINE_INTERNAL_TOKEN: ${AF_ENGINE_INTERNAL_TOKEN:-dev-internal-token}
       AF_LLM_BASE_URL: ${AF_LLM_BASE_URL:-}
@@ -111,6 +124,13 @@ services:
       args:
         JAR_PATH: /out/workflow-service.jar
     container_name: agentflow-workflow
+    # 覆盖 java-base 镜像内置的 8080 探针：本服务实际监听 8084（P0-1 修复）
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8084/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
     environment:
       <<: [*java-env, *java-secrets]
       AF_GATEWAY_BASE: http://agent-gateway:8080
@@ -133,9 +153,17 @@ services:
       args:
         JAR_PATH: /out/connector-service.jar
     container_name: agentflow-connector
+    # 覆盖镜像内置 8080 探针：本服务实际监听 8085（P0-1 修复）
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8085/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
     environment:
       <<: [*java-env, *java-secrets]
-      AF_CRED_MASTER_KEY: ${AF_CRED_MASTER_KEY:-}
+      # 与 application.yml 默认值保持一致，避免空串覆盖导致 0 字节 key 崩溃
+      AF_CRED_MASTER_KEY: ${AF_CRED_MASTER_KEY:-ZGV2LW9ubHktY3JlZC1tYXN0ZXIta2V5LTMyYnl0ZXM=}
     depends_on:
       mysql:
         condition: service_healthy
@@ -151,6 +179,13 @@ services:
       args:
         JAR_PATH: /out/audit-service.jar
     container_name: agentflow-audit
+    # 覆盖镜像内置 8080 探针：本服务实际监听 8086（P0-1 修复）
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8086/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
     environment:
       <<: [*java-env, *java-secrets]
       AF_AUDIT_MYSQL_USER: ${AF_AUDIT_MYSQL_USER:-root}

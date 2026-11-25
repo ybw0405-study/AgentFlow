@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     mq_enabled: bool = False
     mq_consume: bool = True
     mq_namesrv: str = "127.0.0.1:9876"
+    # 容器部署时把 namesrv 广播的 broker host 重写为内网服务名（如 rocketmq-broker）。
+    # 空值表示不重写，非容器（宿主机直连 127.0.0.1:10911 端口映射）行为不变。
+    mq_broker_host: str = ""
 
     # 语义检索（retrieval 节点 vector/hybrid 模式）：未配置时向量模式明确报
     # RETRIEVAL-VECTOR-NOT_CONFIGURED-001，lexical 默认行为逐字节不变。

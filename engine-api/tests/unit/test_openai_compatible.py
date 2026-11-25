@@ -522,3 +522,28 @@ async def test_stream_empty_result_is_permanent_error():
     assert result.ok is False
     assert result.error_code == "LLM-RESPONSE-001"
     assert result.transient is False
+
+
+async def test_stream_prefers_upstream_usage_when_present():
+    """P1-4 回归：SSE 末帧携带 usage 时必须用真实值，而非本地字符估算。"""
+    usage_frame = {
+        "choices": [{"delta": {}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_sse_body(_delta("答"), _delta("案"), usage_frame),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    provider = _provider(handler, stream=True)
+    result = await _complete(provider)
+    await provider.aclose()
+
+    assert result.ok is True
+    assert result.token_usage == 15
+    assert result.extra["usage"]["prompt"] == 10
+    assert result.extra["usage"]["completion"] == 5
+    assert result.extra["usage"]["total"] == 15

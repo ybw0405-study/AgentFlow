@@ -32,6 +32,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON agentflow.projector_cursor    TO 'af_app
 GRANT SELECT, INSERT               ON agentflow.audit_event           TO 'af_app'@'%';
 GRANT SELECT, INSERT               ON agentflow.audit_event           TO 'af_audit'@'%';
 
+-- V021 预算账本事件级幂等标记
+GRANT SELECT, INSERT, UPDATE, DELETE ON agentflow.budget_ledger_seen  TO 'af_app'@'%';
+
 -- V005 连接器与凭据
 GRANT SELECT, INSERT, UPDATE, DELETE ON agentflow.tool_connector      TO 'af_app'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON agentflow.tool_credential     TO 'af_app'@'%';
