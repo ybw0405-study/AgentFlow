@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { useRouter } from 'vue-router'
 import { errorText } from '@/api/errors'
 import { knowledgeApi, workflowApi } from '@/api'
@@ -262,9 +263,14 @@ onMounted(loadBases)
 
 <template>
   <div class="af-page">
-    <div class="af-page-title">
-      知识库
-    </div>
+    <ConsoleMasthead
+      no="06"
+      code="KNOWLEDGE"
+      title="知识库"
+      zh="段落级检索"
+      icon="book"
+      aside="资料切分成段落并建立索引，命中结果可回到原文逐句核对。"
+    />
     <p
       class="af-faint"
       style="font-size: 12px; line-height: 1.7; margin: 4px 0 14px; max-width: 820px"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { executionApi } from '@/api'
 import { errorText } from '@/api/errors'
 import { formatInstant } from '@/utils/instant'
@@ -44,9 +45,14 @@ onMounted(() => load())
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      执行
-    </h1>
+    <ConsoleMasthead
+      no="05"
+      code="EXECUTIONS"
+      title="执行"
+      zh="运行台账"
+      icon="engine"
+      aside="每条执行都带节点级输入、输出与耗时；状态只按引擎的权威枚举收敛。"
+    />
     <div style="display: flex; gap: 8px; margin-bottom: 16px">
       <select
         v-model="status"

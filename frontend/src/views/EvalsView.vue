@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { evalApi, workflowApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { errorText } from '@/api/errors'
@@ -291,9 +292,14 @@ onUnmounted(stopPolling)
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      评测
-    </h1>
+    <ConsoleMasthead
+      no="04"
+      code="EVALS"
+      title="评测"
+      zh="回归与评分"
+      icon="chart"
+      aside="用例集与评分结果并排陈列；每次回测都对应一份可复现的流程版本。"
+    />
     <p
       class="af-faint"
       style="margin-bottom: 12px; font-size: 12px"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { connectorApi } from '@/api'
 import type {
   ConnectorAuthType,
@@ -264,9 +265,14 @@ onMounted(load)
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      连接器
-    </h1>
+    <ConsoleMasthead
+      no="03"
+      code="CONNECTORS"
+      title="连接器"
+      zh="模型与工具接入"
+      icon="mcp"
+      aside="模型能力与 MCP 工具以最小权限挂接到节点，探测结果按能力字段回显。"
+    />
     <p
       class="af-faint"
       style="margin-bottom: 12px; font-size: 12px"

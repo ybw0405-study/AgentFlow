@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { usageApi } from '@/api'
 import { errorText } from '@/api/errors'
 import { formatInstant } from '@/utils/instant'
@@ -128,9 +129,14 @@ function previewShareOfUsed(preview: number | undefined, used: number | undefine
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      用量
-    </h1>
+    <ConsoleMasthead
+      no="07"
+      code="USAGE"
+      title="用量"
+      zh="预算与账本"
+      icon="budget"
+      aside="执行与试跑分账显示；预算上限、缓存命中与失败次数读同一份服务端汇总。"
+    />
     <p
       class="af-faint"
       style="margin: -8px 0 14px; font-size: 12px"

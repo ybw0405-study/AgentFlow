@@ -1,13 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { observeReveal } from '@/composables/useDesignMotion'
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
 const isLogin = computed(() => route.name === 'login')
+
+let stopReveal: (() => void) | undefined
+async function refreshReveal() {
+  await nextTick()
+  stopReveal?.()
+  stopReveal = observeReveal(document.querySelector('.af-main') ?? document)
+}
+onMounted(refreshReveal)
+watch(() => route.fullPath, refreshReveal)
+onBeforeUnmount(() => stopReveal?.())
 
 async function logout() {
   await auth.logout()
@@ -22,7 +33,7 @@ async function logout() {
       class="af-topbar"
     >
       <div class="af-brand">
-        Agent<span>Flow</span>
+        Agent<span>Flow</span><sup>®</sup>
       </div>
       <nav class="af-nav">
         <router-link to="/workflows">工作流</router-link>
@@ -35,6 +46,7 @@ async function logout() {
         <router-link to="/admin">管理</router-link>
       </nav>
       <div class="af-spacer" />
+      <span class="af-mono-label">PRECISION BUILD · v0.6</span>
       <label
         class="af-faint"
         style="font-size: 11px"

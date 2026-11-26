@@ -5,6 +5,21 @@ import { workflowApi } from '@/api'
 import { ApiError } from '@/api/http'
 import { formatInstant } from '@/utils/instant'
 import type { WorkflowDefinitionDto } from '@/types/api'
+import BlueprintBoard from '@/components/design/BlueprintBoard.vue'
+import DesignIcon from '@/components/design/DesignIcon.vue'
+import IsoInstrument from '@/components/design/IsoInstrument.vue'
+import SectionHead from '@/components/design/SectionHead.vue'
+import TickerBar from '@/components/design/TickerBar.vue'
+
+const tickerItems = ['DSL FIRST', 'IDEMPOTENT RUNS', 'HUMAN GATES', 'BUDGET LEDGER', 'FULL TRACE']
+const nodeKinds = [
+  { code: 'llm', icon: 'llm', title: '模型推理', desc: '统一接入多家模型，能力与预算同屏可见。' },
+  { code: 'retrieval', icon: 'retrieval', title: '知识检索', desc: '段落级召回，结果进入可引用的上下文。' },
+  { code: 'branch', icon: 'branch', title: '条件分支', desc: '按表达式分路，复杂流程保持可读。' },
+  { code: 'loop', icon: 'loop', title: '循环与批处理', desc: '受上限约束的重复执行，防止跑飞。' },
+  { code: 'human', icon: 'human', title: '人工审批', desc: '高风险动作停在人这一侧再继续。' },
+  { code: 'tool', icon: 'tool', title: '工具调用', desc: 'MCP 工具以最小权限挂接到节点。' },
+] as const
 
 const router = useRouter()
 const items = ref<WorkflowDefinitionDto[]>([])
@@ -51,10 +66,47 @@ onMounted(() => load())
 </script>
 
 <template>
-  <div class="af-page">
-    <h1 class="af-page-title">
-      工作流
-    </h1>
+  <div class="af-page af-show-page">
+    <section class="af-show-hero">
+      <div class="af-show-hero__grid">
+        <div class="af-reveal is-in">
+          <span class="af-fig-tag">FIG. 01 / WORKFLOW REGISTRY</span>
+          <h1 class="af-display">
+            Work<span class="bl">flow</span>
+            <span class="af-display__zh">工作流登记台</span>
+          </h1>
+          <p class="af-show-sub">
+            每条流程都是一张可复现的图纸：节点、连线、预算与审批在同一份 DSL 里对齐。
+          </p>
+          <div class="af-stats">
+            <div class="af-stat">
+              <b>{{ items.length }}<em>条</em></b>
+              <span>REGISTERED</span>
+            </div>
+            <div class="af-stat">
+              <b>{{ items.filter((item) => item.status === 'PUBLISHED').length }}<em>条</em></b>
+              <span>PUBLISHED</span>
+            </div>
+            <div class="af-stat">
+              <b>06<em>类</em></b>
+              <span>NODE KINDS</span>
+            </div>
+          </div>
+        </div>
+        <div class="af-reveal is-in">
+          <BlueprintBoard />
+        </div>
+      </div>
+    </section>
+
+    <TickerBar :items="tickerItems" />
+
+    <SectionHead
+      no="01"
+      title="REGISTRY"
+      zh="流程图纸目录"
+      aside="查询、新建与发布都从这里进入。状态只保留草稿 / 已发布 / 已归档三种。"
+    />
 
     <div style="display: flex; gap: 8px; margin-bottom: 16px">
       <input
@@ -199,6 +251,58 @@ onMounted(() => load())
       >
         加载更多
       </button>
+    </div>
+
+    <SectionHead
+      no="02"
+      title="NODE LIBRARY"
+      zh="节点库"
+      aside="六类节点覆盖推理、检索、分支、循环、审批与工具调用。"
+    />
+    <div class="af-nodelib">
+      <article
+        v-for="node in nodeKinds"
+        :key="node.code"
+        class="af-ncard af-reveal"
+      >
+        <div class="af-ncard__ico"><DesignIcon :name="node.icon" /></div>
+        <div>
+          <h3>{{ node.title }}<code>{{ node.code }}</code></h3>
+          <p>{{ node.desc }}</p>
+        </div>
+      </article>
+    </div>
+
+    <div class="af-band af-reveal">
+      <div class="af-band__inner">
+        <div class="af-band__cell">
+          <b>1<em>份</em></b><span>DSL / SINGLE SOURCE</span>
+        </div>
+        <div class="af-band__cell">
+          <b>3<em>色</em></b><span>STATE SEMANTICS</span>
+        </div>
+        <div class="af-band__cell">
+          <b>0<em>次</em></b><span>UNTRACED EXECUTION</span>
+        </div>
+        <div class="af-band__cell">
+          <b>∞<em>可复现</em></b><span>REPLAYABLE RUNS</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="af-show-hero" style="margin-top: 40px">
+      <div class="af-show-hero__grid">
+        <div class="af-reveal">
+          <span class="af-fig-tag">FIG. 02 / RUNTIME INSTRUMENT</span>
+          <h2 class="af-section-head__title" style="margin-top: 14px">
+            INSTRUMENT<span class="af-section-head__zh">执行仪器剖面</span>
+          </h2>
+          <p class="af-show-sub">
+            画布、执行图与 DSL 是同一对象的三种视图；倾斜观察时仍能读出每条边的方向。
+          </p>
+        </div>
+        <div class="af-reveal"><IsoInstrument /></div>
+      </div>
     </div>
   </div>
 </template>

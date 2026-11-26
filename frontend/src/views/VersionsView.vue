@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { useRoute } from 'vue-router'
 import { workflowApi } from '@/api'
 import { errorText } from '@/api/errors'
@@ -90,9 +91,14 @@ onMounted(() => load().catch((e) => {
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      版本管理 · {{ def?.name }}
-    </h1>
+    <ConsoleMasthead
+      no="09"
+      code="VERSIONS"
+      title="版本管理"
+      :zh="def?.name ?? '…'"
+      icon="flow"
+      aside="每次发布都是一张定版图纸；回滚只会重新指向已有版本，不改写历史。"
+    />
     <div
       v-if="error"
       class="af-error-box"
