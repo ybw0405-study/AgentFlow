@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { gateApi } from '@/api'
 import { errorText } from '@/api/errors'
 import type { GateTaskDto } from '@/types/api'
@@ -63,9 +64,14 @@ onMounted(load)
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      审批
-    </h1>
+    <ConsoleMasthead
+      no="02"
+      code="HUMAN GATE"
+      title="审批"
+      zh="人工闸门"
+      icon="human"
+      aside="高风险动作停在人这一侧；超时动作与审批人规则都写进可追溯记录。"
+    />
     <p
       class="af-faint"
       style="margin-bottom: 12px; font-size: 12px"

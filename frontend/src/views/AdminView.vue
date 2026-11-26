@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ConsoleMasthead from '@/components/design/ConsoleMasthead.vue'
 import { adminApi } from '@/api'
 import type {
   AdminAuditRow,
@@ -208,9 +209,14 @@ onMounted(() => loadUsage())
 
 <template>
   <div class="af-page">
-    <h1 class="af-page-title">
-      管理端
-    </h1>
+    <ConsoleMasthead
+      no="08"
+      code="OPS CONSOLE"
+      title="管理端"
+      zh="运维台"
+      icon="shield"
+      aside="额度、审计与卡住的执行都收在同一张台面上；每个动作都会写审计。"
+    />
     <div style="display: flex; gap: 8px; margin-bottom: 16px">
       <button
         class="af-btn af-btn--sm"

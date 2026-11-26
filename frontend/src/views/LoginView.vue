@@ -5,6 +5,17 @@ import { authApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { errorDebugInfo, errorText } from '@/api/errors'
 import type { DemoAccount } from '@/types/api'
+import BlueprintBoard from '@/components/design/BlueprintBoard.vue'
+import DesignIcon from '@/components/design/DesignIcon.vue'
+import IsoInstrument from '@/components/design/IsoInstrument.vue'
+import TickerBar from '@/components/design/TickerBar.vue'
+
+const tickerItems = ['DETERMINISTIC DSL', 'HUMAN-IN-THE-LOOP', 'BUDGET GUARD', 'TRACE EVERY STEP', 'MCP READY']
+const capabilities = [
+  { no: '01 / CANVAS', icon: 'canvas', title: '可视化编排', desc: '拖拽节点、连线与分支，画布即 DSL。', tag: 'NODE · 12 TYPES' },
+  { no: '02 / ENGINE', icon: 'engine', title: '可追溯执行', desc: '每次运行都有节点级输入、输出与耗时。', tag: 'TRACE · FULL' },
+  { no: '03 / GUARD', icon: 'shield', title: '治理与审批', desc: '高风险动作停在人这一侧，预算与权限同账本。', tag: 'APPROVAL · ON' },
+] as const
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -61,19 +72,61 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div class="af-login">
-    <form
-      class="af-panel af-login__card"
-      @submit.prevent="submit"
-    >
-      <div class="af-brand af-login__brand">
-        Agent<span>Flow</span>
+  <div class="af-login af-show-shell">
+    <section class="af-show-hero">
+      <div class="af-show-hero__grid">
+        <div class="af-reveal is-in">
+          <span class="af-fig-tag">FIG. A3 / PRECISION BUILD</span>
+          <h1 class="af-display">
+            Agent<span class="bl">Flow</span>
+            <span class="af-display__zh">把智能体流程做成一台精密仪器</span>
+          </h1>
+          <p class="af-show-sub">
+            从节点编排到受审批约束的执行，每一步都可追溯、可复现、可计量。
+          </p>
+          <div class="af-cta-row">
+            <span class="af-kicker">CONTROL CONSOLE / 01</span>
+            <span class="af-mono-label">v0.6 · PRECISION EDITION</span>
+          </div>
+          <div class="af-stats">
+            <div class="af-stat">
+              <b>12</b>
+              <span>NODE TYPES</span>
+            </div>
+            <div class="af-stat">
+              <b>100<em>%</em></b>
+              <span>TRACED RUNS</span>
+            </div>
+            <div class="af-stat">
+              <b>3<em>色</em></b>
+              <span>状态语义</span>
+            </div>
+          </div>
+        </div>
+        <div class="af-reveal is-in">
+          <BlueprintBoard />
+          <div style="margin-top: 12px">
+            <IsoInstrument />
+          </div>
+        </div>
       </div>
-      <p class="af-faint af-login__sub">
-        可视化 Agent 工作流编排平台
-      </p>
+    </section>
 
-      <label
+    <TickerBar :items="tickerItems" />
+
+    <div class="af-login__lower">
+      <form
+        class="af-panel af-login__card"
+        @submit.prevent="submit"
+      >
+        <div class="af-brand af-login__brand">
+          Agent<span>Flow</span>
+        </div>
+        <p class="af-faint af-login__sub">
+          可视化 Agent 工作流编排平台
+        </p>
+
+        <label
         class="af-label"
         for="login-email"
       >邮箱</label>
@@ -139,21 +192,53 @@ async function submit(): Promise<void> {
           <span class="af-faint mono">{{ account.email }}</span>
         </button>
       </div>
-    </form>
+      </form>
+
+      <div class="af-feature-grid af-login__features">
+        <article
+          v-for="cap in capabilities"
+          :key="cap.no"
+          class="af-feature-cell af-reveal"
+        >
+          <div class="af-feature-cell__no">
+            <span>{{ cap.no }}</span>
+            <span>→</span>
+          </div>
+          <div class="af-feature-cell__ico">
+            <DesignIcon :name="cap.icon" />
+          </div>
+          <h3>{{ cap.title }}</h3>
+          <p>{{ cap.desc }}</p>
+          <div class="af-feature-cell__tag"><b>{{ cap.tag }}</b></div>
+        </article>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .af-login {
-  display: grid;
-  place-items: center;
   height: 100%;
-  padding: 24px;
+}
+
+.af-login__lower {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  max-width: 1240px;
+  margin: 24px auto 0;
 }
 
 .af-login__card {
-  width: 360px;
+  width: 100%;
   padding: 28px;
+  box-shadow: var(--af-shadow);
+}
+
+.af-login__features.af-feature-grid {
+  margin: 0;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .af-login__brand {
@@ -216,5 +301,14 @@ async function submit(): Promise<void> {
 .af-login__demo-label {
   font-size: 12px;
   color: var(--af-text);
+}
+
+@media (max-width: 960px) {
+  .af-login__lower {
+    grid-template-columns: 1fr;
+  }
+  .af-login__features.af-feature-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
