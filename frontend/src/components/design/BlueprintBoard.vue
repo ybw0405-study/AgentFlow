@@ -3,8 +3,8 @@ import { useTilt } from '@/composables/useDesignMotion'
 
 /** 蓝图板：节点、连线、尺寸标注与十字准星；鼠标移动时轻微 3D 倾斜。 */
 const { target } = useTilt(6)
-// 字符串 ref 只在模板里使用，显式读取一次避免类型检查报未使用。
-void target
+// 模板里通过字符串 ref 绑定，显式读一次值避免类型检查报未使用。
+void target.value
 
 const nodes = [
   { x: 32, y: 46, w: 112, h: 48, title: '触发输入', sub: 'TRIGGER', hot: false },

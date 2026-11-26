@@ -3,8 +3,8 @@ import { useTilt } from '@/composables/useDesignMotion'
 
 /** 等轴测「仪器」：纯 CSS 3D 层叠，鼠标移动时跟随倾斜。 */
 const { target } = useTilt(10)
-// 字符串 ref 只在模板里使用，显式读取一次避免类型检查报未使用。
-void target
+// 模板里通过字符串 ref 绑定，显式读一次值避免类型检查报未使用。
+void target.value
 </script>
 
 <template>
